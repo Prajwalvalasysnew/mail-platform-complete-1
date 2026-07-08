@@ -1,0 +1,138 @@
+{
+  "title": "Mail Platform — Send Pipeline",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "30s",
+  "uid": "mp-send-pipeline",
+  "tags": ["mail-platform", "send-pipeline"],
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "pool",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(mp_messages_sent_total, ip_pool)",
+        "multi": true,
+        "includeAll": true,
+        "label": "IP Pool"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "Send throughput (msgs/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(mp_messages_sent_total[1m]))", "legendFormat": "sent/s" },
+        { "expr": "sum(rate(mp_messages_accepted_total[1m]))", "legendFormat": "accepted/s" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0 }
+      }
+    },
+    {
+      "title": "Send latency (p50/p95/p99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(mp_send_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(mp_send_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(mp_send_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "min": 0 }
+      }
+    },
+    {
+      "title": "BullMQ queue depth by queue",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "mp_queue_depth{queue=\"send\"}", "legendFormat": "send" },
+        { "expr": "mp_queue_depth{queue=\"events\"}", "legendFormat": "events" },
+        { "expr": "mp_queue_depth{queue=\"webhooks\"}", "legendFormat": "webhooks" },
+        { "expr": "mp_queue_depth{queue=\"dlq\"}", "legendFormat": "DLQ" }
+      ],
+      "fieldConfig": {
+        "defaults": { "min": 0 },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "DLQ" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "alert": {
+        "name": "DLQ depth > 0",
+        "conditions": [
+          {
+            "query": { "params": ["A", "5m", "now"] },
+            "reducer": { "type": "last" },
+            "evaluator": { "type": "gt", "params": [0] }
+          }
+        ]
+      }
+    },
+    {
+      "title": "Outbox drain (rows enqueued / 30s)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "increase(mp_outbox_drained_total[30s])", "legendFormat": "drained" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green" }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 500 }] } }
+      }
+    },
+    {
+      "title": "Send worker concurrency",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+      "targets": [
+        { "expr": "mp_worker_active_jobs", "legendFormat": "active" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 }
+      }
+    },
+    {
+      "title": "Messages blocked by content scan",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "rate(mp_messages_blocked_total[5m])", "legendFormat": "blocked/s" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0, "color": { "mode": "fixed", "fixedColor": "orange" } }
+      }
+    },
+    {
+      "title": "Pool status (1=paused)",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "expr": "mp_pool_paused", "legendFormat": "{{pool}}" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": 0 }, { "color": "red", "value": 1 }]
+          },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "OK" }, "1": { "text": "PAUSED" } } }]
+        }
+      }
+    },
+    {
+      "title": "Quota utilization (daily, top customers)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "targets": [
+        { "expr": "topk(5, mp_quota_used)", "legendFormat": "{{customer_id}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 }
+      }
+    }
+  ]
+}

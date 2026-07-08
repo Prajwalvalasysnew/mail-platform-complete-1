@@ -1,0 +1,138 @@
+groups:
+  - name: deliverability
+    rules:
+      - alert: HighBounceRate
+        expr: |
+          (rate(mp_messages_bounced_total[15m]) /
+           rate(mp_messages_sent_total[15m])) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Hard bounce rate above 5%"
+          description: "Bounce rate {{ $value | humanizePercentage }} risks blocklisting. Pause sending and investigate list quality."
+
+      - alert: HighComplaintRate
+        expr: |
+          (rate(mp_complaints_total[1h]) /
+           rate(mp_messages_sent_total[1h])) > 0.003
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Complaint rate above 0.3% (Gmail/Yahoo threshold)"
+          description: "Complaint rate {{ $value | humanizePercentage }} exceeds ISP limits. Sending privileges at risk."
+
+      - alert: QueueBacklog
+        expr: mp_queue_depth{queue="send"} > 50000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Send queue backing up"
+          description: "{{ $value }} jobs waiting. Workers may be unable to keep up or the transport is failing."
+
+      - alert: SendErrorsSpiking
+        expr: rate(mp_messages_blocked_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated send failures/blocks"
+          description: "{{ $value }} messages/sec being blocked or failing permanently."
+
+  - name: scale_and_reputation
+    rules:
+      - alert: PoolPaused
+        expr: mp_pool_paused == 1
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "IP pool {{ $labels.pool }} paused by reputation guard"
+          description: "Bounce/complaint rates exceeded thresholds. See docs/runbooks/BLOCKLIST.md"
+
+      - alert: BlocklistListing
+        expr: mp_blocklist_listings > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Sending IP listed on {{ $labels.provider }}"
+          description: "Follow docs/runbooks/BLOCKLIST.md to remediate."
+
+      - alert: SendQueueBackpressure
+        expr: rate(mp_backpressure_rejections_total[5m]) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "API shedding /v1/send with 503 backpressure"
+          description: "Workers can't drain queue. See docs/runbooks/QUEUE_BACKPRESSURE.md"
+
+      - alert: SlowApiKeyVerify
+        expr: histogram_quantile(0.99, rate(mp_api_key_verify_seconds_bucket[5m])) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "API key verification p99 > 50ms"
+          description: "Unexpected slowness on the auth hot path; check pepper / DB index on key_prefix."
+
+      - alert: MeteringDrift
+        expr: abs(mp_metering_drift) > 1000
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "Metering drift {{ $value }} emails — revenue leakage risk"
+          description: "metered_quantity and billed_quantity diverged. Reconcile invoices."
+
+      - alert: DsnParseFailureRate
+        expr: |
+          rate(mp_dsn_parse_total{outcome="failed"}[15m])
+            / ignoring(outcome) rate(mp_dsn_parse_total[15m]) > 0.1
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Over 10% of inbound DSNs failed to parse"
+          description: "We may be missing bounce signals; investigate inbound MTA logs and dsn.ts."
+
+  - name: infrastructure
+    rules:
+      - alert: WorkerDown
+        expr: up{job="mail-worker"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Mail worker is unreachable"
+          description: "Worker metrics endpoint has not responded for 2 minutes. Emails are not being delivered."
+
+      - alert: ApiDown
+        expr: up{job="mail-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Mail API is unreachable"
+          description: "API metrics endpoint has not responded for 2 minutes."
+
+      - alert: TrackerDown
+        expr: up{job="mail-tracker"} == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Open/click tracker is unreachable"
+          description: "Tracking events will be lost while the tracker is down."
+
+      - alert: DeadLetterQueueGrowing
+        expr: increase(mp_dead_letter_total[5m]) > 10
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Dead-letter queue receiving > 10 jobs in 5 min"
+          description: "Jobs are exhausting all retries. Inspect /admin/dlq and investigate root cause."
+
+      - alert: WebhookFailureRateHigh
+        expr: |
+          rate(mp_webhook_deliveries_total{outcome="failure"}[15m])
+            / rate(mp_webhook_deliveries_total[15m]) > 0.25
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Webhook delivery failure rate > 25%"
+          description: "Check /admin/customers' webhook endpoints for errors."

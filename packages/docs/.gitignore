@@ -1,0 +1,6 @@
+# Build output
+build/
+.docusaurus/
+
+# Generated files
+static/openapi.json

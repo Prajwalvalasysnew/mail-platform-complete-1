@@ -1,0 +1,61 @@
+# Status page heartbeat CronJob.
+#
+# Pings an external heartbeat URL every 5 minutes so your status page provider
+# knows the platform is alive. If the ping stops, the provider marks the
+# component as "degraded" or "down" automatically.
+#
+# Supported providers (all accept a GET/POST to a unique URL):
+#   - healthchecks.io      — free, self-hostable
+#   - Better Stack (betteruptime.com) — heartbeat monitors
+#   - Cronitor             — cron monitoring + status page
+#   - Statuspage.io        — needs an API call to update component status
+#
+# Setup:
+#   1. Create a heartbeat monitor at your provider and copy the ping URL.
+#   2. Add it to the mail-secrets k8s Secret as STATUS_HEARTBEAT_URL.
+#   3. Apply this file.
+#
+# The health check calls /ready (not /live) so we only ping when Postgres +
+# Redis + the send queue are all reachable.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: statuspage-heartbeat
+  namespace: mail-platform
+spec:
+  schedule: "*/5 * * * *"          # every 5 minutes
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # If the API is down the curl will fail; that's the signal we want.
+      activeDeadlineSeconds: 55    # must finish before next tick
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: heartbeat
+              image: curlimages/curl:8.7.1
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  # First verify our own /ready endpoint is healthy.
+                  curl -sf --max-time 10 http://mail-api.mail-platform.svc.cluster.local/ready
+                  # Then ping the external status provider.
+                  if [ -n "$STATUS_HEARTBEAT_URL" ]; then
+                    curl -sf --max-time 10 "$STATUS_HEARTBEAT_URL"
+                  fi
+              env:
+                - name: STATUS_HEARTBEAT_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: mail-secrets
+                      key: STATUS_HEARTBEAT_URL
+                      optional: true    # heartbeat pings are skipped if not configured
+              resources:
+                requests: { cpu: 10m, memory: 16Mi }
+                limits:   { cpu: 50m, memory: 32Mi }

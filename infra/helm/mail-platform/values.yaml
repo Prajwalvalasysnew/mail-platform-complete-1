@@ -1,0 +1,132 @@
+# Default values for mail-platform Helm chart.
+# Override in your environment via -f my-values.yaml or --set key=value.
+
+global:
+  image:
+    registry: ghcr.io
+    repository: your-org/mail-platform
+    tag: latest
+    pullPolicy: IfNotPresent
+
+# ── API ───────────────────────────────────────────────────────────────────────
+api:
+  replicaCount: 3
+  image:
+    tag: ""  # defaults to global.image.tag
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "512Mi"
+  service:
+    port: 3000
+    type: ClusterIP
+  ingress:
+    enabled: true
+    className: nginx
+    host: api.mail-platform.example.com
+    tlsSecretName: api-tls
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+  env:
+    API_RATE_LIMIT_PER_MINUTE: "1000"
+    SEND_RATE_LIMIT_PER_MINUTE: "300"
+    SEND_QUEUE_BACKPRESSURE: "100000"
+    MAX_CUSTOMER_QUEUE_DEPTH: "10000"
+    WORKER_CONCURRENCY: "50"
+    LOG_LEVEL: info
+
+# ── Worker ────────────────────────────────────────────────────────────────────
+worker:
+  replicaCount: 2
+  image:
+    tag: ""  # defaults to global.image.tag
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "1Gi"
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 60
+  env:
+    WORKER_CONCURRENCY: "100"
+    SEND_OUTBOX_DRAIN_LIMIT: "2000"
+    LOG_LEVEL: info
+
+# ── Tracker ───────────────────────────────────────────────────────────────────
+tracker:
+  replicaCount: 2
+  image:
+    tag: ""  # defaults to global.image.tag
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+  service:
+    port: 4000
+    type: ClusterIP
+  ingress:
+    enabled: true
+    className: nginx
+    host: t.mail-platform.example.com
+    tlsSecretName: tracker-tls
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  env:
+    LOG_LEVEL: info
+
+# ── Shared secrets (references to existing Kubernetes Secret objects) ─────────
+secrets:
+  # Name of the Secret holding DATABASE_URL, REDIS_URL, API_SECRET, etc.
+  # Create this before installing the chart:
+  #   kubectl create secret generic mail-platform-secrets \
+  #     --from-env-file=.env.production
+  existingSecret: mail-platform-secrets
+
+# ── Migration job ─────────────────────────────────────────────────────────────
+migration:
+  # Runs as a pre-install/pre-upgrade Helm hook.
+  enabled: true
+  image:
+    tag: ""  # defaults to global.image.tag
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+# ── PodDisruptionBudgets ──────────────────────────────────────────────────────
+pdb:
+  api:
+    minAvailable: 2
+  worker:
+    minAvailable: 1
+  tracker:
+    minAvailable: 1
+
+# ── Namespace ─────────────────────────────────────────────────────────────────
+namespace: mail-platform
+
+# ── Network policies ─────────────────────────────────────────────────────────
+# When enabled, deny-all default + per-service allow rules are created.
+# Requires a CNI that enforces NetworkPolicy (Calico, Cilium, Weave, etc.).
+networkPolicy:
+  enabled: true

@@ -1,0 +1,269 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mail-postgres
+    environment:
+      POSTGRES_USER: mail
+      POSTGRES_PASSWORD: mailpass
+      POSTGRES_DB: mail_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mail -d mail_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: mail-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  haraka-outbound:
+    build:
+      context: .
+      dockerfile: packages/haraka-outbound/Dockerfile
+    container_name: mail-haraka-out
+    ports:
+      - "2525:2525"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      VERP_SECRET: dev-verp-secret-change-me-min-16
+      DKIM_REQUIRED: "false"
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+    volumes:
+      - ./infra/dkim:/etc/haraka/dkim:ro
+      - haraka_outbound_queue:/app/queue
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  haraka-inbound:
+    build:
+      context: .
+      dockerfile: packages/haraka-inbound/Dockerfile
+    container_name: mail-haraka-in
+    ports:
+      - "2526:25"
+    environment:
+      REDIS_HOST: redis
+      DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
+      VERP_SECRET: dev-verp-secret-change-me-min-16
+      PLATFORM_DOMAIN: happycubing.com
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # One-shot migration runner. App containers no longer migrate at startup
+  # (unsafe: multiple replicas racing DDL on deploy) — this service is the
+  # single migration path for local dev, mirroring the Helm migration Job.
+  migrate:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    container_name: mail-migrate
+    command: ["node", "packages/shared/dist/bin/migrate.js"]
+    environment:
+      DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    container_name: mail-api
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      API_PORT: 3000
+      JWT_SECRET: dev-secret-change-in-production-min-32-chars
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      VERP_SECRET: dev-verp-secret-change-me-min-16
+      STRIPE_WEBHOOK_SECRET: ""
+      ADMIN_TOKEN: dev-admin-token-change-me
+      API_KEY_PEPPER: change-me-pepper-min-32-chars-required-in-prod
+      CORS_ALLOWED_ORIGINS: http://localhost:8080
+      TRACKING_DOMAIN: http://localhost:4000
+      BOUNCE_DOMAIN: bounces.localhost
+      PLATFORM_DOMAIN: localhost
+      METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN in .env}
+      # Set when running with --profile monitoring to enable distributed tracing.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      dockerfile: packages/worker/Dockerfile
+    container_name: mail-worker
+    ports:
+      - "9100:9100"
+    environment:
+      DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      HARAKA_OUTBOUND_HOST: haraka-outbound
+      HARAKA_OUTBOUND_PORT: 2525
+      HARAKA_OUTBOUND_USER: worker
+      HARAKA_OUTBOUND_PASS: b8YZXal4fgUPduaYSsARPksRAOfAiiD8
+      WORKER_CONCURRENCY: 50
+      TRACKING_DOMAIN: http://localhost:4000
+      BOUNCE_DOMAIN: bounces.happycubing.com
+      DELIVERY_TRANSPORT: haraka
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      VERP_SECRET: dev-verp-secret-change-me-min-16
+      API_KEY_PEPPER: change-me-pepper-min-32-chars-required-in-prod
+      WORKER_METRICS_PORT: 9100
+      METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN in .env}
+      SES_SMTP_HOST: email-smtp.us-east-1.amazonaws.com
+      SES_SMTP_PORT: 587
+      SES_SMTP_USER: ""
+      SES_SMTP_PASS: ""
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      haraka-outbound:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: mail-mailpit
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  tracker:
+    build:
+      context: .
+      dockerfile: packages/tracker/Dockerfile
+    container_name: mail-tracker
+    ports:
+      - "4000:4000"
+    environment:
+      DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      TRACKER_PORT: 4000
+      METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN in .env}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mail-prometheus
+    profiles: ["monitoring"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus:/etc/prometheus:ro
+      - promdata:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mail-grafana
+    profiles: ["monitoring"]
+    ports:
+      - "3002:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: mail-alertmanager
+    profiles: ["monitoring"]
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./infra/alertmanager:/etc/alertmanager:ro
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+    depends_on:
+      - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.56
+    container_name: mail-jaeger
+    profiles: ["monitoring"]
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4318:4318"     # OTLP HTTP receiver
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+  clickhouse:
+    # Optional analytics store for event firehose dual-write. Set
+    # EVENTS_CLICKHOUSE_URL=http://clickhouse:8123 in the app env to enable.
+    image: clickhouse/clickhouse-server:24.3-alpine
+    container_name: mail-clickhouse
+    profiles: ["analytics"]
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes:
+      - clickhousedata:/var/lib/clickhouse
+      - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  redisdata:
+  haraka_outbound_queue:
+  promdata:
+  grafanadata:
+  clickhousedata:

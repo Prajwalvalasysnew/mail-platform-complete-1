@@ -1,0 +1,139 @@
+// Stable API error-code registry (gap analysis Top-20 #20, §23.3.5 item 4).
+//
+// Every machine-readable `error` code the public API returns is registered here
+// with a human description and its typical HTTP status. This is a STABILITY
+// CONTRACT: codes in this registry are part of the public API surface and must
+// not be renamed or removed without a deprecation cycle — client code branches
+// on these strings. A guard test (error-registry.test.ts) enforces two things:
+//   1. every code emitted by the route handlers is registered here (no
+//      undocumented codes leaking into the public contract), and
+//   2. the registry never silently loses a previously-shipped code
+//      (a frozen baseline snapshot guards backward compatibility).
+//
+// Adding a code: add it here + to the routes. Removing one: deprecate first.
+
+export interface ErrorCodeSpec {
+  /** Human-readable description of when this error is returned. */
+  description: string;
+  /** Typical HTTP status this code is returned with. */
+  httpStatus: number;
+  /** Marks a code slated for removal; keep returning it until the sunset date. */
+  deprecated?: { since: string; replacement?: string; sunset?: string };
+}
+
+export const ERROR_CODES = {
+  // ── Generic / framework ────────────────────────────────────────────────────
+  not_found: { description: 'The requested resource does not exist.', httpStatus: 404 },
+  forbidden: { description: 'Authenticated but not permitted to perform this action.', httpStatus: 403 },
+  validation_failed: { description: 'Request body or query failed schema validation.', httpStatus: 400 },
+  invalid_json: { description: 'Request body was not valid JSON.', httpStatus: 400 },
+  internal_error: { description: 'Unexpected server error.', httpStatus: 500 },
+  request_error: { description: 'Malformed request.', httpStatus: 400 },
+  rate_limited: { description: 'Too many requests; retry after the indicated delay.', httpStatus: 429 },
+  no_fields: { description: 'No updatable fields were supplied.', httpStatus: 400 },
+  no_fields_provided: { description: 'No updatable fields were supplied.', httpStatus: 400 },
+
+  // ── Auth / identity / session ──────────────────────────────────────────────
+  invalid_credentials: { description: 'Email or password is incorrect.', httpStatus: 401 },
+  account_locked: { description: 'Account temporarily locked after failed attempts.', httpStatus: 423 },
+  account_suspended: { description: 'Account has been suspended.', httpStatus: 403 },
+  email_exists: { description: 'A user with this email already exists.', httpStatus: 409 },
+  email_not_verified: { description: 'Email address has not been verified.', httpStatus: 403 },
+  invalid_code: { description: 'Verification code is invalid.', httpStatus: 400 },
+  invalid_token: { description: 'Token is invalid.', httpStatus: 400 },
+  invalid_or_expired_token: { description: 'Token is invalid or has expired.', httpStatus: 400 },
+  token_expired: { description: 'Token has expired.', httpStatus: 400 },
+  password_login_disabled: { description: 'Password login is disabled for this account (SSO only).', httpStatus: 403 },
+  mfa_required: { description: 'Multi-factor authentication is required to continue.', httpStatus: 401 },
+  mfa_invalid: { description: 'Provided MFA code is invalid.', httpStatus: 401 },
+  invalid_mfa_code: { description: 'Provided MFA code is invalid.', httpStatus: 401 },
+  invalid_code_mfa: { description: 'Provided MFA code is invalid.', httpStatus: 401 },
+
+  // ── Org / membership / team ────────────────────────────────────────────────
+  no_active_org: { description: 'No active organization selected for this session.', httpStatus: 400 },
+  org_exists: { description: 'An organization with this name already exists.', httpStatus: 409 },
+  not_a_member: { description: 'User is not a member of this organization.', httpStatus: 403 },
+  not_authorized: { description: 'Not authorized for this organization action.', httpStatus: 403 },
+  insufficient_role: { description: 'Your role lacks the required capability.', httpStatus: 403 },
+  cannot_self_demote: { description: 'You cannot remove your own elevated role.', httpStatus: 409 },
+  only_owner_can_grant_owner: { description: 'Only an owner can grant the owner role.', httpStatus: 403 },
+  only_owner_can_manage_owner: { description: 'Only an owner can manage another owner.', httpStatus: 403 },
+  only_owner_can_remove_owner: { description: 'Only an owner can remove an owner.', httpStatus: 403 },
+  invalid_assignee: { description: 'The specified assignee is invalid.', httpStatus: 400 },
+
+  // ── Admin plane ────────────────────────────────────────────────────────────
+  admin_auth_required: { description: 'Admin authentication is required.', httpStatus: 401 },
+  invalid_admin_session: { description: 'Admin session is invalid or expired.', httpStatus: 401 },
+  oidc_not_configured: { description: 'Admin OIDC login is not configured.', httpStatus: 400 },
+
+  // ── API-key / bearer auth (plugins) ────────────────────────────────────────
+  missing_auth: { description: 'No Authorization header / API key was provided.', httpStatus: 401 },
+  unauthenticated: { description: 'Authentication is required for this endpoint.', httpStatus: 401 },
+  authentication_required: { description: 'Authentication is required for this endpoint.', httpStatus: 401 },
+  invalid_key: { description: 'The provided API key is invalid.', httpStatus: 401 },
+  expired_key: { description: 'The provided API key has expired.', httpStatus: 401 },
+  insufficient_scope: { description: 'The API key lacks the scope required for this action.', httpStatus: 403 },
+
+  // ── Send / delivery ────────────────────────────────────────────────────────
+  missing_subject: { description: 'Message is missing a subject.', httpStatus: 400 },
+  missing_content: { description: 'Message is missing html_body or text_body.', httpStatus: 400 },
+  missing_template_variables: { description: 'Template references variables not supplied (require_all_variables).', httpStatus: 422 },
+  template_not_found: { description: 'The referenced template does not exist.', httpStatus: 404 },
+  invalid_template: { description: 'Template failed to compile.', httpStatus: 400 },
+  content_rejected: { description: 'Message content was rejected by the abuse scanner.', httpStatus: 422 },
+  domain_not_registered: { description: 'The From domain is not registered for this account.', httpStatus: 400 },
+  domain_not_verified: { description: 'The From domain is not verified.', httpStatus: 400 },
+  quota_exceeded: { description: 'Sending quota exceeded.', httpStatus: 429 },
+  backpressure: { description: 'Send queue is saturated; retry shortly.', httpStatus: 503 },
+  queue_backpressure: { description: 'Send queue is saturated; retry shortly.', httpStatus: 503 },
+  pool_capacity_exceeded: { description: 'IP pool capacity exceeded.', httpStatus: 429 },
+  pool_paused: { description: 'The IP pool is paused.', httpStatus: 503 },
+  cancelled_by_user: { description: 'Message was cancelled by the user.', httpStatus: 409 },
+  not_cancellable: { description: 'Message is not in a cancellable state.', httpStatus: 409 },
+  already_dispatched: { description: 'Message was already dispatched and cannot be cancelled.', httpStatus: 409 },
+
+  // ── Domains ────────────────────────────────────────────────────────────────
+  domain_exists: { description: 'This domain is already added.', httpStatus: 409 },
+
+  // ── Suppressions / lists ───────────────────────────────────────────────────
+  list_quality_too_low: { description: 'Recipient list quality score is below threshold.', httpStatus: 422 },
+  unsubscribe_group_not_found: { description: 'The unsubscribe group does not exist.', httpStatus: 404 },
+
+  // ── Templates ──────────────────────────────────────────────────────────────
+  name_exists: { description: 'A template with this name already exists.', httpStatus: 409 },
+
+  // ── Webhooks ───────────────────────────────────────────────────────────────
+  webhook_disabled: { description: 'The webhook is disabled.', httpStatus: 422 },
+  delivery_not_found: { description: 'The webhook delivery record was not found.', httpStatus: 404 },
+  invalid_delivery_id: { description: 'The delivery id is malformed.', httpStatus: 400 },
+  no_source_event: { description: 'The delivery has no linked source event to replay.', httpStatus: 422 },
+  source_event_gone: { description: 'The source event no longer exists; cannot replay.', httpStatus: 422 },
+
+  // ── Billing ────────────────────────────────────────────────────────────────
+  billing_inactive: { description: 'Billing is not active for this account.', httpStatus: 402 },
+  kyc_required: { description: 'KYC verification is required before this action.', httpStatus: 403 },
+  unsupported_billing_provider: { description: 'The billing provider is not supported.', httpStatus: 400 },
+  invalid_signature: { description: 'Webhook signature verification failed.', httpStatus: 400 },
+  not_replayable: { description: 'This billing event predates payload storage and cannot be replayed.', httpStatus: 422 },
+  unparseable_payload: { description: 'The stored payload did not parse into an event.', httpStatus: 422 },
+  unsupported_source_queue: { description: 'The specified source queue is not supported.', httpStatus: 400 },
+
+  // ── Privacy / legal hold ───────────────────────────────────────────────────
+  legal_hold_active: { description: 'Erasure is blocked because the recipient is under an active legal hold.', httpStatus: 409 },
+
+  // ── Idempotency ────────────────────────────────────────────────────────────
+  invalid_idempotency_key: { description: 'The idempotency key is malformed.', httpStatus: 400 },
+  idempotency_key_reused: { description: 'The idempotency key was reused with a different request.', httpStatus: 409 },
+  idempotency_in_progress: { description: 'A request with this idempotency key is still in progress.', httpStatus: 409 },
+} as const satisfies Record<string, ErrorCodeSpec | { description: string; httpStatus: number }>;
+
+export type ErrorCode = keyof typeof ERROR_CODES;
+
+/** All registered error codes, sorted — used by the guard test and for docs. */
+export function listErrorCodes(): string[] {
+  return Object.keys(ERROR_CODES).sort();
+}
+
+export function isRegisteredErrorCode(code: string): code is ErrorCode {
+  return Object.prototype.hasOwnProperty.call(ERROR_CODES, code);
+}

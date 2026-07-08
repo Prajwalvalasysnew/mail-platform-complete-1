@@ -1,0 +1,65 @@
+# Istio service-mesh mTLS policy for the mail-platform namespace.
+#
+# What this does:
+#   - PeerAuthentication/default: any plaintext (non-mTLS) connection INTO
+#     a pod in this namespace is rejected (STRICT mode). Istio sidecars
+#     handle the certificate lifecycle automatically.
+#   - DestinationRule/default: traffic originating FROM pods in this namespace
+#     to any service in this namespace uses Istio mutual TLS.
+#
+# Prerequisites:
+#   1. Istio installed with automatic sidecar injection:
+#        istioctl install --set profile=default -y
+#   2. Enable injection on the namespace (do this before the deployments start):
+#        kubectl label namespace mail-platform istio-injection=enabled
+#   3. Restart all pods after labeling so sidecars are injected:
+#        kubectl rollout restart deployment -n mail-platform
+#
+# Verify after applying:
+#   kubectl exec -n mail-platform deploy/mail-api -c istio-proxy -- \
+#     pilot-agent request GET config_dump | grep -i mTLS
+#   # or use kiali / the Istio dashboard
+#
+# Apply:
+#   kubectl apply -f infra/k8s/istio-mtls.yaml
+---
+# Reject any plaintext traffic to pods in mail-platform.
+# All inter-service calls (API → worker, API → tracker, admin → worker)
+# must be mTLS — Istio's sidecars handle the handshake transparently.
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: mail-platform
+spec:
+  mtls:
+    mode: STRICT
+---
+# Client-side TLS policy: use Istio mutual TLS when calling any service
+# in this namespace. Matches the STRICT mode above.
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: default
+  namespace: mail-platform
+spec:
+  host: "*.mail-platform.svc.cluster.local"
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+---
+# AuthorizationPolicy: explicit allow-list so a compromised pod can't call
+# services it shouldn't. Denies by default; only listed principals may connect.
+# Update the source namespaces/principals as your mesh topology grows.
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-internal-only
+  namespace: mail-platform
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            # Only pods in the same namespace (or istio-ingress) may initiate connections.
+            namespaces: ["mail-platform", "istio-system", "ingress-nginx"]

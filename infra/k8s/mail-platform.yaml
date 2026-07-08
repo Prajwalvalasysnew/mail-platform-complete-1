@@ -1,0 +1,300 @@
+# Mail Platform — Kubernetes manifests.
+#
+# Apply via:
+#   kubectl apply -f infra/k8s/00-namespace.yaml
+#   kubectl apply -k infra/k8s
+#
+# Assumes:
+#   - cert-manager + an ingress controller for TLS termination
+#   - external Postgres (managed) — DATABASE_URL secret pre-created
+#   - external Redis (managed or Sentinel) — REDIS_URL secret pre-created
+#   - external object store (S3) for body offload — credentials in secret
+#
+# What this deployment guarantees:
+#   - Rolling updates with maxUnavailable=0 (no send-path interruption)
+#   - HPA on the API + worker so we scale with load
+#   - PodDisruptionBudget so a node drain can't take all replicas down
+#   - Resource requests sized for steady-state SMB; raise for production
+#   - Probes wired to /health (liveness) and /ready (readiness/dep checks)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mail-platform
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mail-config
+  namespace: mail-platform
+data:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  API_PORT: "3000"
+  TRACKER_PORT: "4000"
+  DELIVERY_TRANSPORT: haraka
+  BODY_STORAGE: s3
+  KMS_PROVIDER: aws
+  CORS_ALLOWED_ORIGINS: "https://app.example.com"
+  # Tune these based on observed traffic shape.
+  API_RATE_LIMIT_PER_MINUTE: "1000"
+  SEND_RATE_LIMIT_PER_MINUTE: "300"
+  SEND_QUEUE_BACKPRESSURE: "100000"
+  WORKER_CONCURRENCY: "100"
+---
+# ---- API deployment ----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mail-api
+  namespace: mail-platform
+  labels: { app: mail-api }
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector: { matchLabels: { app: mail-api } }
+  template:
+    metadata:
+      labels: { app: mail-api }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "3000"
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api
+          image: ghcr.io/your-org/mail-platform-api:latest
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 3000 }]
+          envFrom:
+            - configMapRef: { name: mail-config }
+            - secretRef: { name: mail-secrets }
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits:   { cpu: 1,    memory: 512Mi }
+          # SIGTERM → Fastify graceful close → 30s drain → SIGKILL.
+          lifecycle:
+            preStop:
+              exec: { command: ["sh", "-c", "sleep 5"] }  # let LB stop sending traffic first
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mail-api, namespace: mail-platform }
+spec:
+  selector: { app: mail-api }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: mail-api, namespace: mail-platform }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: mail-api }
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource: { name: cpu,    target: { type: Utilization, averageUtilization: 70 } }
+    - type: Resource
+      resource: { name: memory, target: { type: Utilization, averageUtilization: 80 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: mail-api, namespace: mail-platform }
+spec:
+  minAvailable: 2
+  selector: { matchLabels: { app: mail-api } }
+---
+# ---- Worker deployment ----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mail-worker
+  namespace: mail-platform
+  labels: { app: mail-worker }
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector: { matchLabels: { app: mail-worker } }
+  template:
+    metadata:
+      labels: { app: mail-worker }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "9101"
+    spec:
+      terminationGracePeriodSeconds: 60   # BullMQ jobs finish in-flight
+      containers:
+        - name: worker
+          image: ghcr.io/your-org/mail-platform-worker:latest
+          ports: [{ name: metrics, containerPort: 9101 }]
+          envFrom:
+            - configMapRef: { name: mail-config }
+            - secretRef: { name: mail-secrets }
+          readinessProbe:
+            httpGet: { path: /health, port: metrics }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: metrics }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 500m, memory: 512Mi }
+            limits:   { cpu: 2,    memory: 1Gi }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: mail-worker, namespace: mail-platform }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: mail-worker }
+  minReplicas: 2
+  maxReplicas: 30
+  # Workers are queue-bound, not CPU-bound. Ideally scale on send-queue depth
+  # via a custom metrics adapter (KEDA's redis-streams scaler is the typical
+  # choice). CPU is the safe fallback shipped here.
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 75 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: mail-worker, namespace: mail-platform }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: mail-worker } }
+---
+# ---- Tracker (open/click/unsub) ----
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mail-tracker, namespace: mail-platform, labels: { app: mail-tracker } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: mail-tracker } }
+  template:
+    metadata: { labels: { app: mail-tracker } }
+    spec:
+      containers:
+        - name: tracker
+          image: ghcr.io/your-org/mail-platform-tracker:latest
+          ports: [{ name: http, containerPort: 4000 }]
+          envFrom:
+            - configMapRef: { name: mail-config }
+            - secretRef: { name: mail-secrets }
+          readinessProbe: { httpGet: { path: /health, port: http } }
+          livenessProbe:  { httpGet: { path: /health, port: http }, initialDelaySeconds: 30 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mail-tracker, namespace: mail-platform }
+spec:
+  selector: { app: mail-tracker }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+# ---- CronJobs (alternatives to in-process scheduler if you prefer dedicated pods) ----
+apiVersion: batch/v1
+kind: CronJob
+metadata: { name: blocklist-monitor, namespace: mail-platform }
+spec:
+  schedule: "17 */6 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: blocklist
+              image: ghcr.io/your-org/mail-platform-worker:latest
+              command: ["node", "-e", "require('@platform/shared').monitorAllBlocklists().then(l=>console.log(JSON.stringify(l)))"]
+              envFrom:
+                - configMapRef: { name: mail-config }
+                - secretRef: { name: mail-secrets }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata: { name: warmup-advance, namespace: mail-platform }
+spec:
+  schedule: "0 6 * * *"  # daily at 06:00 UTC
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: warmup
+              image: ghcr.io/your-org/mail-platform-worker:latest
+              command: ["node", "-e", "require('@platform/shared').advanceIpWarmup().then(r=>console.log(JSON.stringify(r)))"]
+              envFrom:
+                - configMapRef: { name: mail-config }
+                - secretRef: { name: mail-secrets }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata: { name: postmaster-ingest, namespace: mail-platform }
+spec:
+  schedule: "30 7 * * *"  # daily at 07:30 UTC — after warmup-advance runs at 06:00
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: postmaster
+              image: ghcr.io/your-org/mail-platform-worker:latest
+              command:
+                - node
+                - -e
+                - |
+                  import('@platform/shared').then(m =>
+                    m.ingestPostmaster().then(r => console.log(JSON.stringify(r)))
+                  )
+              envFrom:
+                - configMapRef: { name: mail-config }
+                - secretRef:    { name: mail-secrets }
+---
+# ---- Ingress (TLS terminated by cert-manager) ----
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mail-ingress
+  namespace: mail-platform
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: 10m
+spec:
+  tls:
+    - hosts: [api.example.com, track.example.com]
+      secretName: mail-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: mail-api, port: { number: 80 } } }
+    - host: track.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: mail-tracker, port: { number: 80 } } }

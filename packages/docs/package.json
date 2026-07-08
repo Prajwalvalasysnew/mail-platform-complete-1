@@ -1,0 +1,40 @@
+{
+  "name": "@platform/docs",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "docusaurus": "docusaurus",
+    "start": "docusaurus start",
+    "build": "npm run export-openapi && docusaurus build",
+    "serve": "docusaurus serve",
+    "clear": "docusaurus clear",
+    "export-openapi": "tsx ../shared/src/bin/export-openapi.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@docusaurus/core": "^3.10.1",
+    "@docusaurus/preset-classic": "^3.10.1",
+    "clsx": "^2.0.0",
+    "prism-react-renderer": "^2.3.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "@docusaurus/module-type-aliases": "^3.10.1",
+    "@docusaurus/types": "^3.10.1",
+    "typescript": "^5.4.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.5%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 3 chrome version",
+      "last 3 firefox version",
+      "last 5 safari version"
+    ]
+  },
+  "engines": {
+    "node": ">=18.0"
+  }
+}

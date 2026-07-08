@@ -1,0 +1,27 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default'
+  routes:
+    - match:
+        severity: critical
+      repeat_interval: 1h
+
+receivers:
+  - name: 'default'
+    webhook_configs:
+      # Set ALERT_WEBHOOK_URL in environment or override this file to receive alerts.
+      - url: '${ALERT_WEBHOOK_URL:-http://localhost:9999/alerts}'
+        send_resolved: true
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname']

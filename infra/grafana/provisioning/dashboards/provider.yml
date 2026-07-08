@@ -1,0 +1,15 @@
+# Grafana dashboard provider. Loads every dashboard JSON from the mounted
+# folder at startup, so the Mail Platform dashboard appears automatically.
+apiVersion: 1
+
+providers:
+  - name: 'Mail Platform'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

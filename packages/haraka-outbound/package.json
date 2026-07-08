@@ -1,0 +1,16 @@
+{
+  "name": "@platform/haraka-outbound",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "haraka -c ."
+  },
+  "dependencies": {
+    "bullmq": "^5.4.0",
+    "Haraka": "3.2.1",
+    "haraka-plugin-dkim": "^1.0.5",
+    "ioredis": "^5.3.2",
+    "nodemailer": "^9.0.1",
+    "pg": "^8.11.3"
+  }
+}

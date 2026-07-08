@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-tracker-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+data:
+  NODE_ENV: production
+  {{- range $k, $v := .Values.tracker.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}

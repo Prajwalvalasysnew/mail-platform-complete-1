@@ -1,0 +1,66 @@
+{{- if .Values.api.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    # Defense in depth: /metrics is also token-protected in-app, but there is no
+    # reason to expose the Prometheus scrape endpoint to the public internet.
+    # Prometheus scrapes pods directly in-cluster, not via this ingress.
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location /metrics { deny all; return 403; }
+spec:
+  ingressClassName: {{ .Values.api.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.api.ingress.host }}
+      secretName: {{ .Values.api.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.api.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "mail-platform.fullname" . }}-api
+                port:
+                  name: http
+{{- end }}
+---
+{{- if .Values.tracker.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-tracker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "10"
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location /metrics { deny all; return 403; }
+spec:
+  ingressClassName: {{ .Values.tracker.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.tracker.ingress.host }}
+      secretName: {{ .Values.tracker.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.tracker.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "mail-platform.fullname" . }}-tracker
+                port:
+                  name: http
+{{- end }}

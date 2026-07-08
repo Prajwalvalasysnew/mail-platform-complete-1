@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-tracker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tracker
+spec:
+  type: {{ .Values.tracker.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "mail-platform.name" . }}
+    app.kubernetes.io/component: tracker
+  ports:
+    - name: http
+      port: {{ .Values.tracker.service.port }}
+      targetPort: http

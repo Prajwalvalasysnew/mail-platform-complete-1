@@ -1,0 +1,55 @@
+{
+  "name": "mail-platform",
+  "version": "0.7.23",
+  "private": true,
+  "description": "Self-hosted multi-tenant transactional email platform",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=@platform/shared && npm run build --workspace=@platform/api && npm run build --workspace=@platform/worker && npm run build --workspace=@platform/tracker && npm run build --workspace=@platform/sdk",
+    "dev:api": "npm run dev --workspace=@platform/api",
+    "dev:worker": "npm run dev --workspace=@platform/worker",
+    "dev:tracker": "npm run dev --workspace=@platform/tracker",
+    "migrate": "tsx packages/shared/src/bin/migrate.ts",
+    "migrate:baseline": "tsx packages/shared/src/bin/migrate.ts --baseline-existing",
+    "seed": "tsx scripts/seed.ts",
+    "dkim:generate": "bash scripts/generate-dkim.sh",
+    "test": "npm run test --workspace=@platform/tests",
+    "test:e2e": "npm run test:e2e --workspace=@platform/tests",
+    "create-admin": "tsx packages/shared/src/bin/create-admin.ts",
+    "backup-drill": "bash scripts/backup-restore-drill.sh",
+    "dev:docs": "npm run start --workspace=@platform/docs",
+    "build:docs": "npm run build --workspace=@platform/docs",
+    "export-openapi": "tsx packages/shared/src/bin/export-openapi.ts",
+    "prod:check": "node scripts/production-readiness-check.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "overrides": {
+    "nodemailer": "9.0.1",
+    "undici": "6.27.0",
+    "serialize-javascript": "7.0.5",
+    "mailauth": {
+      "nodemailer": "9.0.1",
+      "undici": "6.27.0"
+    },
+    "cheerio": {
+      "undici": "6.27.0"
+    },
+    "copy-webpack-plugin": {
+      "serialize-javascript": "7.0.5"
+    },
+    "css-minimizer-webpack-plugin": {
+      "serialize-javascript": "7.0.5"
+    },
+    "protobufjs": "7.6.5",
+    "tar": "7.5.19"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "tsx": "^4.7.0",
+    "@types/node": "^20.11.0"
+  }
+}

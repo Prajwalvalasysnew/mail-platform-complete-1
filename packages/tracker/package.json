@@ -1,0 +1,24 @@
+{
+  "name": "@platform/tracker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@fastify/formbody": "^8.0.1",
+    "@fastify/rate-limit": "^10.1.1",
+    "@platform/shared": "*",
+    "fastify": "^5.2.0",
+    "ioredis": "^5.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

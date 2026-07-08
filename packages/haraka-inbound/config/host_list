@@ -1,0 +1,5 @@
+bounces.localhost
+fbl.localhost
+# Add your real bounce + FBL domains here in production:
+# bounces.yourdomain.com
+# fbl.yourdomain.com

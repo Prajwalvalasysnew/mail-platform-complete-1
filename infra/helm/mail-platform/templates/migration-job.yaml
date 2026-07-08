@@ -1,0 +1,47 @@
+{{- if .Values.migration.enabled }}
+{{- $tag := include "mail-platform.imageTag" (dict "componentTag" .Values.migration.image.tag "globalTag" .Values.global.image.tag "Chart" .Chart) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-migrate-{{ .Release.Revision }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    # Run before install and upgrade so the DB schema is up to date before pods start.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: migration
+        app.kubernetes.io/name: {{ include "mail-platform.name" . }}
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: "{{ .Values.global.image.registry }}/{{ .Values.global.image.repository }}-api:{{ $tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # Path matches the API image layout (WORKDIR is the repo root and the
+          # migrate binary is built into packages/shared/dist/bin/).
+          command: ["node", "packages/shared/dist/bin/migrate.js"]
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.existingSecret }}
+          resources:
+            {{- toYaml .Values.migration.resources | nindent 12 }}
+{{- end }}

@@ -1,0 +1,66 @@
+{{- $tag := include "mail-platform.imageTag" (dict "componentTag" .Values.worker.image.tag "globalTag" .Values.global.image.tag "Chart" .Chart) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "worker") | nindent 8 }}
+        app.kubernetes.io/name: {{ include "mail-platform.name" . }}
+    spec:
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: "{{ .Values.global.image.registry }}/{{ .Values.global.image.repository }}-worker:{{ $tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: health
+              containerPort: 9091
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.existingSecret }}
+            - configMapRef:
+                name: {{ include "mail-platform.fullname" . }}-worker-config
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3

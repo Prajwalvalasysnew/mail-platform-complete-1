@@ -1,0 +1,12 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "build",
+  "installCommand": "npm ci",
+  "framework": "docusaurus2",
+  "env": {
+    "DOCS_URL": "https://docs.yourplatform.com"
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

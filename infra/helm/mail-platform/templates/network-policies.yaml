@@ -1,0 +1,170 @@
+{{- if .Values.networkPolicy.enabled }}
+# Deny all ingress/egress by default; each service gets an explicit allow list.
+# This requires a CNI that enforces NetworkPolicy (Calico, Cilium, Weave).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-default-deny
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# API: ingress from ingress-nginx, egress to Postgres + Redis + worker (for metrics)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "mail-platform.name" . }}
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # HTTPS from the nginx ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
+  egress:
+    # DNS (CoreDNS)
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL
+    - ports:
+        - protocol: TCP
+          port: 5432
+    # Redis
+    - ports:
+        - protocol: TCP
+          port: 6379
+    # ClickHouse
+    - ports:
+        - protocol: TCP
+          port: 8123
+        - protocol: TCP
+          port: 9000
+---
+# Worker: egress to Postgres + Redis + Haraka/SES SMTP; no ingress needed
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "mail-platform.name" . }}
+      app.kubernetes.io/component: worker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Prometheus scrape from monitoring namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    # DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL
+    - ports:
+        - protocol: TCP
+          port: 5432
+    # Redis
+    - ports:
+        - protocol: TCP
+          port: 6379
+    # ClickHouse
+    - ports:
+        - protocol: TCP
+          port: 8123
+        - protocol: TCP
+          port: 9000
+    # SMTP (Haraka self-hosted or SES relay)
+    - ports:
+        - protocol: TCP
+          port: 25
+        - protocol: TCP
+          port: 587
+        - protocol: TCP
+          port: 465
+        - protocol: TCP
+          port: 2525
+    # External HTTPS for Google Postmaster / SNDS / billing alert webhooks
+    - ports:
+        - protocol: TCP
+          port: 443
+---
+# Tracker: ingress from nginx, egress to Postgres + Redis + eventsQueue (Redis)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-tracker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "mail-platform.name" . }}
+      app.kubernetes.io/component: tracker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: {{ .Values.tracker.service.port }}
+  egress:
+    # DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL
+    - ports:
+        - protocol: TCP
+          port: 5432
+    # Redis (for eventsQueue + suppression cache)
+    - ports:
+        - protocol: TCP
+          port: 6379
+    # ClickHouse
+    - ports:
+        - protocol: TCP
+          port: 8123
+        - protocol: TCP
+          port: 9000
+{{- end }}

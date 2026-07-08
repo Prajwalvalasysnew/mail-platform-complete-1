@@ -1,0 +1,8 @@
+# Inbound stage: authenticate the worker, accept the message
+auth/flat_file
+relay
+
+# Outbound stage: sign and emit events, then deliver
+customer_dkim
+header_cleanup
+event_emitter

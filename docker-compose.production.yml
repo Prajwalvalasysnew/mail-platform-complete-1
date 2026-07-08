@@ -1,0 +1,95 @@
+# Production hardening overlay.
+#
+# Usage:
+#   docker compose --env-file .env.production \
+#     -f docker-compose.yml -f docker-compose.production.yml up -d --build
+#
+# Keep docker-compose.yml as the local development default. This overlay turns
+# on production config enforcement, replaces development secrets with required
+# env values, and prevents unauthenticated metrics scraping.
+
+services:
+  postgres:
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+
+  redis:
+    ports: !reset []
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+
+  haraka-outbound:
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      HARAKA_OUTBOUND_PASS: ${HARAKA_OUTBOUND_PASS:?set HARAKA_OUTBOUND_PASS}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
+      VERP_SECRET: ${VERP_SECRET:?set VERP_SECRET}
+      DKIM_REQUIRED: "true"
+
+  haraka-inbound:
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      VERP_SECRET: ${VERP_SECRET:?set VERP_SECRET}
+      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN}
+
+  api:
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
+      VERP_SECRET: ${VERP_SECRET:?set VERP_SECRET}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN}
+      API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER}
+      ADMIN_SESSION_PEPPER: ${ADMIN_SESSION_PEPPER:?set ADMIN_SESSION_PEPPER}
+      USER_SESSION_PEPPER: ${USER_SESSION_PEPPER:?set USER_SESSION_PEPPER}
+      MFA_RECOVERY_PEPPER: ${MFA_RECOVERY_PEPPER:?set MFA_RECOVERY_PEPPER}
+      ADMIN_PASSWORD_LOGIN_DISABLED: "true"
+      METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}
+      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN}
+      APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL}
+      TRACKING_DOMAIN: ${TRACKING_DOMAIN:?set TRACKING_DOMAIN}
+      BOUNCE_DOMAIN: ${BOUNCE_DOMAIN:?set BOUNCE_DOMAIN}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?set CORS_ALLOWED_ORIGINS}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:?set OIDC_ISSUER_URL}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?set OIDC_CLIENT_ID}
+
+  worker:
+    ports: !reset []
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      HARAKA_OUTBOUND_PASS: ${HARAKA_OUTBOUND_PASS:?set HARAKA_OUTBOUND_PASS}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
+      VERP_SECRET: ${VERP_SECRET:?set VERP_SECRET}
+      API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER}
+      ADMIN_SESSION_PEPPER: ${ADMIN_SESSION_PEPPER:?set ADMIN_SESSION_PEPPER}
+      USER_SESSION_PEPPER: ${USER_SESSION_PEPPER:?set USER_SESSION_PEPPER}
+      MFA_RECOVERY_PEPPER: ${MFA_RECOVERY_PEPPER:?set MFA_RECOVERY_PEPPER}
+      METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}
+      TRACKING_DOMAIN: ${TRACKING_DOMAIN:?set TRACKING_DOMAIN}
+      BOUNCE_DOMAIN: ${BOUNCE_DOMAIN:?set BOUNCE_DOMAIN}
+      DELIVERY_TRANSPORT: ${DELIVERY_TRANSPORT:?set DELIVERY_TRANSPORT}
+      SES_SMTP_HOST: ${SES_SMTP_HOST:-}
+      SES_SMTP_PORT: ${SES_SMTP_PORT:-587}
+      SES_SMTP_USER: ${SES_SMTP_USER:-}
+      SES_SMTP_PASS: ${SES_SMTP_PASS:-}
+      SES_MAX_CONNECTIONS: ${SES_MAX_CONNECTIONS:-10}
+
+  tracker:
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}

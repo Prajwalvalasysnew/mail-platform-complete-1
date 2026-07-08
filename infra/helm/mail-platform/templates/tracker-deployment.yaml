@@ -1,0 +1,65 @@
+{{- $tag := include "mail-platform.imageTag" (dict "componentTag" .Values.tracker.image.tag "globalTag" .Values.global.image.tag "Chart" .Chart) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-tracker
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tracker
+spec:
+  replicas: {{ .Values.tracker.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "tracker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "tracker") | nindent 8 }}
+        app.kubernetes.io/name: {{ include "mail-platform.name" . }}
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tracker
+          image: "{{ .Values.global.image.registry }}/{{ .Values.global.image.repository }}-tracker:{{ $tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.tracker.service.port }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.existingSecret }}
+            - configMapRef:
+                name: {{ include "mail-platform.fullname" . }}-tracker-config
+          resources:
+            {{- toYaml .Values.tracker.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5

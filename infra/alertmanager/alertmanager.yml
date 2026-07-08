@@ -1,0 +1,115 @@
+# Alertmanager routing configuration.
+#
+# Replace all REPLACE markers before deploying. The typical secret delivery
+# mechanism is a k8s Secret → mounted as /etc/alertmanager/alertmanager.yml.
+# Never commit real tokens here.
+#
+# Receiver priority order:
+#   critical severity  → PagerDuty (wakes the on-call) + #mail-critical Slack
+#   warning severity   → #mail-alerts Slack only
+#   all resolved       → Slack only (no PD resolve noise unless explicitly set)
+#
+# OpsGenie is included as an alternative to PagerDuty — uncomment the
+# opsgenie_configs block and remove pagerduty_configs if you prefer it.
+
+global:
+  resolve_timeout: 5m
+  # Slack: create an Incoming Webhook at api.slack.com/messaging/webhooks
+  slack_api_url: "https://hooks.slack.com/services/REPLACE/REPLACE/REPLACE"
+
+# ---- Routing tree ----
+route:
+  receiver: slack-warning           # default for anything not matched below
+  group_by: [alertname, pool]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    # Critical: page on-call AND post to #mail-critical
+    - matchers: [severity="critical"]
+      receiver: pagerduty-critical
+      group_wait: 0s                # page immediately, no batching
+      repeat_interval: 1h
+      continue: true                # also fall through to the Slack route below
+
+    - matchers: [severity="critical"]
+      receiver: slack-critical
+      group_wait: 0s
+      repeat_interval: 30m
+
+    # Deliverability-specific routing: critical alerts get their own PD service
+    - matchers: [alertname=~"HighBounceRate|HighComplaintRate|PoolPaused|BlocklistListing"]
+      receiver: pagerduty-deliverability
+      group_wait: 0s
+      repeat_interval: 1h
+      continue: true
+
+# ---- Receivers ----
+receivers:
+  - name: slack-warning
+    slack_configs:
+      - channel: "#mail-alerts"
+        icon_emoji: ":warning:"
+        title: "[{{ .Status | toUpper }}{{ if eq .Status \"firing\" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}"
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          Labels: {{ range .Labels.SortedPairs }} `{{ .Name }}={{ .Value }}`{{ end }}
+          {{ end }}
+        send_resolved: true
+
+  - name: slack-critical
+    slack_configs:
+      - channel: "#mail-critical"
+        icon_emoji: ":fire:"
+        title: ":fire: [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}"
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          Labels: {{ range .Labels.SortedPairs }} `{{ .Name }}={{ .Value }}`{{ end }}
+          {{ end }}
+        send_resolved: true
+
+  # PagerDuty — general critical alerts
+  # Create an "Events API v2" integration in PagerDuty → Services → mail-platform
+  - name: pagerduty-critical
+    pagerduty_configs:
+      - routing_key: "REPLACE_PAGERDUTY_INTEGRATION_KEY"  # Events API v2 key
+        description: "{{ .CommonLabels.alertname }}: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}"
+        severity: critical
+        send_resolved: true
+
+  # PagerDuty — deliverability alerts (may want a dedicated escalation policy)
+  - name: pagerduty-deliverability
+    pagerduty_configs:
+      - routing_key: "REPLACE_PAGERDUTY_DELIVERABILITY_KEY"  # separate service or same key
+        description: "Deliverability: {{ .CommonLabels.alertname }}"
+        severity: critical
+        details:
+          pool: '{{ .CommonLabels.pool }}'
+          value: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+        send_resolved: true
+
+# ---- OpsGenie alternative (uncomment if using OpsGenie instead of PagerDuty) ----
+#
+#   - name: opsgenie-critical
+#     opsgenie_configs:
+#       - api_key: "REPLACE_OPSGENIE_API_KEY"
+#         responders:
+#           - name: "mail-platform-oncall"
+#             type: team
+#         message: "{{ .CommonLabels.alertname }}"
+#         description: "{{ range .Alerts }}{{ .Annotations.description }}{{ end }}"
+#         priority: P1
+#         send_resolved: true
+
+# ---- Inhibition rules ----
+# Suppress warning-level queue alerts when the pool is already paused (the
+# pause alert is the higher-priority signal).
+inhibit_rules:
+  - source_matchers: [alertname="PoolPaused", severity="critical"]
+    target_matchers: [alertname="QueueBacklog", severity="warning"]
+    equal: [pool]

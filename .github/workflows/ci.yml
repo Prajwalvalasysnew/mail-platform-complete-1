@@ -1,0 +1,134 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: mail_platform
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:ci@localhost:5432/mail_platform
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-jwt-secret-padding-padding-padding-padding-padding
+      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      API_KEY_PEPPER: ci-pepper-padding-padding-padding-padding
+      VERP_SECRET: ci-verp-secret-padding-padding-padding-padding
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Build all packages
+        run: |
+          npm run build --workspace=@platform/shared
+          npm run build --workspace=@platform/api
+          npm run build --workspace=@platform/worker
+          npm run build --workspace=@platform/tracker
+      - name: Validate production deployment contract
+        run: npm run prod:check
+      - name: Apply migrations
+        run: node packages/shared/dist/bin/migrate.js infra/migrations
+      - name: Run tests (unit + end-to-end)
+        run: npm test
+        env:
+          DELIVERY_TRANSPORT: haraka
+          TRACKING_DOMAIN: http://localhost:4000
+          BOUNCE_DOMAIN: bounces.localhost
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci
+      # Fail the build on high/critical vulnerabilities. Pin runtimes (Node,
+      # Haraka) in production images so this also catches the base image.
+      - name: npm audit (high+)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: false
+      # Software Bill of Materials artifact for supply-chain auditing.
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          npx -y @cyclonedx/cyclonedx-npm@^1.16.0 --output-file sbom.json --output-format json || true
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom, path: sbom.json, if-no-files-found: warn }
+
+  lint-sql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The migration runner refuses to re-apply a changed checksum; this job
+      # also catches obvious SQL errors by dry-running against a throwaway DB
+      # via the build-and-test job. This step lints filenames are ordered.
+      - name: Verify migration ordering
+        run: |
+          ls -1 infra/migrations/*.sql | sort -c
+          echo "migrations are in lexical order ✓"
+
+  image-scan:
+    runs-on: ubuntu-latest
+    # Build each service image and scan with Trivy. Fails the pipeline on any
+    # HIGH or CRITICAL CVE that has a fix available, so we never ship a known-
+    # vulnerable image to production. Only OS + library vulnerabilities are
+    # checked here; npm audit (in the security job) covers Node package CVEs.
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: api
+            dockerfile: packages/api/Dockerfile
+          - name: worker
+            dockerfile: packages/worker/Dockerfile
+          - name: tracker
+            dockerfile: packages/tracker/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.service.name }} image
+        run: |
+          docker build \
+            -f ${{ matrix.service.dockerfile }} \
+            -t mail-platform-${{ matrix.service.name }}:ci \
+            .
+
+      - name: Scan ${{ matrix.service.name }} image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: mail-platform-${{ matrix.service.name }}:ci
+          format: sarif
+          output: trivy-${{ matrix.service.name }}.sarif
+          # Fail on fixable HIGH/CRITICAL vulnerabilities only.
+          # Unfixable CVEs in the base image are informational — they can't be
+          # remediated by us; flag them separately via the ignore-unfixed flag.
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      # Upload SARIF so findings appear in GitHub Security → Code scanning.
+      - name: Upload Trivy SARIF to GitHub Security
+        if: always()   # upload even if the scan step failed
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.service.name }}.sarif
+          category: trivy-${{ matrix.service.name }}

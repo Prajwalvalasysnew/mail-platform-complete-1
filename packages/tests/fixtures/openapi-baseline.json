@@ -1,0 +1,313 @@
+{
+  "POST /send/batch": {
+    "operationId": "sendBatch",
+    "requiredParams": []
+  },
+  "POST /send": {
+    "operationId": "sendEmail",
+    "requiredParams": []
+  },
+  "GET /domains": {
+    "operationId": "listDomains",
+    "requiredParams": []
+  },
+  "POST /domains": {
+    "operationId": "addDomain",
+    "requiredParams": []
+  },
+  "POST /domains/{id}/verify": {
+    "operationId": "verifyDomain",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "DELETE /domains/{id}": {
+    "operationId": "deleteDomain",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "GET /messages": {
+    "operationId": "listMessages",
+    "requiredParams": []
+  },
+  "GET /messages/activity": {
+    "operationId": "listMessageActivity",
+    "requiredParams": []
+  },
+  "GET /messages/{messageId}": {
+    "operationId": "getMessage",
+    "requiredParams": [
+      "messageId"
+    ]
+  },
+  "GET /suppressions": {
+    "operationId": "listSuppressions",
+    "requiredParams": []
+  },
+  "POST /suppressions": {
+    "operationId": "addSuppression",
+    "requiredParams": []
+  },
+  "POST /suppressions/import": {
+    "operationId": "importSuppressions",
+    "requiredParams": []
+  },
+  "DELETE /suppressions/{email}": {
+    "operationId": "removeSuppression",
+    "requiredParams": [
+      "email"
+    ]
+  },
+  "GET /suppressions/{email}/consent-history": {
+    "operationId": "getConsentHistory",
+    "requiredParams": [
+      "email"
+    ]
+  },
+  "GET /templates": {
+    "operationId": "listTemplates",
+    "requiredParams": []
+  },
+  "POST /templates": {
+    "operationId": "createTemplate",
+    "requiredParams": []
+  },
+  "GET /templates/{id}": {
+    "operationId": "getTemplate",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "PUT /templates/{id}": {
+    "operationId": "updateTemplate",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "DELETE /templates/{id}": {
+    "operationId": "deleteTemplate",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "GET /usage": {
+    "operationId": "getUsage",
+    "requiredParams": []
+  },
+  "GET /usage/quota": {
+    "operationId": "getQuotaUsage",
+    "requiredParams": []
+  },
+  "GET /stats": {
+    "operationId": "getStats",
+    "requiredParams": []
+  },
+  "GET /analytics/summary": {
+    "operationId": "analyticsSummary",
+    "requiredParams": []
+  },
+  "GET /analytics/timeseries": {
+    "operationId": "analyticsTimeseries",
+    "requiredParams": []
+  },
+  "GET /analytics/breakdown": {
+    "operationId": "analyticsBreakdown",
+    "requiredParams": [
+      "by"
+    ]
+  },
+  "GET /webhooks": {
+    "operationId": "listWebhooks",
+    "requiredParams": []
+  },
+  "POST /webhooks": {
+    "operationId": "createWebhook",
+    "requiredParams": []
+  },
+  "DELETE /webhooks/{id}": {
+    "operationId": "deleteWebhook",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "POST /webhooks/{id}/rotate-secret": {
+    "operationId": "rotateWebhookSecret",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "POST /webhooks/{id}/test": {
+    "operationId": "testWebhook",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "GET /webhooks/{id}/deliveries": {
+    "operationId": "listWebhookDeliveries",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "POST /webhooks/{id}/retry-failures": {
+    "operationId": "retryWebhookFailures",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "POST /webhooks/{id}/deliveries/{deliveryId}/replay": {
+    "operationId": "replayWebhookDelivery",
+    "requiredParams": [
+      "deliveryId",
+      "id"
+    ]
+  },
+  "GET /support/tickets": {
+    "operationId": "listSupportTickets",
+    "requiredParams": []
+  },
+  "POST /support/tickets": {
+    "operationId": "createSupportTicket",
+    "requiredParams": []
+  },
+  "GET /support/tickets/unread-count": {
+    "operationId": "getSupportTicketUnreadCount",
+    "requiredParams": []
+  },
+  "GET /support/tickets/{id}": {
+    "operationId": "getSupportTicket",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "POST /support/tickets/{id}/read": {
+    "operationId": "markSupportTicketRead",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "POST /support/tickets/{id}/messages": {
+    "operationId": "replyToSupportTicket",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "POST /support/tickets/{id}/rate": {
+    "operationId": "rateSupportTicket",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "GET /account/billing": {
+    "operationId": "getAccountBilling",
+    "requiredParams": []
+  },
+  "POST /account/billing/checkout": {
+    "operationId": "startBillingCheckout",
+    "requiredParams": []
+  },
+  "POST /account/billing/portal": {
+    "operationId": "startBillingPortal",
+    "requiredParams": []
+  },
+  "POST /billing/webhook": {
+    "operationId": "receiveStripeBillingWebhook",
+    "requiredParams": []
+  },
+  "POST /billing/webhook/{provider}": {
+    "operationId": "receiveBillingWebhook",
+    "requiredParams": [
+      "provider"
+    ]
+  },
+  "GET /account/domains": {
+    "operationId": "listAccountDomains",
+    "requiredParams": []
+  },
+  "POST /account/domains": {
+    "operationId": "addAccountDomain",
+    "requiredParams": []
+  },
+  "GET /account/domains/{id}": {
+    "operationId": "getAccountDomain",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "DELETE /account/domains/{id}": {
+    "operationId": "deleteAccountDomain",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "POST /account/domains/{id}/verify": {
+    "operationId": "verifyAccountDomain",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "GET /account/webhooks": {
+    "operationId": "listAccountWebhooks",
+    "requiredParams": []
+  },
+  "POST /account/webhooks": {
+    "operationId": "createAccountWebhook",
+    "requiredParams": []
+  },
+  "PATCH /account/webhooks/{id}": {
+    "operationId": "updateAccountWebhook",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "DELETE /account/webhooks/{id}": {
+    "operationId": "deleteAccountWebhook",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "POST /account/webhooks/{id}/rotate-secret": {
+    "operationId": "rotateAccountWebhookSecret",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "GET /auth/sessions": {
+    "operationId": "listUserSessions",
+    "requiredParams": []
+  },
+  "POST /auth/sessions/revoke-others": {
+    "operationId": "revokeOtherUserSessions",
+    "requiredParams": []
+  },
+  "DELETE /auth/sessions/{id}": {
+    "operationId": "revokeUserSession",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "GET /account/api-keys": {
+    "operationId": "listAccountApiKeys",
+    "requiredParams": []
+  },
+  "POST /account/api-keys": {
+    "operationId": "createAccountApiKey",
+    "requiredParams": []
+  },
+  "POST /account/api-keys/{id}/rotate": {
+    "operationId": "rotateAccountApiKey",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "DELETE /account/api-keys/{id}": {
+    "operationId": "revokeAccountApiKey",
+    "requiredParams": [
+      "id"
+    ]
+  },
+  "POST /privacy/delete-recipient": {
+    "operationId": "deleteRecipient",
+    "requiredParams": []
+  }
+}

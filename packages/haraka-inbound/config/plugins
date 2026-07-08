@@ -1,0 +1,6 @@
+# Inbound bounce/FBL processing
+# Accept mail for bounces.* and fbl.* domains, then parse
+
+rcpt_to.in_host_list
+headers
+bounce_parser

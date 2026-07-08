@@ -1,0 +1,12 @@
+apiVersion: v2
+name: mail-platform
+description: Mail Platform — transactional email service (API, worker, tracker)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - email
+  - smtp
+  - transactional
+maintainers:
+  - name: Platform Team

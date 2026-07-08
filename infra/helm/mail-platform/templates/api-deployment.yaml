@@ -1,0 +1,72 @@
+{{- $tag := include "mail-platform.imageTag" (dict "componentTag" .Values.api.image.tag "globalTag" .Values.global.image.tag "Chart" .Chart) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "mail-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "api") | nindent 8 }}
+        app.kubernetes.io/name: {{ include "mail-platform.name" . }}
+    spec:
+      terminationGracePeriodSeconds: 60
+      # Restricted Pod Security Standard: run as the image's non-root `node`
+      # user, block privilege escalation, and drop all Linux capabilities.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: "{{ .Values.global.image.registry }}/{{ .Values.global.image.repository }}-api:{{ $tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.service.port }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.existingSecret }}
+            - configMapRef:
+                name: {{ include "mail-platform.fullname" . }}-api-config
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]

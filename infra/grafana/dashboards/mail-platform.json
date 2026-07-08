@@ -1,0 +1,251 @@
+{
+  "title": "Mail Platform \u2014 Operational Overview",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "30s",
+  "tags": [
+    "mail-platform"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "pool",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(mp_pool_bounce_rate, pool)",
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "Sends accepted / sent / delivered (rate)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "rate(mp_messages_accepted_total[5m])",
+          "legendFormat": "accepted"
+        },
+        {
+          "expr": "rate(mp_messages_sent_total[5m])",
+          "legendFormat": "sent"
+        },
+        {
+          "expr": "rate(mp_messages_delivered_total[5m])",
+          "legendFormat": "delivered"
+        }
+      ]
+    },
+    {
+      "title": "Bounce rate by pool (rolling 24h)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "mp_pool_bounce_rate{pool=~\"$pool\"}",
+          "legendFormat": "{{pool}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.02
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Complaint rate by pool",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "expr": "mp_pool_complaint_rate{pool=~\"$pool\"}",
+          "legendFormat": "{{pool}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.003
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Send queue depth (waiting + delayed)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "expr": "mp_queue_depth{queue=\"send\"}",
+          "legendFormat": "{{state}}"
+        }
+      ]
+    },
+    {
+      "title": "API send latency (p50 / p95 / p99)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(mp_send_duration_seconds_bucket[5m]))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(mp_send_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(mp_send_duration_seconds_bucket[5m]))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Pool paused / Blocklist listings",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum(mp_pool_paused)",
+          "legendFormat": "pools paused"
+        },
+        {
+          "expr": "sum(mp_blocklist_listings)",
+          "legendFormat": "blocklist listings"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Backpressure rejections / dead-letter / DSN parse failures",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "expr": "rate(mp_backpressure_rejections_total[5m])",
+          "legendFormat": "backpressure_503"
+        },
+        {
+          "expr": "rate(mp_dead_letter_total[5m])",
+          "legendFormat": "dead_letter ({{source_queue}})"
+        },
+        {
+          "expr": "rate(mp_dsn_parse_total{outcome=\"failed\"}[5m])",
+          "legendFormat": "dsn_parse_failed"
+        }
+      ]
+    },
+    {
+      "title": "Open/click engagement by verdict (bot detection)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum by (event_type, verdict) (rate(mp_engagement_events_total[5m]))",
+          "legendFormat": "{{event_type}} \u2014 {{verdict}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

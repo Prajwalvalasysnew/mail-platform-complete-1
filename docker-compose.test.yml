@@ -1,0 +1,57 @@
+# Fully isolated infrastructure for the test suite.
+# Run with: docker compose -f docker-compose.test.yml up -d
+# Tear down: docker compose -f docker-compose.test.yml down -v
+#
+# Ports are offset from the dev compose so the two stacks can coexist:
+#   postgres:  5434  (dev: 5432)
+#   redis:     6380  (dev: 6379)
+#   mailpit:   8026  (dev: 8025)  SMTP: 1026 (dev: 1025)
+#
+# The test suite reads DATABASE_URL / REDIS_HOST / REDIS_PORT from .env.test
+# (or environment) — those must match the ports defined here.
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: mail-postgres-test
+    environment:
+      POSTGRES_USER: mail_test
+      POSTGRES_PASSWORD: mailtest
+      POSTGRES_DB: mail_test
+    ports:
+      - "5434:5432"
+    tmpfs:
+      - /var/lib/postgresql/data   # in-memory for speed; discarded on stop
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mail_test -d mail_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+    command: >
+      postgres
+        -c max_connections=100
+        -c shared_buffers=128MB
+        -c fsync=off
+        -c synchronous_commit=off
+        -c full_page_writes=off
+
+  redis-test:
+    image: redis:7-alpine
+    container_name: mail-redis-test
+    ports:
+      - "6380:6379"
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  mailpit-test:
+    image: axllent/mailpit:latest
+    container_name: mail-mailpit-test
+    ports:
+      - "8026:8025"   # UI
+      - "1026:1025"   # SMTP
+    environment:
+      MP_MAX_MESSAGES: "200"
