@@ -59,6 +59,10 @@ jobs:
           npm run build --workspace=@platform/api
           npm run build --workspace=@platform/worker
           npm run build --workspace=@platform/tracker
+          # The SDK must be built too: e2e/sdk.e2e.test.ts imports @platform/sdk,
+          # whose package.json main/exports point at dist/, so an unbuilt sdk
+          # fails module resolution ("Failed to resolve entry for @platform/sdk").
+          npm run build --workspace=@platform/sdk
       - name: Validate production deployment contract
         run: npm run prod:check
       - name: Apply migrations
