@@ -3,10 +3,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildTestApp } from './harness.js';
 import { db, getBillingProviderFor, MockBillingProvider, registerBillingProvider, setBillingProvider } from '@platform/shared';
+import { setPayPalWebhookVerifierForTests } from '@platform/api/routes/billing.js';
 
 let app: FastifyInstance;
 const originalStripeSecret = process.env.STRIPE_WEBHOOK_SECRET;
-const originalPayPalSecret = process.env.PAYPAL_WEBHOOK_SECRET;
 const originalCashfreeSecret = process.env.CASHFREE_WEBHOOK_SECRET;
 
 beforeAll(async () => {
@@ -15,7 +15,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   process.env.STRIPE_WEBHOOK_SECRET = originalStripeSecret;
-  process.env.PAYPAL_WEBHOOK_SECRET = originalPayPalSecret;
+  setPayPalWebhookVerifierForTests();
   process.env.CASHFREE_WEBHOOK_SECRET = originalCashfreeSecret;
   setBillingProvider(null);
   await app.close();
@@ -23,7 +23,7 @@ afterAll(async () => {
 
 afterEach(() => {
   process.env.STRIPE_WEBHOOK_SECRET = originalStripeSecret;
-  process.env.PAYPAL_WEBHOOK_SECRET = originalPayPalSecret;
+  setPayPalWebhookVerifierForTests();
   process.env.CASHFREE_WEBHOOK_SECRET = originalCashfreeSecret;
   setBillingProvider(null);
 });
@@ -61,14 +61,15 @@ function cashfreeHeaders(payload: string, secret: string) {
   return { 'x-webhook-timestamp': timestamp, 'x-webhook-signature': sig };
 }
 
-function paypalHeaders(payload: string, secret: string) {
+function paypalHeaders() {
   const transmissionId = `tx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const transmissionTime = new Date().toISOString();
-  const sig = crypto.createHmac('sha256', secret).update(`${transmissionId}.${transmissionTime}.${payload}`).digest('base64');
   return {
     'paypal-transmission-id': transmissionId,
     'paypal-transmission-time': transmissionTime,
-    'paypal-transmission-sig': sig,
+    'paypal-transmission-sig': 'official-verifier-test-signature',
+    'paypal-cert-url': 'https://api-m.sandbox.paypal.com/v1/notifications/certs/test',
+    'paypal-auth-algo': 'SHA256withRSA',
   };
 }
 
@@ -165,7 +166,9 @@ describe('multi-provider billing', () => {
   });
 
   it('accepts valid PayPal webhook signatures and rejects invalid signatures', async () => {
-    process.env.PAYPAL_WEBHOOK_SECRET = 'paypal-webhook-secret';
+    setPayPalWebhookVerifierForTests(async ({ transmissionId, certUrl, authAlgo }) =>
+      transmissionId !== 'bad' && certUrl?.startsWith('https://api-m.sandbox.paypal.com/') === true && authAlgo === 'SHA256withRSA'
+    );
     const c = await register(`bill-wh-paypal-${Date.now()}@example.com`);
     const providerCustomerId = `payer_webhook_${c.customerId}`;
     const providerSubscriptionId = `sub_paypal_${crypto.randomUUID()}`;
@@ -186,7 +189,7 @@ describe('multi-provider billing', () => {
     const ok = await app.inject({
       method: 'POST',
       url: '/v1/billing/webhook/paypal',
-      headers: { 'content-type': 'application/json', ...paypalHeaders(payload, process.env.PAYPAL_WEBHOOK_SECRET) },
+      headers: { 'content-type': 'application/json', ...paypalHeaders() },
       payload,
     });
     expect(ok.statusCode).toBe(200);
@@ -199,7 +202,14 @@ describe('multi-provider billing', () => {
     const bad = await app.inject({
       method: 'POST',
       url: '/v1/billing/webhook/paypal',
-      headers: { 'content-type': 'application/json', 'paypal-transmission-id': 'bad', 'paypal-transmission-time': new Date().toISOString(), 'paypal-transmission-sig': 'bad' },
+      headers: {
+        'content-type': 'application/json',
+        'paypal-transmission-id': 'bad',
+        'paypal-transmission-time': new Date().toISOString(),
+        'paypal-transmission-sig': 'bad',
+        'paypal-cert-url': 'https://api-m.sandbox.paypal.com/v1/notifications/certs/test',
+        'paypal-auth-algo': 'SHA256withRSA',
+      },
       payload,
     });
     expect(bad.statusCode).toBe(400);
@@ -253,7 +263,7 @@ describe('multi-provider billing', () => {
   });
 
   it('falls back to internal_customer_id when PayPal payer_id differs from stored id', async () => {
-    process.env.PAYPAL_WEBHOOK_SECRET = 'paypal-webhook-secret-fallback';
+    setPayPalWebhookVerifierForTests(async () => true);
     const c = await register(`bill-wh-paypal-fallback-${Date.now()}@example.com`);
     // Simulate production: stripe_customer_id stores our synthetic hash, not the real payer_id
     await db.updateTable('customers').set({ billing_provider: 'paypal' as any, stripe_customer_id: `paypal_payer_synth_${c.customerId}` } as any).where('id', '=', c.customerId).execute();
@@ -279,7 +289,7 @@ describe('multi-provider billing', () => {
     const ok = await app.inject({
       method: 'POST',
       url: '/v1/billing/webhook/paypal',
-      headers: { 'content-type': 'application/json', ...paypalHeaders(payload, process.env.PAYPAL_WEBHOOK_SECRET) },
+      headers: { 'content-type': 'application/json', ...paypalHeaders() },
       payload,
     });
     expect(ok.statusCode).toBe(200);

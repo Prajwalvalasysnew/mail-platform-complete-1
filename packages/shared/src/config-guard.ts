@@ -79,9 +79,14 @@ function billingWebhookRules(env: NodeJS.ProcessEnv): SecretRule[] {
       // Only enforce if Stripe is live-configured (else it's the mock fallback).
       return env.STRIPE_SECRET_KEY ? [{ name: 'STRIPE_WEBHOOK_SECRET', required: true, minLength: 16 }] : [];
     case 'paypal':
-      return env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET
-        ? [{ name: 'PAYPAL_WEBHOOK_SECRET', required: true, minLength: 16 }]
-        : [];
+      // Selecting PayPal in production is an explicit commitment to its
+      // official OAuth-backed webhook verifier. Do not silently fall back to a
+      // mock/incomplete provider when BILLING_PROVIDER=paypal is set.
+      return [
+        { name: 'PAYPAL_CLIENT_ID', required: true, minLength: 8 },
+        { name: 'PAYPAL_CLIENT_SECRET', required: true, minLength: 16 },
+        { name: 'PAYPAL_WEBHOOK_ID', required: true, minLength: 8 },
+      ];
     case 'cashfree':
       return env.CASHFREE_APP_ID && env.CASHFREE_SECRET_KEY
         ? [{ name: 'CASHFREE_WEBHOOK_SECRET', required: true, minLength: 16 }]

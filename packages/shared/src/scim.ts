@@ -7,8 +7,7 @@
 
 import crypto from 'node:crypto';
 import { db } from './db.js';
-import { createUser, findUserByEmail } from './users.js';
-import { addMembership } from './memberships.js';
+import { createUser } from './users.js';
 import type { MembershipRole } from './schema.js';
 
 // ─── Token management ────────────────────────────────────────────────────────
@@ -106,18 +105,18 @@ export const SCIM_ERROR_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:Error';
 const DEFAULT_SCIM_ROLE: MembershipRole = 'analyst';
 
 function toScimUser(
-  u: { id: string; email: string; name: string | null; scim_external_id: string | null; status: string; created_at: unknown; updated_at: unknown },
+  u: { id: string; email: string; user_name: string | null; scim_display_name: string | null; scim_external_id: string | null; scim_active: boolean; created_at: unknown; updated_at: unknown },
   baseUrl: string
 ): ScimUser {
-  const active = u.status === 'active';
+  const name = u.scim_display_name ?? u.user_name;
   return {
     schemas: [USER_SCHEMA],
     id: u.id,
     externalId: u.scim_external_id ?? undefined,
     userName: u.email,
-    name: u.name ? { formatted: u.name } : undefined,
-    displayName: u.name ?? undefined,
-    active,
+    name: name ? { formatted: name } : undefined,
+    displayName: name ?? undefined,
+    active: u.scim_active,
     emails: [{ value: u.email, primary: true }],
     meta: {
       resourceType: 'User',
@@ -142,12 +141,15 @@ async function loadScimUserRow(customerId: string, userId: string) {
     .selectFrom('users')
     .innerJoin('memberships', 'memberships.user_id', 'users.id')
     .select([
-      'users.id as id', 'users.email as email', 'users.name as name',
-      'users.scim_external_id as scim_external_id', 'users.status as status',
-      'users.created_at as created_at', 'users.updated_at as updated_at',
+      'users.id as id', 'users.email as email', 'users.name as user_name',
+      'memberships.scim_display_name as scim_display_name',
+      'memberships.scim_external_id as scim_external_id',
+      'memberships.scim_active as scim_active',
+      'memberships.created_at as created_at', 'memberships.scim_updated_at as updated_at',
     ])
     .where('users.id', '=', userId)
     .where('memberships.customer_id', '=', customerId)
+    .where('memberships.scim_managed', '=', true)
     .executeTakeFirst();
 }
 
@@ -165,28 +167,67 @@ export async function scimCreateUser(
   return db.transaction().execute(async (trx) => {
     // Idempotency: if a user with this email already exists, link + ensure
     // membership rather than erroring (IdPs retry provisioning).
-    let user = await findUserByEmail(email);
+    let user = await trx
+      .selectFrom('users')
+      .select(['id', 'email', 'name', 'status', 'email_verified_at', 'mfa_enabled'])
+      .where('email', '=', email)
+      .executeTakeFirst();
     if (!user) {
       user = await createUser({ email, name: displayName }, trx);
     }
-    // Mark SCIM-managed + set externalId.
-    await trx.updateTable('users')
+
+    // Create only when absent. addMembership() intentionally updates role on
+    // conflict, which would downgrade an existing owner/admin to analyst when
+    // their IdP retries provisioning.
+    await trx.insertInto('memberships')
+      .values({
+        user_id: user.id,
+        customer_id: customerId,
+        role: DEFAULT_SCIM_ROLE,
+        scim_managed: true,
+        scim_external_id: body.externalId ?? null,
+        scim_display_name: displayName,
+        scim_active: body.active !== false,
+        scim_updated_at: new Date(),
+      })
+      .onConflict((oc) => oc.columns(['user_id', 'customer_id']).doNothing())
+      .execute();
+
+    // SCIM lifecycle state is scoped to this tenant membership. Never change
+    // global users.status here: the person may belong to other tenants.
+    await trx.updateTable('memberships')
       .set({
         scim_managed: true,
         scim_external_id: body.externalId ?? null,
-        status: body.active === false ? 'disabled' : 'active',
-        updated_at: new Date(),
+        scim_display_name: displayName,
+        scim_active: body.active !== false,
+        scim_updated_at: new Date(),
       })
-      .where('id', '=', user.id)
+      .where('user_id', '=', user.id)
+      .where('customer_id', '=', customerId)
       .execute();
 
-    // Ensure org membership (default lowest role; no-op if already a member).
-    await addMembership(user.id, customerId, DEFAULT_SCIM_ROLE, trx).catch(() => {});
+    if (body.active === false) {
+      await trx.updateTable('user_sessions')
+        .set({ revoked_at: new Date() })
+        .where('user_id', '=', user.id)
+        .where('current_customer_id', '=', customerId)
+        .where('revoked_at', 'is', null)
+        .execute();
+    }
 
     const row = await trx
       .selectFrom('users')
-      .select(['id', 'email', 'name', 'scim_external_id', 'status', 'created_at', 'updated_at'])
-      .where('id', '=', user.id)
+      .innerJoin('memberships', 'memberships.user_id', 'users.id')
+      .select([
+        'users.id as id', 'users.email as email', 'users.name as user_name',
+        'memberships.scim_display_name as scim_display_name',
+        'memberships.scim_external_id as scim_external_id',
+        'memberships.scim_active as scim_active',
+        'memberships.created_at as created_at', 'memberships.scim_updated_at as updated_at',
+      ])
+      .where('users.id', '=', user.id)
+      .where('memberships.customer_id', '=', customerId)
       .executeTakeFirstOrThrow();
     return toScimUser(row, baseUrl);
   });
@@ -210,7 +251,8 @@ export async function scimListUsers(
   let q = db
     .selectFrom('users')
     .innerJoin('memberships', 'memberships.user_id', 'users.id')
-    .where('memberships.customer_id', '=', customerId);
+    .where('memberships.customer_id', '=', customerId)
+    .where('memberships.scim_managed', '=', true);
 
   // Minimal SCIM filter support: `userName eq "x"` / `externalId eq "x"`.
   const filter = opts.filter?.trim();
@@ -222,13 +264,19 @@ export async function scimListUsers(
     const value = rawValue.toLowerCase();
     q = attr === 'username'
       ? q.where('users.email', '=', value)
-      : q.where('users.scim_external_id', '=', rawValue);
+      : q.where('memberships.scim_external_id', '=', rawValue);
   }
 
   const total = await q.select(({ fn }) => fn.countAll<number>().as('c')).executeTakeFirst();
   const rows = await q
-    .select(['users.id as id', 'users.email as email', 'users.name as name', 'users.scim_external_id as scim_external_id', 'users.status as status', 'users.created_at as created_at', 'users.updated_at as updated_at'])
-    .orderBy('users.created_at', 'asc')
+    .select([
+      'users.id as id', 'users.email as email', 'users.name as user_name',
+      'memberships.scim_display_name as scim_display_name',
+      'memberships.scim_external_id as scim_external_id',
+      'memberships.scim_active as scim_active',
+      'memberships.created_at as created_at', 'memberships.scim_updated_at as updated_at',
+    ])
+    .orderBy('memberships.created_at', 'asc')
     .limit(count)
     .offset(startIndex - 1)
     .execute();
@@ -245,8 +293,8 @@ export async function scimListUsers(
 /**
  * SCIM PATCH — the operation IdPs use to DEPROVISION (set active=false). We
  * support the common `replace` of `active` and of name/displayName. Setting
- * active=false disables the user AND removes their membership in this tenant
- * (deprovisioning from THIS org) while preserving the user row + audit trail.
+ * active=false disables only this tenant's SCIM membership and preserves the
+ * global user plus memberships in every other tenant.
  */
 export async function scimPatchUser(
   customerId: string,
@@ -268,7 +316,11 @@ export async function scimPatchUser(
       if (p === 'active') {
         await setActive(customerId, userId, coerceBool(value));
       } else if (p === 'displayname' || p === 'name.formatted') {
-        await db.updateTable('users').set({ name: String(value), updated_at: new Date() }).where('id', '=', userId).execute();
+        await db.updateTable('memberships')
+          .set({ scim_display_name: String(value), scim_updated_at: new Date() })
+          .where('customer_id', '=', customerId)
+          .where('user_id', '=', userId)
+          .execute();
       }
     };
 
@@ -281,8 +333,7 @@ export async function scimPatchUser(
     }
   }
 
-  const updated = await loadScimUserRow(customerId, userId)
-    ?? await db.selectFrom('users').select(['id', 'email', 'name', 'scim_external_id', 'status', 'created_at', 'updated_at']).where('id', '=', userId).executeTakeFirst();
+  const updated = await loadScimUserRow(customerId, userId);
   if (!updated) throw new ScimError(404, undefined, `User ${userId} not found`);
   return toScimUser(updated, baseUrl);
 }
@@ -299,16 +350,21 @@ export async function scimReplaceUser(
   if (typeof body.active === 'boolean') await setActive(customerId, userId, body.active);
   const name = body.displayName ?? body.name?.formatted;
   if (name !== undefined) {
-    await db.updateTable('users').set({ name, updated_at: new Date() }).where('id', '=', userId).execute();
+    await db.updateTable('memberships')
+      .set({ scim_display_name: name, scim_updated_at: new Date() })
+      .where('customer_id', '=', customerId)
+      .where('user_id', '=', userId)
+      .execute();
   }
-  const updated = await db.selectFrom('users').select(['id', 'email', 'name', 'scim_external_id', 'status', 'created_at', 'updated_at']).where('id', '=', userId).executeTakeFirstOrThrow();
+  const updated = await loadScimUserRow(customerId, userId);
+  if (!updated) throw new ScimError(404, undefined, `User ${userId} not found`);
   return toScimUser(updated, baseUrl);
 }
 
 /**
- * SCIM DELETE — hard deprovision from THIS tenant: remove the membership and,
- * if the user has no other memberships, disable the user. The user row is kept
- * (never hard-deleted) so message/audit references remain valid.
+ * SCIM DELETE softly deprovisions from THIS tenant. The membership remains
+ * addressable as active:false, while the global user and memberships in other
+ * tenants remain active.
  */
 export async function scimDeleteUser(customerId: string, userId: string): Promise<void> {
   const row = await loadScimUserRow(customerId, userId);
@@ -318,17 +374,32 @@ export async function scimDeleteUser(customerId: string, userId: string): Promis
 
 async function setActive(customerId: string, userId: string, active: boolean): Promise<void> {
   if (active) {
-    await db.updateTable('users').set({ status: 'active', updated_at: new Date() }).where('id', '=', userId).execute();
-    await addMembership(userId, customerId, DEFAULT_SCIM_ROLE).catch(() => {});
+    const updated = await db.updateTable('memberships')
+      .set({ scim_managed: true, scim_active: true, scim_updated_at: new Date() })
+      .where('customer_id', '=', customerId)
+      .where('user_id', '=', userId)
+      .returning('id')
+      .executeTakeFirst();
+    if (!updated) throw new ScimError(404, undefined, `User ${userId} not found`);
     return;
   }
-  // Deprovision: disable the user account. A disabled user is denied at both
-  // session resolution and password auth (see user-sessions.ts / users.ts), so
-  // this fully revokes access — no need to delete the membership. Keeping the
-  // membership row means the user stays addressable by this tenant's SCIM token
-  // (so the IdP can re-activate them later, and they still appear in listings
-  // as active:false, per SCIM semantics). The user row is preserved for audit.
-  await db.updateTable('users').set({ status: 'disabled', updated_at: new Date() }).where('id', '=', userId).execute();
+  // Deprovision only this tenant membership and sessions currently using it.
+  // The global user remains active for every other tenant membership.
+  await db.transaction().execute(async (trx) => {
+    const updated = await trx.updateTable('memberships')
+      .set({ scim_managed: true, scim_active: false, scim_updated_at: new Date() })
+      .where('customer_id', '=', customerId)
+      .where('user_id', '=', userId)
+      .returning('id')
+      .executeTakeFirst();
+    if (!updated) throw new ScimError(404, undefined, `User ${userId} not found`);
+    await trx.updateTable('user_sessions')
+      .set({ revoked_at: new Date() })
+      .where('user_id', '=', userId)
+      .where('current_customer_id', '=', customerId)
+      .where('revoked_at', 'is', null)
+      .execute();
+  });
 }
 
 function coerceBool(v: unknown): boolean {

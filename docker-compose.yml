@@ -58,7 +58,7 @@ services:
       dockerfile: packages/haraka-inbound/Dockerfile
     container_name: mail-haraka-in
     ports:
-      - "2526:25"
+      - "2526:2526"
     environment:
       REDIS_HOST: redis
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform

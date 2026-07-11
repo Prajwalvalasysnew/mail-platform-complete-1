@@ -4,7 +4,7 @@
 // tampering with an audit row, deleting a row, or altering a hash is DETECTED.
 
 import { describe, it, expect } from 'vitest';
-import { recordAudit, verifyAuditChain, seedCustomer, db } from '@platform/shared';
+import { recordAudit, verifyAuditChain, runRetention, seedCustomer, db } from '@platform/shared';
 
 async function recordN(customerId: string, n: number) {
   for (let i = 0; i < n; i++) {
@@ -104,5 +104,20 @@ describe('audit hash chain', () => {
     const result = await verifyAuditChain(c.customerId);
     expect(result.ok).toBe(true);
     expect(result.links_checked).toBe(0);
+  });
+
+  it('remains verifiable across retention archive and continues the sequence', async () => {
+    const c = await seedCustomer();
+    await recordN(c.customerId, 3);
+    const retention = await runRetention({ auditRetentionDays: 0 });
+    expect(retention.audit_purged).toBeGreaterThanOrEqual(3);
+    expect(await db.selectFrom('audit_log_hashes').select('audit_id').where('chain_key', '=', c.customerId).execute()).toHaveLength(0);
+    expect(await db.selectFrom('audit_log_archive').select('audit_id').where('chain_key', '=', c.customerId).execute()).toHaveLength(3);
+    expect(await verifyAuditChain(c.customerId)).toMatchObject({ ok: true, links_checked: 3 });
+
+    await recordAudit({ customerId: c.customerId, actorType: 'system', action: 'test.after_archive' });
+    const hot = await db.selectFrom('audit_log_hashes').select('seq').where('chain_key', '=', c.customerId).executeTakeFirstOrThrow();
+    expect(Number(hot.seq)).toBe(4);
+    expect(await verifyAuditChain(c.customerId)).toMatchObject({ ok: true, links_checked: 4 });
   });
 });

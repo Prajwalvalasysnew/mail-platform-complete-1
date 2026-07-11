@@ -32,6 +32,7 @@ import {
   injectTraceContext,
   type SendResponse,
   getBodyStore,
+  evaluateBillingAccess,
 } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
@@ -220,7 +221,8 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
 
     // Customer status / billing gate
     if (customer.status !== 'active') return reply.code(403).send({ error: 'account_suspended' });
-    if (customer.billing_status === 'canceled') return reply.code(402).send({ error: 'billing_inactive' });
+    const billingAccess = await evaluateBillingAccess(auth.customer_id);
+    if (!billingAccess.allowed) return reply.code(402).send({ error: 'billing_inactive', reason: billingAccess.reason, grace_ends_at: billingAccess.graceEndsAt });
 
     // KYC tiering: free/email-only accounts get a hard new-account daily cap until
     // they verify a payment method or business. Prevents abuse via throwaway signups.
@@ -591,7 +593,8 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         .where('id', '=', auth.customer_id)
         .executeTakeFirstOrThrow();
       if (customer.status !== 'active') return reply.code(403).send({ error: 'account_suspended' });
-      if (customer.billing_status === 'canceled') return reply.code(402).send({ error: 'billing_inactive' });
+      const billingAccess = await evaluateBillingAccess(auth.customer_id);
+      if (!billingAccess.allowed) return reply.code(402).send({ error: 'billing_inactive', reason: billingAccess.reason, grace_ends_at: billingAccess.graceEndsAt });
 
       const NEW_ACCOUNT_CAP = Number(process.env.NEW_ACCOUNT_DAILY_CAP ?? 500);
       const effectiveDaily =

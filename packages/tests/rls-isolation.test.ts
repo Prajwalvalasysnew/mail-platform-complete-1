@@ -91,20 +91,8 @@ describe.runIf(!!process.env.DATABASE_URL)('RLS tenant isolation', () => {
     }
   });
 
-  it('null-tenant behavior matches whichever RLS policy is applied (permissive vs fail-closed)', async () => {
-    // Two RLS regimes can be live depending on migration state:
-    //   - 023_rls.sql (permissive): policies allow all rows when
-    //     current_tenant_id() IS NULL, as an escape hatch for worker/admin.
-    //   - 035_rls_fail_closed.sql (fail-closed): that clause is removed and
-    //     FORCE ROW LEVEL SECURITY is set, so a null tenant sees zero rows.
-    //
-    // Rather than hard-code one expectation (which would break the moment the
-    // fail-closed migration is applied), detect the live policy and assert the
-    // matching contract. This keeps the test green across the rollout AND turns
-    // it into a real regression guard: once fail-closed is applied, a
-    // regression back to the permissive policy makes this fail.
-    const failClosed = await isMessagesRlsFailClosed();
-
+  it('fails closed when no tenant context is set', async () => {
+    expect(await isMessagesRlsFailClosed()).toBe(true);
     const c = new Client({ connectionString: appUrl });
     await c.connect();
     try {
@@ -112,15 +100,24 @@ describe.runIf(!!process.env.DATABASE_URL)('RLS tenant isolation', () => {
         `SELECT count(*)::int AS n FROM messages WHERE customer_id IN ($1,$2)`,
         [custA, custB]
       );
-      if (failClosed) {
-        // No tenant set → fail closed → zero rows visible.
-        expect(res.rows[0].n).toBe(0);
-      } else {
-        // Permissive escape hatch still active → both visible. Documents that
-        // an app connection MUST set the tenant under this policy; relying on
-        // "no tenant = no access" would be wrong until 035 is applied.
-        expect(res.rows[0].n).toBe(2);
-      }
+      expect(res.rows[0].n).toBe(0);
+    } finally {
+      await c.end();
+    }
+  });
+
+  it('WITH CHECK blocks writing a row for another tenant', async () => {
+    const c = new Client({ connectionString: appUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query(`SELECT set_config('app.customer_id', $1, true)`, [custA]);
+      await expect(c.query(
+        `INSERT INTO messages (message_id, customer_id, from_address, to_address, subject, status)
+         VALUES ($1, $2, 's@x.com', 'blocked@dest.com', 'blocked', 'queued')`,
+        [`rls-write-${Date.now()}`, custB]
+      )).rejects.toThrow(/row-level security policy/i);
+      await c.query('ROLLBACK');
     } finally {
       await c.end();
     }
@@ -150,8 +147,8 @@ async function sqlRawRow<T>(stmt: string): Promise<T | undefined> {
 }
 
 /**
- * Detect whether the fail-closed RLS regime (035_rls_fail_closed.sql) is live
- * for the `messages` table, vs the permissive 023_rls.sql policy.
+ * Detect whether the fail-closed RLS regime (043_rls_fail_closed.sql) is live
+ * for the `messages` table.
  *
  * The distinguishing marker is the `OR current_tenant_id() IS NULL` escape
  * hatch in the policy's USING expression: present => permissive, absent =>

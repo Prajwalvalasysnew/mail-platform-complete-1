@@ -505,6 +505,66 @@ export const openapiSpec = {
         },
       },
     },
+    '/account/billing/invoices': {
+      get: {
+        summary: 'List invoices for the active organization',
+        operationId: 'listAccountInvoices',
+        security: [{ userSessionAuth: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 100 } },
+          { name: 'before', in: 'query', required: false, schema: { type: 'string', format: 'date-time' } },
+        ],
+        responses: { '200': { description: 'Invoice summaries and next cursor' } },
+      },
+    },
+    '/account/billing/invoices/{id}': {
+      get: {
+        summary: 'Get an invoice and normalized line items',
+        operationId: 'getAccountInvoice',
+        security: [{ userSessionAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '200': { description: 'Invoice detail' },
+          '404': { description: 'Invoice not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/account/billing/plan-change/preview': {
+      post: {
+        summary: 'Preview a governed plan change and entitlement differences',
+        operationId: 'previewAccountPlanChange',
+        security: [{ userSessionAuth: [] }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['price_id'], properties: { price_id: { type: 'string' } } } } } },
+        responses: {
+          '200': { description: 'Plan, quota, feature, risk, and proration preview' },
+          '422': { description: 'Unknown or inactive provider price', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/account/billing/plan-change/{id}/confirm': {
+      post: {
+        summary: 'Submit a previously previewed plan change to the billing provider',
+        operationId: 'confirmAccountPlanChange',
+        security: [{ userSessionAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '202': { description: 'Submitted; entitlements remain unchanged pending verified provider webhook' },
+          '409': { description: 'Preview expired, unsupported, or subscription not ready', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/account/billing/plan-change/{id}': {
+      delete: {
+        summary: 'Cancel an unsubmitted plan-change preview',
+        operationId: 'cancelAccountPlanChange',
+        security: [{ userSessionAuth: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '204': { description: 'Preview canceled' },
+          '409': { description: 'Request already submitted, applied, expired, or canceled' },
+        },
+      },
+    },
     '/billing/webhook': {
       post: {
         summary: 'Receive a Stripe billing webhook (legacy path)',

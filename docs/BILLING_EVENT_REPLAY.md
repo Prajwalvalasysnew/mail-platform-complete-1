@@ -49,10 +49,10 @@ by the admin replay endpoint rather than duplicated.
 
 ## Migration numbering note
 
-The pending RLS fail-closed migration was renumbered `035 -> 036`
-(`infra/migrations-pending/036_rls_fail_closed.sql`) so this billing migration
-could take 035 in the auto-applied directory without a future collision.
-Docs/RLS_FAIL_CLOSED_ROLLOUT.md references updated accordingly.
+The RLS fail-closed migration was ultimately shipped later as
+`infra/migrations/043_rls_fail_closed.sql`. This billing migration retained
+035 in the auto-applied directory without a numbering collision.
+`docs/RLS_FAIL_CLOSED_ROLLOUT.md` has been updated accordingly.
 
 ## Still external (NOT closed by this work)
 

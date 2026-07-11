@@ -121,8 +121,16 @@ exports.sign = async function (next, connection) {
   let row;
   try {
     const result = await pool.query(
-      `SELECT dkim_private_key, dkim_selector FROM sending_domains
-       WHERE customer_id = $1 AND domain = $2 AND verified_at IS NOT NULL`,
+      `SELECT
+         COALESCE(active_key.private_key, sending_domains.dkim_private_key) AS dkim_private_key,
+         COALESCE(active_key.selector, sending_domains.dkim_selector) AS dkim_selector
+       FROM sending_domains
+       LEFT JOIN dkim_keys AS active_key
+         ON active_key.domain_id = sending_domains.id
+        AND active_key.state = 'active'
+       WHERE sending_domains.customer_id = $1
+         AND sending_domains.domain = $2
+         AND sending_domains.verified_at IS NOT NULL`,
       [customerId, String(fromDomain).toLowerCase()]
     );
     row = result.rows[0];

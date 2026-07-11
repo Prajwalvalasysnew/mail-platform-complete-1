@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import crypto from 'node:crypto';
-import { applySubscriptionState, TIER_BY_PRICE, isKnownPrice } from '@platform/shared';
+import { applyInvoiceEvent, applySubscriptionState, TIER_BY_PRICE, isKnownPrice } from '@platform/shared';
 
 /**
  * Provider-keyed billing webhooks. /billing/webhook remains a Stripe-compatible
@@ -60,20 +60,86 @@ export function verifyStripeSignature(payload: string, sigHeader: string | undef
   return timingSafeStringEqual(parts.v1, expected);
 }
 
-export function verifyPayPalSignature(input: {
-  payload: string;
+export interface PayPalWebhookVerificationInput {
+  event: unknown;
   transmissionId?: string;
   transmissionTime?: string;
   signature?: string;
-  secret?: string;
-}): boolean {
-  if (!input.secret) return allowUnsignedWebhook('PAYPAL_WEBHOOK_SECRET');
-  if (!input.transmissionId || !input.transmissionTime || !input.signature) return false;
+  certUrl?: string;
+  authAlgo?: string;
+}
+
+type PayPalWebhookVerifier = (input: PayPalWebhookVerificationInput) => Promise<boolean>;
+
+let payPalWebhookVerifierOverride: PayPalWebhookVerifier | undefined;
+
+/** Test seam for official PayPal verification without accepting a custom HMAC. */
+export function setPayPalWebhookVerifierForTests(verifier?: PayPalWebhookVerifier): void {
+  payPalWebhookVerifierOverride = verifier;
+}
+
+/**
+ * Verify a PayPal webhook using PayPal's official postback endpoint.
+ *
+ * PayPal signs with a certificate; it does not share an HMAC webhook secret.
+ * The verification request therefore includes the transmission headers, the
+ * configured webhook ID, and the parsed event. See docs/BILLING.md for the
+ * required production configuration.
+ */
+export async function verifyPayPalSignature(input: PayPalWebhookVerificationInput): Promise<boolean> {
+  if (!input.transmissionId || !input.transmissionTime || !input.signature || !input.certUrl || !input.authAlgo) return false;
   const ts = Date.parse(input.transmissionTime);
   if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > 300_000) return false;
-  const signedPayload = `${input.transmissionId}.${input.transmissionTime}.${input.payload}`;
-  const expected = crypto.createHmac('sha256', input.secret).update(signedPayload).digest('base64');
-  return timingSafeStringEqual(input.signature, expected);
+  if (payPalWebhookVerifierOverride) return payPalWebhookVerifierOverride(input);
+
+  const clientId = process.env.PAYPAL_CLIENT_ID;
+  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  const webhookId = process.env.PAYPAL_WEBHOOK_ID;
+  if (!clientId || !clientSecret || !webhookId) return false;
+
+  const fetchImpl = globalThis.fetch;
+  if (!fetchImpl) return false;
+  const baseUrl = (process.env.PAYPAL_API_BASE_URL ?? 'https://api-m.paypal.com').replace(/\/$/, '');
+  try {
+    const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    const tokenResponse = await fetchImpl(`${baseUrl}/v1/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        authorization: `Basic ${basic}`,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: 'grant_type=client_credentials',
+    });
+    if (!tokenResponse.ok) return false;
+    const token = (await tokenResponse.json() as { access_token?: unknown }).access_token;
+    if (typeof token !== 'string' || !token) return false;
+
+    const verifyResponse = await fetchImpl(`${baseUrl}/v1/notifications/verify-webhook-signature`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({
+        auth_algo: input.authAlgo,
+        cert_url: input.certUrl,
+        transmission_id: input.transmissionId,
+        transmission_sig: input.signature,
+        transmission_time: input.transmissionTime,
+        webhook_id: webhookId,
+        webhook_event: input.event,
+      }),
+    });
+    if (!verifyResponse.ok) return false;
+    const verified = await verifyResponse.json() as { verification_status?: unknown };
+    return verified.verification_status === 'SUCCESS';
+  } catch {
+    // Webhook verification is an authentication boundary: provider/network
+    // failures are fail-closed and let PayPal retry rather than applying an
+    // unauthenticated subscription state change.
+    return false;
+  }
 }
 
 export function verifyCashfreeSignature(input: {
@@ -132,11 +198,35 @@ export function stripeSubscriptionEvent(event: any) {
     provider_customer_id: providerCustomerId,
     provider_subscription_id: obj.id,
     subscription_item_id: meteredItem?.id,
+    plan_item_id: tierItem?.id ?? fallbackItem?.id,
     price_id: fallbackItem?.price?.id,
     status: obj.status,
     current_period_start: obj.current_period_start,
     current_period_end: obj.current_period_end,
     cancel_at_period_end: obj.cancel_at_period_end,
+  };
+}
+
+export function stripeInvoiceEvent(event: any) {
+  const supported = ['invoice.created', 'invoice.finalized', 'invoice.payment_failed', 'invoice.paid', 'invoice.voided', 'invoice.marked_uncollectible'];
+  if (!supported.includes(event?.type)) return null;
+  const invoice = event?.data?.object ?? {};
+  if (!event?.id || !invoice.id || !invoice.customer) return null;
+  const lines: any[] = invoice.lines?.data ?? [];
+  const periodStart = invoice.period_start ?? lines[0]?.period?.start ?? invoice.created;
+  const periodEnd = invoice.period_end ?? lines[0]?.period?.end ?? periodStart;
+  if (!periodStart || !periodEnd) return null;
+  return {
+    provider: 'stripe', provider_event_id: event.id, type: event.type,
+    provider_customer_id: invoice.customer, provider_invoice_id: invoice.id,
+    amount_cents: Number(invoice.amount_due ?? invoice.total ?? 0), currency: invoice.currency ?? 'usd',
+    period_start: periodStart, period_end: periodEnd, due_at: invoice.due_date,
+    paid_at: invoice.status_transitions?.paid_at, hosted_invoice_url: invoice.hosted_invoice_url,
+    invoice_pdf_url: invoice.invoice_pdf,
+    billed_quantity: lines.reduce((sum, line) => sum + Number(line.quantity ?? 0), 0),
+    lines: lines.map((line) => ({ id: line.id, description: line.description, quantity: line.quantity,
+      amount_cents: line.amount, currency: line.currency, period_start: line.period?.start,
+      period_end: line.period?.end, metadata: line.metadata ?? {} })), raw_payload: event,
   };
 }
 
@@ -206,17 +296,25 @@ export function cashfreeSubscriptionEvent(event: any) {
 async function handleWebhook(req: FastifyRequest, reply: any, provider: string) {
   const rawBody = req.body as string;
 
+  let event: any;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return reply.code(400).send({ error: 'invalid_json' });
+  }
+
   if (provider === 'stripe') {
     if (!verifyStripeSignature(rawBody, header(req, 'stripe-signature'), process.env.STRIPE_WEBHOOK_SECRET)) {
       return reply.code(400).send({ error: 'invalid_signature' });
     }
   } else if (provider === 'paypal') {
-    if (!verifyPayPalSignature({
-      payload: rawBody,
+    if (!await verifyPayPalSignature({
+      event,
       transmissionId: header(req, 'paypal-transmission-id'),
       transmissionTime: header(req, 'paypal-transmission-time'),
       signature: header(req, 'paypal-transmission-sig'),
-      secret: process.env.PAYPAL_WEBHOOK_SECRET,
+      certUrl: header(req, 'paypal-cert-url'),
+      authAlgo: header(req, 'paypal-auth-algo'),
     })) {
       return reply.code(400).send({ error: 'invalid_signature' });
     }
@@ -233,16 +331,16 @@ async function handleWebhook(req: FastifyRequest, reply: any, provider: string) 
     return reply.code(400).send({ error: 'unsupported_billing_provider' });
   }
 
-  let event: any;
-  try {
-    event = JSON.parse(rawBody);
-  } catch {
-    return reply.code(400).send({ error: 'invalid_json' });
-  }
-
   const subEvent = provider === 'stripe' ? stripeSubscriptionEvent(event)
     : provider === 'cashfree' ? cashfreeSubscriptionEvent(event)
     : paypalSubscriptionEvent(event);
+  if (provider === 'stripe') {
+    const invoiceEvent = stripeInvoiceEvent(event);
+    if (invoiceEvent) {
+      const applied = await applyInvoiceEvent(invoiceEvent);
+      return reply.code(200).send({ received: true, applied });
+    }
+  }
   if (!subEvent) return reply.code(200).send({ received: true });
 
   const applied = await applySubscriptionState(subEvent);

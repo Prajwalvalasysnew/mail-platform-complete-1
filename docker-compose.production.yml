@@ -25,7 +25,7 @@ services:
   haraka-outbound:
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      DATABASE_URL: ${SERVICE_DATABASE_URL:?set SERVICE_DATABASE_URL}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
       HARAKA_OUTBOUND_PASS: ${HARAKA_OUTBOUND_PASS:?set HARAKA_OUTBOUND_PASS}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
@@ -35,15 +35,22 @@ services:
   haraka-inbound:
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      DATABASE_URL: ${SERVICE_DATABASE_URL:?set SERVICE_DATABASE_URL}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
       VERP_SECRET: ${VERP_SECRET:?set VERP_SECRET}
       PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?set PLATFORM_DOMAIN}
 
   api:
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/live').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      DATABASE_URL: ${API_DATABASE_URL:?set API_DATABASE_URL}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
@@ -65,10 +72,17 @@ services:
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?set OIDC_CLIENT_ID}
 
   worker:
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9100/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     ports: !reset []
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      DATABASE_URL: ${SERVICE_DATABASE_URL:?set SERVICE_DATABASE_URL}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
       HARAKA_OUTBOUND_PASS: ${HARAKA_OUTBOUND_PASS:?set HARAKA_OUTBOUND_PASS}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
@@ -88,8 +102,19 @@ services:
       SES_MAX_CONNECTIONS: ${SES_MAX_CONNECTIONS:-10}
 
   tracker:
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/live').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      DATABASE_URL: ${SERVICE_DATABASE_URL:?set SERVICE_DATABASE_URL}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
       METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}
+
+  migrate:
+    environment:
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:?set MIGRATION_DATABASE_URL}

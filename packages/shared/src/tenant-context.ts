@@ -1,12 +1,9 @@
 // Tenant context for Row-Level Security (RLS) enforcement.
 //
-// Background: 023_rls.sql enables RLS on tenant tables with policies of the form
-//   USING (customer_id = current_tenant_id() OR current_tenant_id() IS NULL)
-// where current_tenant_id() reads the `app.customer_id` Postgres session var.
-// The `OR ... IS NULL` branch is a deliberate escape hatch for the worker /
-// admin / migration connections (which run with no tenant set, or under a
-// BYPASSRLS role). The consequence is that UNLESS the API sets app.customer_id,
-// RLS matches every row and provides no isolation.
+// Background: 023_rls.sql introduced permissive rollout policies. Migration
+// 043_rls_fail_closed.sql removes the null-tenant escape hatch and forces RLS.
+// Cross-tenant worker/admin processes use an explicit BYPASSRLS service role;
+// the API must use a non-bypass role and set `app.customer_id` transactionally.
 //
 // This module supplies the missing piece: run a unit of work with the tenant
 // set, so RLS actively scopes every query to that customer as a second layer
@@ -67,12 +64,13 @@ export async function withTenant<T>(
  * to run under a BYPASSRLS/superuser role, RLS silently does nothing, so we want
  * to detect that explicitly rather than assume protection we don't have.
  *
- * Returns true if RLS scopes rows when a tenant is set. Best-effort: returns
- * true on any unexpected error so a check failure never blocks startup.
+ * Returns true only when the current role cannot bypass RLS and every required
+ * tenant table has FORCE RLS plus a fail-closed tenant policy. Any inspection
+ * error returns false so production startup fails closed.
  */
 export async function rlsIsEnforced(): Promise<boolean> {
   try {
-    const probe = await db
+    const roleSafe = await db
       .transaction()
       .execute(async (trx) => {
         // Is the current role BYPASSRLS / superuser? Either disables RLS.
@@ -83,8 +81,43 @@ export async function rlsIsEnforced(): Promise<boolean> {
         const r = row.rows[0];
         return !(r?.bypass || r?.superuser);
       });
-    return probe;
+    if (!roleSafe) return false;
+
+    const requiredTables = [
+      'messages', 'events', 'suppressions', 'templates', 'sending_domains',
+      'webhooks', 'usage_daily', 'review_queue', 'consent_events', 'legal_holds',
+    ];
+    const posture = await sql<{
+      table_name: string;
+      rls_enabled: boolean;
+      rls_forced: boolean;
+      policy_qual: string | null;
+    }>`
+      select c.relname as table_name,
+             c.relrowsecurity as rls_enabled,
+             c.relforcerowsecurity as rls_forced,
+             p.qual as policy_qual
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      left join pg_policies p
+        on p.schemaname = n.nspname
+       and p.tablename = c.relname
+       and p.policyname = c.relname || '_tenant'
+      where n.nspname = 'public'
+        and c.relname in (${sql.join(requiredTables)})
+    `.execute(db);
+
+    if (posture.rows.length !== requiredTables.length) return false;
+    return posture.rows.every((row) => {
+      const qual = row.policy_qual ?? '';
+      return row.rls_enabled
+        && row.rls_forced
+        && /current_tenant_id\(\)/i.test(qual)
+        && !/current_tenant_id\(\)\s+IS\s+NULL/i.test(qual);
+    });
   } catch {
-    return true;
+    // A failed posture probe is not evidence of safety. Production startup
+    // must fail closed until the database role and policies can be verified.
+    return false;
   }
 }

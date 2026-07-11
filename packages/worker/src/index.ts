@@ -13,13 +13,14 @@ import {
   startTracing,
   stopTracing,
   redis,
+  privacyLoggerOptions,
 } from '@platform/shared';
 import { startSendWorker } from './send-worker.js';
 import { startEventWorker } from './event-worker.js';
 import { startWebhookWorker } from './webhook-worker.js';
 import { startScheduler } from './scheduler.js';
 
-const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
+const logger = pino(privacyLoggerOptions());
 
 // Global error handlers: keep the process alive on unhandled promise rejections
 // (BullMQ handles job-level errors; crashing the worker loses in-flight state).

@@ -193,3 +193,23 @@ export async function sendTeamInviteEmail(input: { to: string; token: string; or
     text: `You've been invited${by} to join ${input.orgName || 'a team'}.\n\nAccept the invitation:\n${link}`,
   });
 }
+
+export async function sendDunningEmail(input: {
+  to: string;
+  stage: 'payment_failed' | 'grace_ending' | 'restricted' | 'recovered';
+  graceEndsAt?: Date | null;
+}): Promise<void> {
+  const billingUrl = `${appBaseUrl()}/billing`;
+  const copy = input.stage === 'payment_failed'
+    ? { subject: 'Payment failed — update your billing method', text: `We could not collect your latest payment. Sending remains available during the grace period until ${input.graceEndsAt?.toISOString() ?? 'the displayed deadline'}.` }
+    : input.stage === 'grace_ending'
+      ? { subject: 'Your billing grace period ends soon', text: `Update your payment method before ${input.graceEndsAt?.toISOString() ?? 'the grace deadline'} to avoid sending interruption.` }
+      : input.stage === 'restricted'
+        ? { subject: 'Sending restricted due to unpaid billing', text: 'Your billing grace period has ended and new sending is restricted. Update your payment method to restore service.' }
+        : { subject: 'Payment recovered — sending restored', text: 'Your payment succeeded and normal sending access has been restored.' };
+  await getPlatformMailer().send({
+    to: input.to, subject: copy.subject,
+    html: layout(copy.subject, `<p>${copy.text}</p>${button(billingUrl, 'Manage billing')}`),
+    text: `${copy.text}\n\nManage billing: ${billingUrl}`,
+  });
+}

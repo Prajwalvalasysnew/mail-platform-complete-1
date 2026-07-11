@@ -12,7 +12,7 @@ const CreateWebhookSchema = z.object({
 
 export const webhookRoutes: FastifyPluginAsync = async (app) => {
   app.get('/webhooks', { preHandler: requireScope('webhooks') }, async (req) => {
-    return { webhooks: await listWebhooks(req.auth!.customer_id) };
+    return { webhooks: await tenantScoped(req, (trx) => listWebhooks(req.auth!.customer_id, trx)) };
   });
 
   app.post('/webhooks', { preHandler: requireScope('webhooks') }, async (req, reply) => {
@@ -21,6 +21,9 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
     }
     try {
+      // URL DNS validation performs network I/O before the service opens its
+      // short tenant transaction. Do not hold a DB transaction while waiting
+      // for a resolver.
       const row = await createWebhook({ customerId: req.auth!.customer_id, url: parsed.data.url, events: parsed.data.events });
       return reply.code(201).send(row);
     } catch (err) {
@@ -31,13 +34,13 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/webhooks/:id', { preHandler: requireScope('webhooks') }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    await deleteWebhook(req.auth!.customer_id, id);
+    await tenantScoped(req, (trx) => deleteWebhook(req.auth!.customer_id, id, trx));
     return reply.code(204).send();
   });
 
   app.post('/webhooks/:id/rotate-secret', { preHandler: requireScope('webhooks') }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const row = await rotateWebhookSecret(req.auth!.customer_id, id);
+    const row = await tenantScoped(req, (trx) => rotateWebhookSecret(req.auth!.customer_id, id, trx));
     if (!row) return reply.code(404).send({ error: 'not_found' });
     return reply.code(201).send({
       ...row,

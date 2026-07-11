@@ -15,6 +15,7 @@ import {
   metricsAuthorized,
   startTracing,
   stopTracing,
+  privacyLoggerOptions,
 } from '@platform/shared';
 
 startTracing('mail-tracker');
@@ -49,7 +50,7 @@ function escapeHtml(s: string): string {
 }
 
 const app = Fastify({
-  logger: { level: process.env.LOG_LEVEL ?? 'info' },
+  logger: privacyLoggerOptions(),
   trustProxy: true,
 });
 

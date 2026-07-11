@@ -97,10 +97,14 @@ provider's customer reference. Subsequent calls reuse it.
 webhooks should use `POST /billing/webhook/:provider` where `provider` is
 `stripe` or `paypal`.
 
-Stripe verifies `Stripe-Signature` with `STRIPE_WEBHOOK_SECRET`. PayPal verifies
-`PayPal-Transmission-*` headers with `PAYPAL_WEBHOOK_SECRET` in local/test
-deployments; live PayPal certificate/API verification remains a credentialed
-deploy-time check.
+Stripe verifies `Stripe-Signature` with `STRIPE_WEBHOOK_SECRET`. PayPal uses
+its official verification API: configure `PAYPAL_CLIENT_ID`,
+`PAYPAL_CLIENT_SECRET`, and the dashboard-issued `PAYPAL_WEBHOOK_ID`. The
+listener forwards `PayPal-Transmission-*`, `PayPal-Cert-Url`,
+`PayPal-Auth-Algo`, and the parsed event to PayPal's
+`verify-webhook-signature` endpoint. It fails closed when any required header,
+credential, or verification response is missing or invalid; no custom PayPal
+HMAC webhook secret is used.
 
 `applySubscriptionState()` maps subscription lifecycle events to the
 `customers` and `subscriptions` tables. It is idempotent: the `billing_events`

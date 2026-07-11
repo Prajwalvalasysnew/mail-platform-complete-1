@@ -8,7 +8,7 @@
 // and no event is permanently lost. Run periodically from the worker scheduler.
 
 import { db } from './db.js';
-import { clickhouseEnabled, insertClickhouseRows } from './clickhouse.js';
+import { clickhouseEnabled, filterNonErasedClickhouseRows, insertClickhouseRows } from './clickhouse.js';
 
 export interface ReconcileResult {
   ran: boolean;                 // false when ClickHouse is not configured
@@ -62,14 +62,14 @@ export async function reconcileClickhouse(opts: { batchSize?: number; maxBatches
 
     if (rows.length === 0) break;
 
-    const chRows = rows.map((r) => ({
+    const chRows = await filterNonErasedClickhouseRows(rows.map((r) => ({
       message_id: r.message_id,
       customer_id: r.customer_id,
       event_type: r.event_type,
       occurred_at: (r.occurred_at instanceof Date ? r.occurred_at : new Date(r.occurred_at as any)).toISOString(),
       ip: (r.ip as string | null) ?? null,
       payload: JSON.stringify(r.payload ?? {}),
-    }));
+    })));
 
     const ok = await insertClickhouseRows(chRows);
     if (!ok) {
@@ -83,7 +83,7 @@ export async function reconcileClickhouse(opts: { batchSize?: number; maxBatches
     // Advance watermark to the max id in this batch.
     const maxId = rows.reduce((m, r) => (BigInt(r.id) > m ? BigInt(r.id) : m), watermark);
     watermark = maxId;
-    shipped += rows.length;
+    shipped += chRows.length;
     batches++;
 
     // Persist the advanced watermark after each successful batch, so a crash

@@ -3,7 +3,7 @@ import sensible from '@fastify/sensible';
 import rateLimit from '@fastify/rate-limit';
 import cors from '@fastify/cors';
 import crypto from 'node:crypto';
-import { redis, closeDb, closeQueues, metricsText, metricsAuthorized, enforceConfig, db, sendQueue, openapiSpec, startTracing, stopTracing, rlsIsEnforced } from '@platform/shared';
+import { redis, closeDb, closeQueues, metricsText, metricsAuthorized, enforceConfig, db, sendQueue, openapiSpec, startTracing, stopTracing, rlsIsEnforced, privacyLoggerOptions } from '@platform/shared';
 
 startTracing('mail-api');
 import { authPlugin } from './plugins/auth.js';
@@ -39,7 +39,7 @@ enforceConfig();
 
 const app = Fastify({
   logger: {
-    level: process.env.LOG_LEVEL ?? 'info',
+    ...privacyLoggerOptions(),
     transport: process.env.NODE_ENV === 'production' ? undefined : { target: 'pino-pretty' },
   },
   // Honor any X-Request-ID the client sends (up to 200 chars), generate a UUID
@@ -240,9 +240,9 @@ try {
     const rlsOk = await rlsIsEnforced();
     if (!rlsOk) {
       app.log.fatal(
-        'Refusing to start: the API database role is superuser or has BYPASSRLS, ' +
-          'so Row-Level Security tenant isolation is disabled. Connect the API with a ' +
-          'dedicated non-superuser, non-BYPASSRLS role (workers/migrations may use a ' +
+        'Refusing to start: the API database role or fail-closed RLS policy posture ' +
+          'could not be verified. Connect the API with a dedicated non-superuser, ' +
+          'non-BYPASSRLS role and apply migration 043 (workers/migrations must use a ' +
           'separate service role). Set RLS_ALLOW_BYPASS=true only to consciously accept this risk.'
       );
       if (process.env.RLS_ALLOW_BYPASS !== 'true') process.exit(1);

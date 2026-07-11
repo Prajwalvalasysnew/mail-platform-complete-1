@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { listDomains, addDomain, verifyDomain, deleteDomain, DomainError } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
+import { tenantScoped } from '../lib/tenant.js';
 
 const AddDomainSchema = z.object({
   domain: z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/i, 'Invalid domain'),
@@ -10,7 +11,7 @@ const AddDomainSchema = z.object({
 
 export const domainRoutes: FastifyPluginAsync = async (app) => {
   app.get('/domains', { preHandler: requireScope('domains') }, async (req) => {
-    return { domains: await listDomains(req.auth!.customer_id) };
+    return { domains: await tenantScoped(req, (trx) => listDomains(req.auth!.customer_id, trx)) };
   });
 
   app.post('/domains', { preHandler: requireScope('domains') }, async (req, reply) => {
@@ -38,7 +39,7 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/domains/:id', { preHandler: requireScope('domains') }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const ok = await deleteDomain(req.auth!.customer_id, id);
+    const ok = await tenantScoped(req, (trx) => deleteDomain(req.auth!.customer_id, id, trx));
     if (!ok) return reply.code(404).send({ error: 'not_found' });
     return reply.code(204).send();
   });

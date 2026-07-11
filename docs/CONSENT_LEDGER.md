@@ -34,10 +34,9 @@ unsubscribe now records `source: one_click_unsubscribe` + the triggering
 suppressions) returns the full history newest-first. Documented in the OpenAPI
 spec. Service function `getConsentHistory(customerId, email)`.
 
-**RLS**: `consent_events` is tenant-scoped with the standard permissive policy
-(023-style) in the same migration, and is included in the pending fail-closed
-migration (`infra/migrations-pending/036_rls_fail_closed.sql`) so it tightens
-alongside the other tenant tables.
+**RLS**: `consent_events` was introduced with the standard permissive rollout
+policy and is tightened by `infra/migrations/043_rls_fail_closed.sql` alongside
+the other tenant tables.
 
 ## Verified how (real, live infra)
 

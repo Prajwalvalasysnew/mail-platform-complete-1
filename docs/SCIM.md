@@ -19,6 +19,10 @@ SCIM is a server-to-server API fully exercisable in CI. The admin OIDC login in
 **Migration `038_scim_provisioning.sql`**: `scim_tokens` (per-tenant bearer
 token, HMAC-hashed at rest), and `users.scim_external_id` + `users.scim_managed`.
 
+**Migration `042_scim_tenant_state.sql`** corrects the original global-state
+model. SCIM `externalId`, display name, managed flag, and active state now live
+on `memberships`, because one global human can belong to multiple tenants.
+
 **Service layer `packages/shared/src/scim.ts`**:
 - Token mint/resolve/list/revoke (HMAC-hashed, like api keys / sessions).
 - SCIM User CRUD mapped onto users + memberships:
@@ -30,11 +34,10 @@ token, HMAC-hashed at rest), and `users.scim_external_id` + `users.scim_managed`
   - DELETE — soft deprovision.
 
 **Deprovisioning semantics**: setting `active=false` (via PATCH, PUT, or DELETE)
-**disables the user account**. A disabled user is rejected at both session
-resolution and password auth (see `user-sessions.ts` / `users.ts`), so access is
-fully revoked. The membership row and user row are preserved, so (a) the tenant
-can re-activate the user later, (b) the user still appears in SCIM listings as
-`active:false` per spec, and (c) audit/message references stay valid.
+disables only that tenant's SCIM membership and revokes sessions currently
+using that tenant. The global user and memberships/sessions in other tenants
+remain active. The inactive membership remains addressable to the issuing
+tenant's SCIM client, so it can be listed as `active:false` and reactivated.
 
 **Routes `packages/api/src/routes/scim.ts`** (registered at `/scim/v2`):
 - Bearer-token preHandler resolves the token to a tenant; all operations are
@@ -49,22 +52,21 @@ plaintext token is shown once on creation, alongside the tenant's SCIM base URL.
 
 ## Verified how (real, live infra)
 
-- Migration 038 applies cleanly (scim columns/table verified present).
+- Migrations 038 and 042 apply cleanly on a fresh database.
 - `npm run build` (all packages): exit 0. The compiler caught 6 real type
   errors during development (wrong import source for MembershipRole, ??/||
   precedence, strict-null narrowing) — all fixed before tests.
-- `scim.test.ts`: 10/10 pass against live Postgres — token mint/resolve/revoke,
+- `scim.test.ts`: 12/12 pass against live Postgres — token mint/resolve/revoke,
   cross-tenant token isolation, create+idempotency, get + cross-tenant
-  rejection, `userName eq` filter, PATCH/DELETE deprovision (user disabled),
-  the `{value:{active}}` PATCH shape, and re-activation.
-- Running the tests caught a real design bug: the first cut removed the
-  membership on deprovision, which made re-activation impossible (the user
-  could no longer be found by the tenant). Fixed by disabling the user account
-  instead — which is both the correct SCIM semantic and a cleaner enforcement
-  point (disabled status already blocks all auth).
+  rejection, `userName eq` filter, tenant-specific PATCH/DELETE deprovision,
+  the `{value:{active}}` PATCH shape, reactivation, shared-user isolation, and
+  preservation of an existing admin/owner role during reprovisioning.
+- The multi-tenant regression creates one user in two tenants, deprovisions it
+  in tenant A, proves tenant A's session is revoked, and proves tenant B's
+  session and SCIM identity remain active.
 - The OpenAPI route-parity guard caught the new `/team/scim-tokens` routes;
   they were allowlisted (dashboard plane).
-- Full suite: 89 files, 600 tests, 0 failures.
+- Focused migration/SCIM suite: 3 files, 20 tests, 0 failures (2026-07-10).
 
 ## Not included (honest scope)
 

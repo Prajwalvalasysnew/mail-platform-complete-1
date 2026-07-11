@@ -60,6 +60,7 @@ export async function getMembership(userId: string, customerId: string): Promise
     .select(['user_id', 'customer_id', 'role'])
     .where('user_id', '=', userId)
     .where('customer_id', '=', customerId)
+    .where('scim_active', '=', true)
     .executeTakeFirst()) as Membership | undefined;
 }
 
@@ -68,6 +69,7 @@ export async function listMembershipsForUser(userId: string): Promise<Membership
     .selectFrom('memberships')
     .select(['user_id', 'customer_id', 'role'])
     .where('user_id', '=', userId)
+    .where('scim_active', '=', true)
     .execute()) as Membership[];
 }
 
@@ -85,6 +87,7 @@ export async function listMembersOfCustomer(
       'users.mfa_enabled as mfa_enabled',
     ])
     .where('memberships.customer_id', '=', customerId)
+    .where('memberships.scim_active', '=', true)
     .orderBy('users.email', 'asc')
     .execute()) as any;
 }

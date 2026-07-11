@@ -1,7 +1,7 @@
 // Request-scoped tenant DB access for RLS enforcement.
 //
 // Background: RLS policies on tenant tables (see infra/migrations/023_rls.sql
-// and infra/migrations/035_rls_fail_closed.sql) only isolate data when the
+// and infra/migrations/043_rls_fail_closed.sql) only isolate data when the
 // Postgres session has `app.customer_id` set for the duration of the query.
 // `withTenant()` (packages/shared/src/tenant-context.ts) opens a transaction
 // and sets that session var LOCAL to the transaction.

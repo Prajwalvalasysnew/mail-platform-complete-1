@@ -16,6 +16,8 @@ import {
   scimListUsers,
   scimPatchUser,
   scimDeleteUser,
+  createUserSession,
+  resolveUserSession,
   seedCustomer,
   getMembership,
   db,
@@ -107,7 +109,7 @@ describe('SCIM user provisioning lifecycle', () => {
     expect(filtered.schemas[0]).toContain('ListResponse');
   });
 
-  it('PATCH active=false deprovisions (disables the user, revoking all access)', async () => {
+  it('PATCH active=false deprovisions only the tenant membership', async () => {
     const c = await seedCustomer();
     const email = rndEmail('deprov');
     const u = await scimCreateUser(c.customerId, { userName: email }, BASE);
@@ -123,7 +125,10 @@ describe('SCIM user provisioning lifecycle', () => {
     // row is preserved so the tenant can re-activate the user later, and the
     // user row is preserved for audit.
     const row = await db.selectFrom('users').select(['status']).where('id', '=', u.id).executeTakeFirst();
-    expect(row?.status).toBe('disabled');
+    expect(row?.status).toBe('active');
+    const membership = await db.selectFrom('memberships').select('scim_active')
+      .where('user_id', '=', u.id).where('customer_id', '=', c.customerId).executeTakeFirstOrThrow();
+    expect(membership.scim_active).toBe(false);
   });
 
   it('PATCH also accepts the { value: { active: false } } shape', async () => {
@@ -135,7 +140,7 @@ describe('SCIM user provisioning lifecycle', () => {
     expect(patched.active).toBe(false);
   });
 
-  it('DELETE deprovisions (soft) while preserving the user row', async () => {
+  it('DELETE deprovisions the tenant membership while preserving the global user', async () => {
     const c = await seedCustomer();
     const u = await scimCreateUser(c.customerId, { userName: rndEmail('del') }, BASE);
     await scimDeleteUser(c.customerId, u.id);
@@ -143,20 +148,63 @@ describe('SCIM user provisioning lifecycle', () => {
     // User row still exists (audit preservation) but is disabled (access revoked).
     const row = await db.selectFrom('users').select(['id', 'status']).where('id', '=', u.id).executeTakeFirst();
     expect(row).toBeTruthy();
-    expect(row?.status).toBe('disabled');
+    expect(row?.status).toBe('active');
+    const membership = await db.selectFrom('memberships').select('scim_active')
+      .where('user_id', '=', u.id).where('customer_id', '=', c.customerId).executeTakeFirstOrThrow();
+    expect(membership.scim_active).toBe(false);
   });
 
   it('re-activating via PATCH restores access (user re-enabled)', async () => {
     const c = await seedCustomer();
     const u = await scimCreateUser(c.customerId, { userName: rndEmail('react') }, BASE);
     await scimPatchUser(c.customerId, u.id, { Operations: [{ op: 'replace', path: 'active', value: false }] }, BASE);
-    let row = await db.selectFrom('users').select(['status']).where('id', '=', u.id).executeTakeFirst();
-    expect(row?.status).toBe('disabled');
+    let membership = await db.selectFrom('memberships').select('scim_active')
+      .where('user_id', '=', u.id).where('customer_id', '=', c.customerId).executeTakeFirstOrThrow();
+    expect(membership.scim_active).toBe(false);
 
     const reactivated = await scimPatchUser(c.customerId, u.id, { Operations: [{ op: 'replace', path: 'active', value: true }] }, BASE);
     expect(reactivated.active).toBe(true);
-    row = await db.selectFrom('users').select(['status']).where('id', '=', u.id).executeTakeFirst();
-    expect(row?.status).toBe('active');
+    membership = await db.selectFrom('memberships').select('scim_active')
+      .where('user_id', '=', u.id).where('customer_id', '=', c.customerId).executeTakeFirstOrThrow();
+    expect(membership.scim_active).toBe(true);
     expect(await getMembership(u.id, c.customerId)).toBeTruthy();
+  });
+
+  it('does not disable a shared user in another tenant', async () => {
+    const a = await seedCustomer();
+    const b = await seedCustomer();
+    const email = rndEmail('shared');
+    const inA = await scimCreateUser(a.customerId, { userName: email, externalId: 'idp-a', displayName: 'Tenant A Name' }, BASE);
+    const inB = await scimCreateUser(b.customerId, { userName: email, externalId: 'idp-b', displayName: 'Tenant B Name' }, BASE);
+    expect(inB.id).toBe(inA.id);
+
+    const sessionA = await createUserSession(inA.id, { currentCustomerId: a.customerId, mfaSatisfied: true });
+    const sessionB = await createUserSession(inA.id, { currentCustomerId: b.customerId, mfaSatisfied: true });
+
+    await scimPatchUser(a.customerId, inA.id, {
+      Operations: [{ op: 'replace', path: 'active', value: false }],
+    }, BASE);
+
+    expect((await scimGetUser(a.customerId, inA.id, BASE)).active).toBe(false);
+    const stillActiveInB = await scimGetUser(b.customerId, inA.id, BASE);
+    expect(stillActiveInB.active).toBe(true);
+    expect(stillActiveInB.externalId).toBe('idp-b');
+    expect(stillActiveInB.displayName).toBe('Tenant B Name');
+    expect(await resolveUserSession(sessionA.token)).toBeNull();
+    expect((await resolveUserSession(sessionB.token))?.current_customer_id).toBe(b.customerId);
+    expect((await db.selectFrom('users').select('status').where('id', '=', inA.id).executeTakeFirstOrThrow()).status).toBe('active');
+  });
+
+  it('does not downgrade an existing membership role on reprovision', async () => {
+    const c = await seedCustomer();
+    const email = rndEmail('role');
+    const user = await scimCreateUser(c.customerId, { userName: email }, BASE);
+    await db.updateTable('memberships').set({ role: 'admin' })
+      .where('user_id', '=', user.id).where('customer_id', '=', c.customerId).execute();
+
+    await scimCreateUser(c.customerId, { userName: email }, BASE);
+    const membership = await db.selectFrom('memberships').select('role')
+      .where('user_id', '=', user.id).where('customer_id', '=', c.customerId).executeTakeFirstOrThrow();
+    expect(membership.role).toBe('admin');
   });
 });

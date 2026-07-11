@@ -68,6 +68,13 @@ export async function setup() {
   }
 }
 
-export function teardown() {
-  // Nothing to tear down — queue prefix and env are process-scoped.
+export async function teardown() {
+  // @platform/shared owns module-level BullMQ Queue clients and a lazy Kysely
+  // pool. Leaving either alive makes Vitest wait for its Vite server shutdown
+  // timeout even after every assertion has passed. This is deliberately global
+  // teardown (rather than per-test-file cleanup): queues are singletons and
+  // later files in the sequential suite may still need them.
+  const { closeDb, closeQueues } = await import('@platform/shared');
+  await closeQueues();
+  await closeDb();
 }

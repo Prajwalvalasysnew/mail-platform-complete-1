@@ -5,7 +5,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { db } from './db.js';
-import { withTenant } from './tenant-context.js';
+import { withTenant, type TenantExecutor } from './tenant-context.js';
 import { resolveAndAssertPublicUrl, SsrfError } from './ssrf.js';
 
 export const WEBHOOK_EVENT_TYPES = [
@@ -38,6 +38,20 @@ export class WebhookError extends Error {
 
 const WEBHOOK_COLS = ['id', 'url', 'events', 'secret', 'previous_secret', 'previous_secret_expires_at', 'enabled', 'created_at'] as const;
 
+/**
+ * Use a request-owned executor when a caller already has tenant context; keep
+ * the scoped fallback for scheduler-safe/shared callers. This lets API routes
+ * keep an entire resource operation in one RLS transaction instead of opening
+ * independent transactions for each service call.
+ */
+function runForTenant<T>(
+  customerId: string,
+  executor: TenantExecutor | undefined,
+  fn: (trx: TenantExecutor) => Promise<T>
+): Promise<T> {
+  return executor ? fn(executor) : withTenant(customerId, fn);
+}
+
 function validateEvents(events: string[]): void {
   if (events.length === 0) throw new WebhookError('no_events', 'At least one event type is required.');
   const allowed = new Set<string>(WEBHOOK_EVENT_TYPES);
@@ -56,8 +70,8 @@ async function assertSafeUrl(url: string): Promise<void> {
   }
 }
 
-export async function listWebhooks(customerId: string): Promise<WebhookRecord[]> {
-  const rows = await withTenant(customerId, (trx) =>
+export async function listWebhooks(customerId: string, executor?: TenantExecutor): Promise<WebhookRecord[]> {
+  const rows = await runForTenant(customerId, executor, (trx) =>
     trx
       .selectFrom('webhooks')
       .select([...WEBHOOK_COLS])
@@ -72,12 +86,12 @@ export async function createWebhook(input: {
   customerId: string;
   url: string;
   events: string[];
-}): Promise<WebhookRecord> {
+}, executor?: TenantExecutor): Promise<WebhookRecord> {
   validateEvents(input.events);
   // Network I/O (DNS resolution for the SSRF check) — done before opening any
   // transaction, same reasoning as domains.ts's DNS verification.
   await assertSafeUrl(input.url);
-  const row = await withTenant(input.customerId, (trx) =>
+  const row = await runForTenant(input.customerId, executor, (trx) =>
     trx
       .insertInto('webhooks')
       .values({ customer_id: input.customerId, url: input.url, events: input.events })
@@ -91,9 +105,10 @@ export async function createWebhook(input: {
 export async function updateWebhook(
   customerId: string,
   id: string,
-  patch: { url?: string; events?: string[]; enabled?: boolean }
+  patch: { url?: string; events?: string[]; enabled?: boolean },
+  executor?: TenantExecutor
 ): Promise<WebhookRecord | null> {
-  const existing = await withTenant(customerId, (trx) =>
+  const existing = await runForTenant(customerId, executor, (trx) =>
     trx
       .selectFrom('webhooks')
       .select(['id'])
@@ -118,13 +133,13 @@ export async function updateWebhook(
 
   if (Object.keys(set).length === 0) {
     // Nothing to change — return the current record.
-    const row = await withTenant(customerId, (trx) =>
+    const row = await runForTenant(customerId, executor, (trx) =>
       trx.selectFrom('webhooks').select([...WEBHOOK_COLS]).where('id', '=', id).where('customer_id', '=', customerId).executeTakeFirst()
     );
     return (row ?? null) as unknown as WebhookRecord | null;
   }
 
-  const row = await withTenant(customerId, (trx) =>
+  const row = await runForTenant(customerId, executor, (trx) =>
     trx
       .updateTable('webhooks')
       .set(set)
@@ -137,8 +152,8 @@ export async function updateWebhook(
 }
 
 /** Delete a webhook, org-scoped. Returns true if a row was removed. */
-export async function deleteWebhook(customerId: string, id: string): Promise<boolean> {
-  const res = await withTenant(customerId, (trx) =>
+export async function deleteWebhook(customerId: string, id: string, executor?: TenantExecutor): Promise<boolean> {
+  const res = await runForTenant(customerId, executor, (trx) =>
     trx
       .deleteFrom('webhooks')
       .where('id', '=', id)
@@ -154,7 +169,7 @@ export async function deleteWebhook(customerId: string, id: string): Promise<boo
  */
 const WEBHOOK_SECRET_ROTATION_GRACE_HOURS = Number(process.env.WEBHOOK_SECRET_ROTATION_GRACE_HOURS ?? 24);
 
-export async function rotateWebhookSecret(customerId: string, id: string): Promise<WebhookRecord | null> {
+export async function rotateWebhookSecret(customerId: string, id: string, executor?: TenantExecutor): Promise<WebhookRecord | null> {
   const newSecret = randomBytes(32).toString('hex');
   // Move the CURRENT secret into previous_secret with a grace-period expiry,
   // instead of discarding it. Outbound deliveries always sign with the new
@@ -162,7 +177,7 @@ export async function rotateWebhookSecret(customerId: string, id: string): Promi
   // `previous_secret` until it expires — closing the window where deliveries
   // sent right after rotation fail verification because the customer hasn't
   // redeployed their handler yet.
-  const existing = await withTenant(customerId, (trx) =>
+  const existing = await runForTenant(customerId, executor, (trx) =>
     trx
       .selectFrom('webhooks')
       .select(['secret'])
@@ -173,7 +188,7 @@ export async function rotateWebhookSecret(customerId: string, id: string): Promi
   if (!existing) return null;
 
   const graceExpiry = new Date(Date.now() + WEBHOOK_SECRET_ROTATION_GRACE_HOURS * 3600_000);
-  const row = await withTenant(customerId, (trx) =>
+  const row = await runForTenant(customerId, executor, (trx) =>
     trx
       .updateTable('webhooks')
       .set({

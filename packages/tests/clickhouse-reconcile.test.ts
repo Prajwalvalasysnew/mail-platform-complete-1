@@ -14,12 +14,14 @@ import type { AddressInfo } from 'node:net';
 
 // Stub ClickHouse server: records inserted rows; can be toggled to fail.
 let received: string[] = [];
+let requestedUrls: string[] = [];
 let failNext = false;
 let server: http.Server;
 let baseUrl: string;
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
+    requestedUrls.push(req.url ?? '');
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
@@ -43,7 +45,7 @@ afterAll(async () => {
 // imports, so we set the env in a separate module-scope statement first:
 process.env.EVENTS_CLICKHOUSE_URL = process.env.EVENTS_CLICKHOUSE_URL ?? 'http://127.0.0.1:1';
 const shared = await import('@platform/shared');
-const { reconcileClickhouse, clickhouseSyncLag, seedCustomer, db } = shared as any;
+const { reconcileClickhouse, clickhouseSyncLag, deleteClickhouseMessageEvents, seedCustomer, db } = shared as any;
 
 async function insertEvents(customerId: string, n: number, typePrefix = 'sent') {
   const ids: number[] = [];
@@ -67,7 +69,36 @@ async function resetWatermarkToMax() {
 }
 
 describe('clickhouse reconciliation', () => {
-  beforeEach(async () => { received = []; failNext = false; await resetWatermarkToMax(); });
+  beforeEach(async () => { received = []; requestedUrls = []; failNext = false; await resetWatermarkToMax(); });
+
+  it('performs a synchronous tenant-scoped mutation for privacy erasure', async () => {
+    await deleteClickhouseMessageEvents('customer-privacy', 'message-privacy');
+    expect(requestedUrls).toHaveLength(1);
+    const url = new URL(requestedUrls[0], baseUrl);
+    expect(url.searchParams.get('mutations_sync')).toBe('2');
+    expect(url.searchParams.get('param_customer_id')).toBe('customer-privacy');
+    expect(url.searchParams.get('param_message_id')).toBe('message-privacy');
+    expect(url.searchParams.get('query')).toContain('ALTER TABLE events DELETE WHERE');
+  });
+
+  it('advances past tombstoned events without reinserting them', async () => {
+    const c = await seedCustomer();
+    const messageId = `erased-${Date.now()}`;
+    const event = await db.insertInto('events').values({
+      message_id: messageId, customer_id: c.customerId, event_type: 'sent', payload: {},
+    }).returning('id').executeTakeFirstOrThrow();
+    const request = await db.insertInto('deletion_requests').values({
+      customer_id: c.customerId, recipient: 'erased@example.com', status: 'completed',
+    }).returning('id').executeTakeFirstOrThrow();
+    await db.insertInto('privacy_message_tombstones').values({
+      customer_id: c.customerId, message_id: messageId, deletion_request_id: request.id,
+    }).execute();
+
+    const result = await reconcileClickhouse({ batchSize: 100 });
+    expect(result.shipped).toBe(0);
+    expect(BigInt(result.toEventId)).toBeGreaterThanOrEqual(BigInt(event.id));
+    expect(received).toHaveLength(0);
+  });
 
   it('ships events past the watermark and advances it', async () => {
     const c = await seedCustomer();

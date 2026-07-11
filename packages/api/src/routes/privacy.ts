@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -62,6 +62,9 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
         .where('body_object_key', 'is not', null)
         .execute();
       const candidateKeys = Array.from(new Set(keyRows.map((r) => r.body_object_key as string)));
+      const messageRows = await trx.selectFrom('messages').select('message_id')
+        .where('customer_id', '=', auth.customer_id).where('to_address', '=', recipient).execute();
+      const messageIds = messageRows.map((row) => row.message_id);
 
       // Event rows and tracked links are keyed by message_id; delete them using the subquery
       const ev = await trx
@@ -110,10 +113,40 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
           requested_by: parsed.data.requested_by ?? null,
           messages_deleted: Number(msgDel.numDeletedRows ?? 0),
           events_deleted: eventsDeleted,
-          status: 'completed',
+          status: 'pending',
         })
         .returning(['id'])
         .executeTakeFirstOrThrow();
+
+      if (orphanKeys.length > 0) {
+        const storageKind = getBodyStore().kind;
+        await trx.insertInto('deletion_object_items').values(
+          orphanKeys.map((objectKey) => ({
+            deletion_request_id: log.id,
+            object_key: objectKey,
+            storage_kind: storageKind,
+          }))
+        ).execute();
+      }
+      if (clickhouseEnabled() && messageIds.length > 0) {
+        await trx.insertInto('deletion_object_items').values(messageIds.map((messageId) => ({
+          deletion_request_id: log.id,
+          object_key: messageId,
+          storage_kind: 'clickhouse',
+        }))).execute();
+      }
+      if (messageIds.length > 0) {
+        await trx.insertInto('privacy_message_tombstones').values(messageIds.map((messageId) => ({
+          customer_id: auth.customer_id,
+          message_id: messageId,
+          deletion_request_id: log.id,
+        }))).onConflict((oc) => oc.columns(['customer_id', 'message_id']).doNothing()).execute();
+        await trx.insertInto('deletion_object_items').values(messageIds.map((messageId) => ({
+          deletion_request_id: log.id,
+          object_key: messageId,
+          storage_kind: 'bullmq',
+        }))).execute();
+      }
 
       // Suppression removal happens INSIDE the tenant transaction too now (it
       // touches the RLS-protected `suppressions` table), but the Redis cache
@@ -125,6 +158,7 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
         messages_deleted: Number(msgDel.numDeletedRows ?? 0),
         events_deleted: eventsDeleted,
         orphanKeys,
+        messageIds,
       };
     });
     } catch (err) {
@@ -146,24 +180,61 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
     // erasure (the DB rows — the authoritative record — are already gone).
     const bodyStore = getBodyStore();
     let bodiesDeleted = 0;
+    const failedObjects: Array<{ key: string; error: string }> = [];
     if (bodyStore.kind !== 'inline' && result.orphanKeys.length > 0) {
       for (const key of result.orphanKeys) {
         try {
           await bodyStore.delete(key);
           bodiesDeleted++;
+          await tenantScoped(req, (trx) => trx.updateTable('deletion_object_items').set({
+            status: 'completed', attempts: 1, completed_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_error: null,
+          }).where('deletion_request_id', '=', result.request_id).where('object_key', '=', key).execute());
         } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          failedObjects.push({ key, error: message });
+          await tenantScoped(req, (trx) => trx.updateTable('deletion_object_items').set({
+            status: 'failed', attempts: 1, last_error: message.slice(0, 2000), updated_at: new Date().toISOString(),
+          }).where('deletion_request_id', '=', result.request_id).where('object_key', '=', key).execute());
           req.log.warn({ err, key }, 'GDPR erasure: failed to delete body object');
         }
       }
     }
 
-    return reply.code(200).send({
+    for (const messageId of result.messageIds) {
+      try {
+        const queueResult = await purgeQueuedMessageData(messageId);
+        if (queueResult.active > 0) throw new Error(`bullmq_active_jobs:${queueResult.active}`);
+        await tenantScoped(req, (trx) => trx.updateTable('deletion_object_items').set({
+          status: 'completed', attempts: 1, completed_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_error: null,
+        }).where('deletion_request_id', '=', result.request_id).where('storage_kind', '=', 'bullmq').where('object_key', '=', messageId).execute());
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await tenantScoped(req, (trx) => trx.updateTable('deletion_object_items').set({
+          status: 'failed', attempts: 1, last_error: message.slice(0, 2000), updated_at: new Date().toISOString(),
+        }).where('deletion_request_id', '=', result.request_id).where('storage_kind', '=', 'bullmq').where('object_key', '=', messageId).execute());
+        req.log.warn({ err, messageId }, 'GDPR erasure: failed to purge BullMQ payloads');
+      }
+    }
+
+    const outstanding = await tenantScoped(req, (trx) => trx.selectFrom('deletion_object_items')
+      .select(({ fn }) => fn.countAll<number>().as('count'))
+      .where('deletion_request_id', '=', result.request_id)
+      .where('status', '!=', 'completed').executeTakeFirstOrThrow());
+    const finalStatus = Number(outstanding.count) === 0 ? 'completed' : 'pending';
+    await tenantScoped(req, (trx) => trx.updateTable('deletion_requests')
+      .set({ status: finalStatus })
+      .where('id', '=', result.request_id)
+      .where('customer_id', '=', auth.customer_id)
+      .execute());
+
+    return reply.code(finalStatus === 'completed' ? 200 : 202).send({
       recipient,
-      status: 'completed',
+      status: finalStatus,
       request_id: result.request_id,
       messages_deleted: result.messages_deleted,
       events_deleted: result.events_deleted,
       bodies_deleted: bodiesDeleted,
+      objects_pending: Number(outstanding.count),
     });
   });
 

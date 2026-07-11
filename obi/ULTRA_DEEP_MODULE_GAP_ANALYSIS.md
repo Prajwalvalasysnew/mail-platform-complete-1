@@ -7401,3 +7401,1542 @@ The overall production/SaaS/enterprise scores remain unchanged because these new
 | Overall SaaS readiness | 4.7/10 |
 | Overall enterprise readiness | 4.7/10 |
 | Overall micro-level architecture readiness | 5.6/10 |
+
+# 32. Thirteenth-Pass Current-Tree End-To-End Validation
+
+Validation date: 2026-07-10
+Repository revision: `f05edaf` (`master`)
+Method: direct current-tree review plus clean dependency installation, builds,
+the complete test suite, live local runtime probes, deployment rendering checks
+where locally available, Prometheus rule validation, and current official sender
+requirement verification. Earlier sections remain useful historical evidence,
+but the scores and findings in this section supersede conflicting older claims.
+
+## 32.1 Executive Verdict
+
+No: the current platform is not production-equivalent to SendGrid, Mailgun, or
+Mailjet, and it is not yet 10/10 production/SaaS/enterprise grade.
+
+It is now a strong early-production candidate with a broad, well-tested
+transactional-email control plane. It is materially stronger than the tree
+described in the early passes of this report. The current repository has real
+tenant-scoped query execution, atomic send claiming, stale-outbox recovery,
+group-unsubscribe enforcement, SDK webhook verification, consent events, legal
+holds, SCIM provisioning, audit hash chaining, ClickHouse reconciliation, an
+error registry, OpenAPI drift tests, security contexts, and 646 passing tests.
+
+The remaining gap to a mature ESP is not one missing API endpoint. It is the
+combination of:
+
+- fail-closed tenant isolation still being staged rather than deployed;
+- unsafe cross-tenant semantics in the new SCIM implementation;
+- incomplete provider-real billing, especially PayPal verification;
+- MTA topology, TLS, DKIM rotation, bounce alignment, and ISP operations not
+  being production-complete;
+- privacy erasure/export and audit retention still being internally
+  inconsistent;
+- analytics reconciliation being at-least-once without real ClickHouse
+  deduplication;
+- incomplete OpenAPI coverage and no generated multi-language developer
+  platform;
+- no staging load/failover/restore/deliverability evidence comparable to a
+  mature ESP;
+- release/supply-chain evidence and production configuration enforcement still
+  being incomplete.
+
+Current evidence-adjusted scores:
+
+| Dimension | Score |
+| --- | ---: |
+| Code architecture | 7.6/10 |
+| Core send acceptance and worker correctness | 8.0/10 |
+| Local developer completeness | 8.2/10 |
+| Self-hosted MVP readiness | 7.0/10 |
+| Multi-tenant SaaS readiness | 5.8/10 |
+| Deliverability/MTA readiness | 5.2/10 |
+| Billing launch readiness | 5.0/10 |
+| Privacy/compliance readiness | 5.4/10 |
+| Enterprise identity readiness | 4.5/10 |
+| HA/DR/SRE evidence | 4.2/10 |
+| Supply-chain/release maturity | 5.0/10 |
+| Overall production readiness | 5.6/10 |
+| Overall SendGrid/Mailgun/Mailjet-class maturity | 4.6/10 |
+
+## 32.2 Verification Snapshot
+
+| Check | Current result | Meaning |
+| --- | --- | --- |
+| Clean dependency install | `npm ci` passed | The lockfile can recreate the workspace. The checkout initially had no installed workspaces. |
+| Root TypeScript build | Pass after `npm ci` | Shared, API, worker, tracker, and SDK compile. |
+| Docusaurus production build | Pass | OpenAPI export and static docs build complete. |
+| Production dependency audit | 0 vulnerabilities at moderate+ | The old 27-moderate production finding is stale. |
+| Full dependency install audit | 18 moderate | Development/tooling dependencies still need triage; production-only audit is clean. |
+| Production readiness script | Pass in template mode | Validates the example contract, not real secrets, provider accounts, DNS, IAM, or deployed topology. |
+| Complete test suite | 96 files, 646 tests passed | Coverage is broad and the new remediation tests execute successfully. |
+| Test process shutdown | 10-second close timeout | Open handles/resources remain after tests; harness hygiene is not clean. |
+| Fresh `npm test` without test Compose | Fail | Test env is auto-loaded, but Postgres/Redis are not auto-started; the workflow is still two-step. |
+| Isolated test Compose + migrations | Pass | `.env.test` points to 5434/6380 and global setup applies migrations. |
+| Live API `/live`, `/health`, `/ready` | 200 | Local API sees Postgres, Redis, and queue. |
+| Live tracker `/live`, `/health`, `/ready` | 200 | Tracker probe-route mismatch found in an older pass is fixed in current code. |
+| Live worker `/health`, `/ready` | 200 | Worker health server is reachable and queue/Redis checks pass locally. |
+| Metrics without bearer token | 401 for API/tracker/worker | Metrics endpoints fail closed locally. |
+| Prometheus rules | `promtool` pass, 15 rules | Rule syntax is valid; alert behavior/fire-drill proof is still absent. |
+| Production Compose render | Pass with example env | YAML/env interpolation is structurally valid. |
+| Helm render | Not executed locally | Helm CLI is not installed; CI also does not currently render/lint the chart. |
+| Running API/worker/tracker containers | `user=node` | Non-root runtime is present. |
+| Running Compose resilience | restart=`no`, no Docker healthcheck, writable root | Current local Compose remains development-grade. |
+
+Important test-harness correction:
+
+- The first build failure in this pass was caused by an empty/missing
+  `node_modules`, not source defects. After `npm ci`, builds passed.
+- The first test failure was caused by the documented test Postgres/Redis stack
+  not running on ports 5434/6380. After starting it, all 646 tests passed.
+- The suite still reports `close timed out after 10000ms`, proving one or more
+  DB/Redis/BullMQ/timer/server handles are not closed cleanly.
+- `.npmrc` contains `PLAYWRIGHT_BROWSERS_PATH` as an npm project config key;
+  npm 11 warns that this is unknown and will stop working in a future major.
+
+## 32.3 Material Corrections To Older Findings
+
+| Older claim | Current-tree correction |
+| --- | --- |
+| No production route uses `withTenant()` | Stale. Current API code has 51 `tenantScoped()` call sites, and shared domain/webhook/activity services use `withTenant()`. |
+| Startup does not check the DB role | Stale. Production API startup calls `rlsIsEnforced()` and refuses superuser/BYPASSRLS unless an explicit override is set. |
+| Group unsubscribe is not enforced | Stale. Single and batch send paths check `unsubscribe_group_members`; E2E coverage exists. |
+| SDK webhook verification is incompatible | Stale. Current SDK parses `X-MP-Signature: t=...,v1=...`, covers timestamp freshness, rotation secrets, multiple signatures, sync and Web Crypto paths. |
+| Tracker lacks `/live` and `/ready` | Stale. Both routes now exist and the current local container returns 200. |
+| Cashfree timestamp handling is broken | Stale. Current verifier accepts 13-digit milliseconds and 10-digit seconds, signing the raw timestamp. |
+| Billing marker is outside state mutation | Stale. `billing_events` insert and subscription/customer mutation now share one DB transaction. |
+| Send-worker duplicate claim is non-atomic | Stale. Worker uses conditional `queued -> sending UPDATE ... RETURNING`. |
+| Outbox crash window has no repair | Stale. `reclaimStaleSendOutbox()` reclaims stale `enqueued` rows and deterministic job IDs reduce duplicate risk. |
+| ClickHouse loss has no reconciliation | Partially stale. A watermark reconciler now exists, but its current duplicate/concurrency design is not 10/10. |
+| Consent ledger/legal hold/audit hash chain/SCIM are absent | Stale as an implementation claim. All four now have code, migrations, docs, and tests; their production semantics still have gaps described below. |
+| Helm lacks security contexts | Stale. API/worker/tracker and migration job now use non-root/seccomp/capability-drop settings. Read-only root filesystems and restricted-policy proof are still missing. |
+| App containers run migrations at startup | Stale for current Dockerfiles. A dedicated Compose/Helm migration job is now used. |
+| Production dependency audit has 27 moderate advisories | Stale. Current `npm audit --omit=dev --audit-level=moderate` reports zero. |
+
+## 32.4 Tenant Isolation And Database Boundary
+
+Current score: 5.5/10
+
+What improved:
+
+- `tenantScoped(req, fn)` maps authenticated API-key/session tenants to a
+  transaction-local `app.customer_id`.
+- High-risk message, analytics, template, suppression, privacy, usage, webhook,
+  domain, and activity paths now use tenant transactions in many places.
+- Production startup checks the current DB role for superuser/BYPASSRLS.
+- Tests recognize both permissive and fail-closed RLS regimes.
+
+What still blocks 10/10:
+
+1. The active migration `023_rls.sql` remains fail-open when tenant context is
+   absent: every policy includes `OR current_tenant_id() IS NULL`.
+2. The fail-closed migration remains in `infra/migrations-pending/`; it is not
+   applied by normal deploys.
+3. `rlsIsEnforced()` catches any unexpected DB/probe error and returns `true`.
+   A broken role-introspection query therefore reports a safe posture instead
+   of failing closed.
+4. `api_keys` deliberately retains a null-tenant-permissive policy for prefix
+   lookup. This needs a narrow security-definer lookup, separate auth role, or
+   dedicated credential index/table rather than a broad policy exception.
+5. New tenant tables are inconsistent. `unsubscribe_groups`, memberships,
+   SCIM tokens, deletion requests, and other tenant-derived tables do not all
+   share one enforced RLS inventory policy.
+6. Route security metadata is still not a first-class registry. There is no
+   automatic guarantee that every new tenant route uses tenant-scoped DB access.
+7. Some shared tenant services still open their own `withTenant()` transaction,
+   which can fragment a logical operation across transactions instead of using
+   one request context/executor end to end.
+
+10/10 acceptance:
+
+- Move a reviewed fail-closed migration into the normal migration stream.
+- Use distinct least-privilege API, worker, admin, and migration roles.
+- Make DB-role/RLS startup verification throw/fail on probe error.
+- Generate a tenant-table inventory and fail CI if any table lacks the expected
+  RLS mode and policies.
+- Generate route metadata and fail CI when a tenant route has no tenant executor.
+- Prove cross-tenant read/write denial for every ID-bearing route while
+  intentionally removing an application-level `customer_id` predicate.
+- Run the staging rollout/load test described by the pending migration before
+  enabling it in production.
+
+## 32.5 SCIM, Customer SSO, Sessions, And Enterprise Identity
+
+Current score: 4.5/10
+
+### 32.5.1 SCIM User Provisioning - 4.5/10
+
+The new SCIM code is useful but has a serious multi-tenant modeling flaw:
+
+- `users.status`, `users.scim_managed`, and `users.scim_external_id` are global
+  user fields.
+- A human can belong to multiple customer tenants.
+- `PATCH active=false` or `DELETE` from tenant A sets global
+  `users.status='disabled'` while preserving memberships.
+- That disables the same user in tenant B, even if tenant B did not deprovision
+  them.
+- Reactivation by either tenant globally re-enables the user.
+- Different IdPs/tenants cannot safely maintain distinct `externalId` values
+  for the same user.
+
+Additional gaps:
+
+- No `/scim/v2/Groups`, group-to-role mapping, bulk operations, ETags, or
+  enterprise IdP compatibility certification.
+- SCIM request bodies use `any` and minimal manual validation.
+- No dedicated SCIM rate/concurrency limits are visible.
+- Membership creation errors are broadly swallowed with `.catch(() => {})`.
+- SCIM operations are not consistently recorded in the durable audit chain.
+- Token rotation/expiry/IP restrictions are absent; tokens reuse another
+  pepper family rather than having an explicit rotation lifecycle.
+
+10/10 solution:
+
+- Move SCIM state to a per-tenant external identity/provisioning table keyed by
+  `(customer_id, user_id)` with tenant-specific `external_id` and active state.
+- Deprovision by disabling/removing the membership for that tenant and revoking
+  tenant-scoped sessions; disable the global user only when no active
+  memberships remain.
+- Add a regression test where one user belongs to two tenants and tenant A
+  deprovisioning does not affect tenant B.
+- Add Groups, schema discovery, resource types, ETag/version behavior, complete
+  filter validation, rate limits, audit, and Okta/Entra sandbox certification.
+
+### 32.5.2 Customer SSO - 2.5/10
+
+Admin OIDC is implemented, but customer-tenant SAML/OIDC SSO is still absent.
+SCIM provisioning alone is not customer SSO. A SendGrid-class enterprise
+offering needs per-tenant connections, verified domains, SSO-required policy,
+IdP MFA assurance, JIT controls, recovery, and safe account linking.
+
+### 32.5.3 MFA/session maturity - 7.0/10
+
+Password sessions, TOTP, recovery codes, replay protection, revoke/list flows,
+and production admin OIDC are strong foundations. Remaining gaps include
+WebAuthn/passkeys, OIDC `amr`/`acr` enforcement for admins, device/session risk
+metadata, step-up authentication, JIT/break-glass governance, and complete
+session revocation on tenant-specific SCIM deprovisioning.
+
+## 32.6 Send Acceptance, Outbox, Worker, And Event Consistency
+
+Current score: 8.0/10
+
+Strong current controls:
+
+- Zod validation, idempotency, quota reservation, suppression checks, domain
+  gates, backpressure, abuse review, body offload, and transactional outbox.
+- Atomic `queued -> sending` claim prevents duplicate worker ownership.
+- Deterministic BullMQ send job IDs and stale-outbox reclamation repair the main
+  DB-to-Redis crash window.
+- Worker preparation/transport failures are tested not to strand `sending` rows.
+- Event insertion and revenue usage increments share a transaction.
+- Duplicate event retries resume downstream side effects rather than treating
+  event-row existence as proof every side effect completed.
+
+Remaining submodule gaps:
+
+| Submodule | Score | Gap |
+| --- | ---: | --- |
+| Single send acceptance | 8.5 | Multiple short tenant transactions fragment the request; no formal cost/render-time budget. |
+| Batch send | 7.5 | Per-recipient tenant/suppression queries can be transaction-heavy; production-scale proof absent. |
+| Send outbox | 8.0 | Stale timeout creates delayed recovery; no explicit claiming state/job-existence reconciliation metric. |
+| Send worker claim | 8.5 | Good atomic claim; exactly-once external SMTP delivery remains impossible without provider/message-id reconciliation. |
+| Event processing | 7.0 | Post-event side effects remain staged outside one durable processing ledger. |
+| Soft-bounce/consent side effects | 6.5 | Retrying a partially processed event can repeat soft-bounce counters or append duplicate consent history. |
+| Prometheus counters | 6.5 | Retried side effects can double-increment process metrics even when DB usage is deduplicated. |
+| Review approval | 7.0 | Must be proven to use the same durable send-outbox contract for every path. |
+
+10/10 acceptance:
+
+- Add an event processing ledger/outboxes for status, suppression, webhook,
+  analytics, and reputation stages.
+- Give each side effect a deterministic idempotency key.
+- Make suppression/consent events idempotent per source event.
+- Add chaos tests at every commit boundary: before/after event insert, status
+  update, suppression, webhook enqueue, ClickHouse ship, and SMTP response.
+- Publish duplicate-delivery, stranded-send, outbox-age, and reconciliation SLOs.
+
+## 32.7 Deliverability, Domains, DKIM, Haraka, And ISP Operations
+
+Current score: 5.2/10
+
+### 32.7.1 DKIM and domain authentication - 6.0/10
+
+- Domain onboarding generates SPF/DKIM/DMARC guidance and verifies DNS.
+- Haraka DKIM signing fails soft/closed when required.
+- A DKIM rotation lifecycle exists in `dkim_keys`.
+- The signer still reads static `sending_domains.dkim_private_key` and
+  `dkim_selector`; it does not select the active `dkim_keys` record.
+- DMARC is observed but is not a universal/high-volume send-eligibility gate.
+- Return-path generation still uses one global `BOUNCE_DOMAIN`, not the
+  per-domain bounce record advertised during onboarding.
+
+### 32.7.2 MTA runtime and TLS - 4.5/10
+
+- Compose runs inbound/outbound Haraka, but Helm does not deploy either MTA
+  even though the legacy K8s config selects Haraka transport.
+- Haraka images use `npm install`, broad build tooling, unpinned base tags, and
+  run as root. Outbound listens on 2525 and does not need root to bind.
+- The outbound image generates a ten-year self-signed certificate at build
+  time; checked-in TLS config still contains empty key/cert placeholders.
+- No production certificate mount/renewal, SMTP STARTTLS smoke evidence,
+  MTA-STS/TLS-RPT implementation, TLS policy dashboard, or proven durable queue
+  topology exists.
+- Haraka images are excluded from CI image scanning.
+
+### 32.7.3 Provider/ISP operations - 4.5/10
+
+The code has reputation, warmup, blocklist, Postmaster/SNDS ingestion, failure
+taxonomy, bot filtering, and alert scaffolding. It still lacks the evidence that
+defines a mature ESP:
+
+- real sending IP inventory, PTR/forward-confirmed rDNS, HELO, TLS, and pool
+  graduation proof;
+- 30+ day warmup and inbox-placement artifacts;
+- live Google Postmaster, Microsoft SNDS/JMRP, and Yahoo complaint/FBL evidence;
+- per-ISP adaptive concurrency/rate shaping tied to enhanced SMTP codes;
+- automated complaint/bounce/content/policy incident response;
+- production feedback-loop corpus and unknown DSN triage metrics.
+
+Current official requirements rechecked:
+
+- Gmail requires TLS, valid forward/reverse DNS, authentication, DMARC and
+  alignment for bulk senders, one-click plus visible unsubscribe for marketing
+  mail, and spam rates below 0.3%; Google recommends keeping them below 0.10%.
+  Source: https://support.google.com/mail/answer/81126
+- Yahoo requires visible/easy unsubscribe and bulk-sender hygiene.
+  Source: https://senders.yahooinc.com/best-practices/
+- Outlook high-volume sender enforcement requires SPF, DKIM, and DMARC and can
+  reject non-compliant mail with `550 5.7.515`.
+  Source: https://techcommunity.microsoft.com/blog/microsoftdefenderforoffice365blog/strengthening-email-ecosystem-outlook%E2%80%99s-new-requirements-for-high%E2%80%90volume-senders/4399730
+
+10/10 acceptance:
+
+- Wire active DKIM rotation keys into signing and prove promote/rollback.
+- Implement and verify per-domain bounce return paths.
+- Add production Haraka/managed-MTA topology with TLS secrets, queue storage,
+  probes, PDB, metrics, non-root/capability posture, and image scans.
+- Enforce provider-specific authentication/compliance gates before pool
+  graduation.
+- Produce sustained reputation, inbox placement, complaint, bounce, deferral,
+  and warmup evidence under real production-like traffic.
+
+## 32.8 Billing, Plans, Webhooks, And Revenue Integrity
+
+Current score: 5.0/10
+
+Provider-specific verdict:
+
+| Area | Score | Current state |
+| --- | ---: | --- |
+| Stripe webhook verification | 8.0 | Raw-body HMAC and timestamp tolerance are directionally correct; live Stripe CLI/sandbox proof is still required. |
+| PayPal webhook verification | 3.0 | Still uses a custom shared-secret HMAC. This is not PayPal's official certificate/API verification model. |
+| Cashfree webhook verification | 7.0 | Millisecond bug is fixed and regression-tested; sandbox delivery proof remains absent. |
+| Billing event atomicity | 8.0 | Marker and state mutation now share a transaction. Unknown-customer events are still consumed as successfully processed. |
+| Billing replay | 7.0 | Payload retention and admin replay exist; provider event state/ordering and forensic workflow remain limited. |
+| Plan catalog | 4.0 | Internal placeholder keys and env JSON mapping remain; checkout accepts caller-supplied price IDs rather than a governed DB catalog. |
+| Metering | 7.0 | Durable usage and Stripe reporting exist; PayPal/Cashfree metering is intentionally no-op. |
+| Dunning/tax/refunds/credits | 1.5 | Launch-grade workflows are largely absent. |
+| Invoices/reconciliation | 4.5 | Drift detection exists, not a full provider invoice/payment correction ledger. |
+
+Critical PayPal correction remains mandatory. Official PayPal verification uses
+transmission ID/time/signature, certificate URL, auth algorithm, webhook ID,
+and event payload through PayPal verification/certificate semantics. A local
+test of the platform's custom HMAC proves only its own invented protocol.
+Source: https://developer.paypal.com/docs/api/webhooks/v1/
+
+10/10 acceptance:
+
+- Replace PayPal HMAC with official verification and sandbox fixtures.
+- Add a DB-backed versioned plan/price/entitlement catalog.
+- Reject price IDs not active for the selected provider/environment.
+- Add provider-scoped unique event identity and a received/applying/applied/
+  failed/replayed state machine; unknown customers must become repairable tasks.
+- Implement dunning, grace/restriction/recovery, proration preview, invoices,
+  payments, refunds, credits, tax identity/calculation, and finance exports.
+- Certify complete upgrade/downgrade/cancel/payment-failure/recovery flows in
+  provider sandboxes without manual DB changes.
+
+## 32.9 Consent, Privacy, Legal Hold, Audit, And Retention
+
+Current score: 5.4/10
+
+### 32.9.1 Consent and preferences - 7.0/10
+
+Append-only `consent_events`, global/group suppression, one-click unsubscribe,
+body unsubscribe links, and group-send enforcement now exist. Remaining gaps:
+
+- no complete hosted branded preference center/resubscribe policy;
+- consent proof lacks a mature lawful-basis/text/version/source model;
+- erasure removes the operational suppression and records an unsuppress event,
+  but no tenant-keyed hashed do-not-contact tombstone prevents accidental
+  future re-import/re-send;
+- retry idempotency for consent-event append is incomplete.
+
+### 32.9.2 Privacy export/erasure - 5.5/10
+
+Legal-hold blocking and body-object orphan checks are real improvements. The
+current endpoint still returns `status: completed` after the Postgres
+transaction even when object deletion fails. It logs and ignores S3/filesystem
+delete failure. It does not orchestrate per-store erasure for ClickHouse,
+BullMQ/DLQ, logs/traces, backups, or external provider records. Export remains
+a limited synchronous subset and does not load complete message bodies,
+headers, metadata, tracked links, group state, audit/deletion evidence, or
+ClickHouse rows.
+
+10/10 requires asynchronous export/erasure jobs with per-store state, retries,
+legal exceptions, signed evidence, expiration, and backup tombstones.
+
+### 32.9.3 Audit hash chain - 5.5/10
+
+Hash chaining with per-chain advisory locking detects mutation, deletion, and
+sequence gaps. It is not immutable storage:
+
+- database administrators can alter both audit and hash tables;
+- `recordAuditSafe()` swallows all failures with no durable outbox/alert;
+- retention deletes `audit_log`; FK cascade deletes hash links, intentionally
+  breaking the chain and making later verification fail from a sequence gap;
+- no archived chain root, signed daily checkpoint, WORM/Object Lock sink, or
+  external SIEM proof exists.
+
+Retention and tamper evidence must be designed together: archive a signed chain
+segment/root before deletion and verify the next segment against that root.
+
+### 32.9.4 Legal hold - 6.5/10
+
+Recipient/tenant holds block the current Postgres erasure endpoint. Holds do not
+yet govern retention jobs, ClickHouse TTL/deletion, object lifecycle, queues,
+logs, or backups. Hold administration uses the broad `messages` scope rather
+than a dedicated compliance permission/approval flow.
+
+## 32.10 ClickHouse, Storage, Analytics, And Data Integrity
+
+Current score: 5.8/10
+
+### 32.10.1 ClickHouse reconciliation - 6.0/10
+
+The watermark reconciler prevents permanent omission when the best-effort live
+write fails. Its 10/10 claims are not yet valid:
+
+- live dual write plus reconciliation can insert the same event twice;
+- the ClickHouse table is a plain `MergeTree`, not a deduplicating engine and
+  has no stable Postgres event ID column;
+- comments claim query-time or `ReplacingMergeTree` deduplication, but the
+  checked-in schema implements neither;
+- concurrent reconcilers do not lock/lease the single watermark row;
+- the query converts a `BIGSERIAL` watermark through JavaScript `Number`, which
+  is unsafe beyond `2^53-1`;
+- one global watermark and no tenant/partition repair inventory limits
+  operational diagnosis;
+- privacy erasure and legal hold are not propagated to ClickHouse.
+
+10/10 solution:
+
+- Include immutable Postgres `event_id` in ClickHouse and use a design with
+  explicit deduplication semantics.
+- Use a distributed lease/advisory lock for one reconciler.
+- Keep cursor comparisons as bigint/string-safe SQL values.
+- Add count/hash reconciliation by tenant/day/event type, backfill tooling,
+  deletion/tombstone support, backup/restore, lag alerts, and duplicate-rate
+  tests.
+
+### 32.10.2 Object storage - 6.5/10
+
+Inline/filesystem/S3-compatible storage and body-offload tests exist. Missing
+evidence includes MinIO CI, least-privilege prefix IAM, SSE/KMS enforcement,
+lifecycle/versioning/replication, credential/IAM-role modes in config guard,
+failure retry queues, legal hold/Object Lock integration, and restore/erasure
+proof against real S3-compatible infrastructure.
+
+### 32.10.3 Analytics privacy/scaling - 6.0/10
+
+Analytics endpoints and ClickHouse scaffolding are useful, but small-bucket
+privacy thresholds, tenant privacy modes, high-cardinality/cost guards, durable
+export, and real large-scale query/load evidence are absent.
+
+## 32.11 API, OpenAPI, SDK, Docs, And Public Lifecycle
+
+Current score: 6.0/10
+
+What improved:
+
+- Stable error-code registry and compatibility test exist.
+- OpenAPI baseline breaking-change tests exist.
+- Route parity makes undocumented growth visible.
+- SDK webhook helpers now match the worker's actual signature protocol.
+- Docs and SDK production builds pass.
+
+What still blocks 10/10:
+
+1. The API has about 168 route declarations across 22 route files, while the
+   hand-maintained OpenAPI contains only about 51 path entries.
+2. Route parity explicitly allowlists many undocumented `/v1` operations. It is
+   a drift ratchet, not proof of a complete public contract.
+3. SCIM routes are not included in the parity collector.
+4. The breaking-change detector checks operation removal, operation ID, and
+   newly required parameters, but not removed/changed response fields, request
+   schema changes, enum narrowing, auth/scope changes, status codes, or error
+   semantics.
+5. Route validation is inconsistent; several routes cast `req.body`, query, or
+   params rather than using response/request schemas registered with Fastify.
+6. `admin.ts` remains roughly 1,000 lines and combines many high-risk domains.
+7. SDK is TypeScript-only, privately packaged, handwritten, and not proven to
+   cover the complete intended public API.
+8. No docs-snippet compile/run gate, SDK publish workflow, npm provenance, or
+   generated Python/Go/Java clients exist.
+
+10/10 acceptance:
+
+- Establish one route-contract source of truth that generates runtime schemas,
+  OpenAPI, SDKs, examples, and route security metadata.
+- Eliminate the public-route allowlist by documenting every supported public
+  route or moving internal/dashboard routes to a clearly separate contract.
+- Expand compatibility diffing to full request/response/auth/error semantics.
+- Compile and execute docs snippets in CI.
+- Split admin routes by capability and add two-person controls for destructive
+  or revenue/security-sensitive operations.
+- Publish signed/provenance-backed multi-language SDK artifacts with semver and
+  migration guides.
+
+## 32.12 Configuration, Secrets, Containers, Helm, CI, And Supply Chain
+
+Current score: 5.6/10
+
+### 32.12.1 Config guard - 5.5/10
+
+Core secret/default detection, admin OIDC requirements, and selected billing
+webhook secret checks exist. Production still does not comprehensively reject:
+
+- `BILLING_PROVIDER=mock` or live providers silently falling back to mock;
+- PayPal without official verification fields/webhook ID;
+- non-HTTPS tracking/app URLs;
+- `SKIP_PHYSICAL_ADDRESS_CHECK=true`;
+- incomplete S3/IAM, KMS, delivery transport, ClickHouse TLS/auth, OTel, SMTP
+  TLS, and DKIM configuration;
+- active fail-open RLS policy or a failed RLS introspection probe;
+- incompatible retention, audit-chain, legal-hold, and analytics settings.
+
+### 32.12.2 Images and runtime - 5.5/10
+
+API/worker/tracker run as `node` and no longer migrate at startup. Remaining
+gaps:
+
+- base images use mutable tags, not digests;
+- Docker builds use `npm install` and copy broad workspace trees;
+- production runtime contains the full build workspace/dependency tree rather
+  than minimal pruned artifacts;
+- root filesystems remain writable in Helm;
+- Dockerfile/Compose healthchecks and production restart policies are absent;
+- Haraka runs as root and is not included in image scanning;
+- Prometheus, Grafana, Alertmanager, Mailpit, Postgres, Redis, Jaeger, and
+  ClickHouse images use mutable tags in local topology.
+
+### 32.12.3 Helm/Kubernetes - 6.0/10
+
+Non-root UID/GID, seccomp, capability drop, resources, PDBs, NetworkPolicies,
+and probes are present. Missing items include startup probes, worker readiness
+using `/ready` instead of `/health`, read-only root filesystems with explicit
+writable mounts, ExternalSecrets/managed secret examples, Haraka deployments,
+queue-age autoscaling, immutable image digests, restricted Pod Security
+admission proof, chart lint/render tests, and cloud reference values.
+
+### 32.12.4 CI/release - 5.0/10
+
+Current CI builds core services, tests, audits, emits an SBOM, and scans three
+images. Important gaps:
+
+- workflow push trigger is only `main`, while the checked-out branch is
+  `master`; direct pushes to `master` may not run this workflow;
+- SDK and docs are not part of the enforced build job;
+- no Helm lint/template/schema/policy test;
+- actions use mutable version tags rather than pinned commit SHAs;
+- workflow permissions are not explicitly least-privilege;
+- production audit gate is high-only even though local moderate-level
+  production audit currently passes;
+- SBOM generation is allowed to fail via `|| true` and missing upload is only a
+  warning;
+- Haraka/docs images are not scanned;
+- no CodeQL/secret scanning/Scorecard/provenance/signing/release workflow;
+- no staging smoke/load/failover/restore gate and no signed release-evidence
+  manifest.
+
+10/10 acceptance:
+
+- Fix branch triggers and make build/test/docs/SDK/Helm/image checks mandatory.
+- Make SBOM generation/validation fail closed; generate source and image SBOMs.
+- Pin actions/base images, sign images/packages, emit attestations/provenance,
+  and verify them before deployment.
+- Add protected production environments and signed release evidence containing
+  commit/tag, image digests, SBOM hashes, audit/scans, OpenAPI diff, SDK pack,
+  migration, smoke, load, failover, and restore results.
+
+## 32.13 Test, Load, HA, DR, And Operational Proof
+
+Current score: 5.8/10 for automated testing, 4.2/10 for production proof
+
+Strengths:
+
+- 646 tests cover unit, DB integration, E2E, security, RLS, idempotency,
+  outbox, worker failures, billing, SCIM, legal hold, consent, audit chain,
+  ClickHouse reconciliation, OpenAPI, SDK signatures, and webhooks.
+- Build and docs build are clean after a deterministic install.
+- k6 assets and thresholds exist.
+
+Gaps:
+
+- test infrastructure must be started separately and leaked handles cause a
+  shutdown timeout;
+- no coverage instrumentation/threshold is enforced;
+- no fuzzing/property tests for MIME, DSN/ARF, SCIM filters, template rendering,
+  webhook parsing, and billing payloads;
+- no staging k6 artifacts for API, batch, tracker, webhook, or queue drain;
+- no Redis failover, Postgres failover/PITR, worker kill, SMTP outage, DNS
+  outage, object-store outage, ClickHouse restore, or network-partition drills;
+- no per-workload RPO/RTO and signed restore evidence;
+- no alert fire-drill or on-call integration proof;
+- local running containers have no restart policy or Docker healthcheck.
+
+10/10 acceptance:
+
+- Provide a single command that starts isolated dependencies, migrates, runs
+  tests, closes all handles, and tears down reliably.
+- Run sustained/soak/burst tests in staging with multiple replicas and managed-
+  topology equivalents.
+- Publish capacity envelopes and SLO/error-budget results.
+- Execute and retain quarterly failover/restore/alert/security game-day evidence.
+
+## 32.14 Highest-Risk Current Gaps
+
+| Rank | Gap | Severity | Why it blocks mature production |
+| ---: | --- | --- | --- |
+| 1 | Fail-closed RLS migration is still pending | Critical | Missing tenant context still turns RLS into allow-all under active policies. |
+| 2 | SCIM deactivation is global, not tenant-specific | Critical | One tenant can disable a shared user in other tenants. |
+| 3 | PayPal webhook verifier is not PayPal's protocol | Critical if PayPal enabled | Live events are not being verified with official semantics. |
+| 4 | No real deliverability/IP reputation evidence | Critical for ESP launch | Inbox placement and provider acceptance cannot be inferred from code. |
+| 5 | DKIM rotation is not wired into signing | High | Promoted keys do not control the actual signer. |
+| 6 | Haraka production topology/TLS is incomplete | High | Current self-signed/root/Compose-only posture is not a production MTA fleet. |
+| 7 | Privacy erasure can report complete with failed object deletion | High | Compliance status is not truthful across stores. |
+| 8 | Audit retention intentionally breaks the hash chain | High | Tamper verification and retention policy conflict. |
+| 9 | ClickHouse reconciliation can duplicate rows | High | Checked-in `MergeTree` does not implement claimed deduplication. |
+| 10 | Billing catalog/dunning/tax/refunds incomplete | High | The SaaS revenue lifecycle is not launch-complete. |
+| 11 | OpenAPI covers only a subset of public routes | High | Contract, docs, SDK, and compatibility are incomplete. |
+| 12 | No staging load/failover/restore proof | High | Capacity and recovery objectives are unverified. |
+| 13 | Config guard allows half-configured subsystems | High | Production can boot in unsupported provider/storage/MTA states. |
+| 14 | Per-domain bounce alignment remains global | Medium-high | Return-path alignment and customer DNS claims do not match runtime. |
+| 15 | CI branch/release/evidence gaps | Medium-high | Checks and artifact integrity are not guaranteed for production promotion. |
+| 16 | Test runner leaks resources | Medium | Test completion is slow/noisy and can hide lifecycle defects. |
+| 17 | Compose lacks service restart/health policy | Medium | Self-host runtime does not self-heal predictably. |
+| 18 | Customer SSO is absent | Medium-high for enterprise | SCIM alone does not satisfy enterprise authentication. |
+| 19 | Event side effects lack a durable stage ledger | Medium-high | Crash retry can duplicate or omit non-transactional side effects. |
+| 20 | No governed preference center/hashed opt-out tombstone | Medium-high | Consent and erasure duties can conflict. |
+
+## 32.15 Exact Remediation Order
+
+### Phase 0: stop correctness/security exposure
+
+1. Redesign SCIM state per `(customer_id, user_id)` and add the two-tenant
+   deprovision regression test.
+2. Make `rlsIsEnforced()` fail closed on errors and complete the staged RLS
+   role/migration rollout in staging.
+3. Disable PayPal in production until official webhook verification and sandbox
+   certification exist.
+4. Make erasure remain `pending/failed` until every required store succeeds.
+5. Reconcile audit retention with chained/signed archive roots.
+
+### Phase 1: make the mail path production-real
+
+1. Wire `dkim_keys.state='active'` into Haraka signing.
+2. Add per-domain verified bounce return paths.
+3. Deploy/harden Haraka or select a managed outbound provider with a fully
+   supported topology.
+4. Add TLS/cert/queue/probe/metrics/scan evidence.
+5. Add ISP-specific retry/throttle policy and live feedback-loop ingestion.
+
+### Phase 2: make SaaS state durable
+
+1. Add event side-effect processing ledger/outboxes.
+2. Make ClickHouse event IDs/deduplication/concurrency/privacy correct.
+3. Add DB-backed plans/entitlements and complete billing provider workflows.
+4. Add asynchronous privacy export/erasure orchestration.
+5. Add customer SSO and tenant-specific session/deprovision semantics.
+
+### Phase 3: make deployment and release provable
+
+1. Expand the production config guard across every enabled subsystem.
+2. Complete OpenAPI coverage and generate SDK/docs from one contract.
+3. Fix CI branch triggers, include docs/SDK/Helm/Haraka, and make SBOM/scans
+   fail closed.
+4. Pin/sign/attest images and packages.
+5. Produce staging load, chaos, failover, restore, and alert evidence for every
+   release candidate.
+
+## 32.16 Final Current-Tree Answer
+
+The current platform is substantially better than a prototype and has several
+production-quality design patterns. The send API, quota/idempotency controls,
+transactional outbox, atomic worker claim, webhook SSRF defense, unsubscribe
+flow, tests, and modular infrastructure are meaningful strengths.
+
+It is still not comparable to SendGrid, Mailgun, or Mailjet as an operated
+service. Those products' maturity includes years of real ISP reputation,
+globally redundant MTA/data-plane operations, abuse response, billing and
+support workflows, capacity evidence, recovery drills, enterprise identity,
+compliance evidence, and stable developer contracts. This repository contains
+many of the right shapes, but several controls remain staged, internally
+inconsistent, or proven only by local tests.
+
+The honest current label is:
+
+> Strong early-production transactional mail platform; suitable for controlled
+> staging/pilot work after the critical isolation, SCIM, PayPal, erasure, and MTA
+> issues are addressed. Not yet a general-availability multi-tenant ESP and not
+> yet SendGrid/Mailgun/Mailjet-class.
+
+# 33. Remediation Execution Log
+
+This section records implemented remediations after the thirteenth-pass audit.
+It supersedes matching open findings in section 32 when the implementation and
+verification evidence below are present.
+
+## 33.1 Step 1 Complete: Tenant-Specific SCIM State
+
+Completion date: 2026-07-10
+
+Resolved critical defect:
+
+- SCIM state previously lived on global `users` columns.
+- Deprovisioning a person in tenant A set global `users.status='disabled'` and
+  could disable the same person in tenant B.
+- A single global `scim_external_id` also could not represent different IdPs
+  provisioning the same human into different tenants.
+
+Implementation:
+
+- Added migration `042_scim_tenant_state.sql`.
+- Moved authoritative SCIM state to each `memberships` row:
+  - `scim_managed`
+  - `scim_external_id`
+  - `scim_display_name`
+  - `scim_active`
+  - `scim_updated_at`
+- Added tenant-scoped external-ID uniqueness on
+  `(customer_id, scim_external_id)`.
+- Backfilled legacy SCIM-managed users into membership state.
+- SCIM GET/list/filter/create/update/delete now read and mutate tenant
+  membership state rather than global user state.
+- Tenant deprovisioning revokes only sessions whose current tenant is the
+  deprovisioned tenant.
+- Normal membership/session resolution excludes inactive SCIM memberships, so
+  an existing session cannot switch back into a deprovisioned tenant.
+- Sessions and memberships in other tenants remain active.
+- Reprovisioning an existing owner/admin no longer overwrites the role with the
+  default `analyst` role.
+- SCIM display-name changes are tenant-specific and no longer modify another
+  tenant's view of the shared global user.
+
+Verification:
+
+| Check | Result |
+| --- | --- |
+| Root TypeScript build | Pass |
+| Fresh migration application | Pass |
+| Migration baseline behavior | Pass |
+| Focused SCIM/migration/topology tests | 20/20 pass |
+| Full repository suite | 96 files, 648 tests pass |
+| Cross-tenant deprovision regression | Pass: tenant A session revoked; tenant B session remains valid |
+| Per-tenant external ID/display name | Pass |
+| Existing role preservation | Pass: admin role remains admin after reprovision |
+
+Known remaining SCIM gaps, not claimed complete:
+
+- Customer interactive SAML/OIDC SSO is still absent.
+- `/scim/v2/Groups`, ETags, bulk operations, schema/resource discovery, and
+  complete RFC 7644 filtering are not implemented.
+- SCIM tokens still need expiry/rotation policy, dedicated rate limits, and
+  optional network restrictions.
+- SCIM mutations need complete durable audit coverage and IdP sandbox
+  certification with Okta/Entra.
+- Legacy global SCIM columns remain temporarily for migration rollback and
+  should be removed only after a verified production backfill window.
+
+Score correction after remediation:
+
+| Area | Before | After |
+| --- | ---: | ---: |
+| SCIM tenant isolation | 4.5/10 | 7.0/10 |
+| Enterprise identity overall | 4.5/10 | 5.0/10 |
+| Multi-tenant SaaS readiness | 5.8/10 | 6.0/10 |
+
+The next remediation step is fail-closed RLS enforcement and safe API/service
+role separation.
+
+# 34. Remediation Execution Log — Fail-Closed RLS
+
+Date: 2026-07-10
+
+Step 2 is implemented and verified in the current tree.
+
+## Changes made
+
+- Added `infra/migrations/043_rls_fail_closed.sql`.
+- Enabled `FORCE ROW LEVEL SECURITY` on the tenant tables covered by the API.
+- Replaced the previous `current_tenant_id() IS NULL` allow-all policies with
+  explicit `USING` and `WITH CHECK` tenant predicates.
+- Kept `api_keys` as an explicit service/pre-auth exception; it is documented
+  and must not be treated as tenant data access.
+- Changed `rlsIsEnforced()` to fail closed when the database role or policy
+  posture cannot be verified.
+- Added a regression test proving a tenant A transaction cannot insert a row
+  for tenant B.
+- Removed the obsolete pending migration `036_rls_fail_closed.sql` so the
+  migration is part of the normal forward-only migration stream.
+- Split production database configuration into:
+  - `API_DATABASE_URL` for the non-superuser, non-BYPASSRLS API role.
+  - `SERVICE_DATABASE_URL` for worker/tracker/Haraka service-role paths.
+  - `MIGRATION_DATABASE_URL` for schema migration execution.
+- Updated Compose, Helm, Kubernetes secret examples, and production readiness
+  validation to require the three explicit URLs.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| `npm run prod:check` | Pass in template mode |
+| Production Compose config render | Pass |
+| Focused RLS/migration tests | 7 passed |
+| Full Vitest suite | 96 files, 649 tests passed |
+| `npm run build` | Pass for shared/api/worker/tracker/sdk |
+| `git diff --check` | Pass |
+
+The suite still reports a Vitest 10-second close timeout after all tests pass.
+This is a test-harness resource-lifecycle defect, not a failed assertion, and
+remains a separate remediation item.
+
+## Remaining operational proof
+
+- Apply migration 043 to staging and production using a real migration role.
+- Create and verify the API/service roles with `scripts/setup-rls-roles.sql` or
+  the cloud-provider equivalent.
+- Prove the API role is not owner, superuser, or BYPASSRLS at deployment time.
+- Run a two-tenant staging smoke test through actual API routes, not only direct
+  database tests.
+- Prove worker, scheduler, admin, and Haraka service-role paths still access
+  only the data they are explicitly authorized to access.
+- Convert the remaining tenant-scoped services from global `db` imports to
+  request/service executors so route-level RLS context is consistently applied.
+
+Score correction after remediation:
+
+| Area | Before | After |
+| --- | ---: | ---: |
+| RLS policy posture | 4.5/10 | 7.0/10 |
+| Tenant isolation overall | 4.5/10 | 5.5/10 |
+| Production database-role separation | 4.0/10 | 6.0/10 |
+| Multi-tenant SaaS readiness | 6.0/10 | 6.2/10 |
+
+The next highest-risk remediation is to enforce tenant executors in API route
+execution and remove remaining global-database access from tenant services.
+
+# 35. Remediation Execution Log — Webhook Tenant Executors
+
+Date: 2026-07-11
+
+The first tenant-scoped shared-service conversion is complete for customer
+webhook management.
+
+## Changes made
+
+- `packages/shared/src/webhooks.ts` accepts an optional `TenantExecutor` for
+  list, create, update, delete, and secret rotation operations.
+- The service retains a `withTenant()` fallback for scheduler-safe and legacy
+  callers, so this conversion is backward compatible while routes migrate.
+- API-key webhook list, delete, and secret rotation now pass the request-owned
+  executor from `tenantScoped()`.
+- Dashboard webhook list, delete, and secret rotation do the same.
+- Create and URL-changing update intentionally retain short service-owned
+  tenant transactions after their DNS/SSRF validation; network resolution must
+  not be performed while a database transaction is held.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Shared package build | Pass |
+| API package build | Pass |
+| Webhook service/API/dashboard E2E tests | 22 passed |
+
+## Remaining work
+
+- Convert the other RLS-backed service families using the same executor-first
+  pattern, prioritizing templates, domains, membership/team operations, and
+  customer support.
+- Add a route inventory test that requires tenant-scoped handlers to declare
+  their executor/transaction policy.
+- Remove global `db` imports from tenant service paths once their callers have
+  migrated; retain them only for explicit service-role scheduler/admin code.
+
+# 36. Remediation Execution Log — Domain Executors And Test Harness Shutdown
+
+Date: 2026-07-11
+
+Two further production-readiness gaps were remediated.
+
+## Domain executor integration
+
+- `packages/shared/src/domains.ts` now accepts a request `TenantExecutor` for
+  list, detail, and delete operations, retaining a safe `withTenant()` fallback
+  for non-request callers.
+- API-key and dashboard domain read/delete handlers now pass the request-owned
+  executor through `tenantScoped()`.
+- Domain creation and DNS verification retain their short service-owned tenant
+  transactions: DKIM key generation and DNS lookups are CPU/network operations
+  and must not run while a request transaction is held open.
+
+## Test harness shutdown fix
+
+- `packages/tests/global-setup.ts` now closes the shared BullMQ queue clients
+  and Kysely/Postgres pool during global teardown.
+- The hanging-process reporter previously identified four Redis TCP handles
+  from BullMQ plus dependent open handles after otherwise successful tests.
+- Focused validation now exits cleanly without the previous Vitest 10-second
+  shutdown timeout.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Domain service/API/dashboard tests | 23 passed |
+| Hanging-process regression test | Pass; no open-handle report |
+| Full Vitest suite | 96 files, 649 tests passed |
+
+Score correction after remediation:
+
+| Area | Before | After |
+| --- | ---: | ---: |
+| Domain request RLS integration | 6.0/10 | 7.0/10 |
+| Test-harness reliability | 6.5/10 | 8.0/10 |
+
+The full suite no longer emits the Vitest close-timeout warning. Remaining test
+infrastructure work is production-like failover, load, and cloud-provider
+integration evidence rather than basic one-command test reliability.
+
+# 37. Remediation Execution Log — Message Activity And Tenant Route Guard
+
+Date: 2026-07-11
+
+## Message activity executor integration
+
+- `listMessageActivity()` now accepts an optional `TenantExecutor`.
+- `GET /v1/messages/activity` passes its request transaction into that service.
+- The `events` + `messages` join is therefore executed under the same
+  transaction-local `app.customer_id` setting as the rest of the route.
+
+## RLS route regression guard
+
+- Added `packages/tests/tenant-route-rls-guard.test.ts`.
+- It scans every non-admin API route module and fails when an RLS-backed table
+  (`messages`, `events`, `suppressions`, `templates`, `sending_domains`,
+  `webhooks`, `usage_daily`, `review_queue`, `consent_events`, or
+  `legal_holds`) is queried through the global `db` handle.
+- The explicit admin plane remains excluded because it is cross-tenant by
+  design and must run only with the documented service role.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Shared/API builds | Pass |
+| Message activity E2E tests | 3 passed |
+| Tenant route RLS guard | Pass |
+
+This turns a previously review-only expectation into a CI-enforced invariant:
+customer API routes cannot accidentally bypass their request tenant context for
+the currently RLS-protected tables.
+
+# 38. Remediation Execution Log — Official PayPal Webhook Verification
+
+Date: 2026-07-11
+
+The former custom PayPal HMAC verifier was not compatible with PayPal's
+official webhook protocol and has been replaced.
+
+## Changes made
+
+- `verifyPayPalSignature()` is now asynchronous and uses PayPal's official
+  `verify-webhook-signature` endpoint.
+- It first obtains an OAuth token using `PAYPAL_CLIENT_ID` and
+  `PAYPAL_CLIENT_SECRET`, then forwards the required transmission ID, time,
+  signature, certificate URL, auth algorithm, configured webhook ID, and
+  parsed webhook event.
+- The handler requires `PayPal-Cert-Url` and `PayPal-Auth-Algo` in addition to
+  the transmission headers. Missing inputs, stale messages, OAuth failures,
+  network failures, non-2xx responses, and any verification status other than
+  `SUCCESS` are rejected.
+- The production configuration guard requires all of:
+  `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, and `PAYPAL_WEBHOOK_ID` whenever
+  `BILLING_PROVIDER=paypal` is selected. It cannot silently use a mock or
+  custom-HMAC fallback.
+- Updated production environment and billing documentation to remove the old
+  `PAYPAL_WEBHOOK_SECRET` claim.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Official OAuth/postback protocol test | Pass |
+| Missing-header/non-SUCCESS fail-closed test | Pass |
+| Billing config-guard tests | Pass |
+| Multi-provider billing E2E tests | Pass |
+| Focused total | 26 tests passed |
+
+## Remaining billing work
+
+- Run the same path against a real PayPal sandbox listener and store release
+  evidence.
+- Add OAuth token caching and timeout/circuit-breaker metrics for the PayPal
+  verification dependency.
+- Complete provider-neutral plan catalog, dunning, invoices, refunds, tax, and
+  reconciliation correction workflows.
+
+Score correction after remediation:
+
+| Area | Before | After |
+| --- | ---: | ---: |
+| PayPal webhook verification | 3.5/10 | 7.5/10 |
+| Billing webhook security | 6.5/10 | 8.0/10 |
+
+# 39. Remediation Execution Log — Server-Side Checkout Plan Validation
+
+Date: 2026-07-11
+
+## Changes made
+
+- `POST /v1/account/billing/checkout` now validates `price_id` with the
+  server-side known-plan resolver before provisioning a billing customer or
+  creating a provider checkout session.
+- Unknown, retired, or arbitrary caller-supplied price IDs receive
+  `422 unknown_price`.
+- The guard accepts only internal catalog keys or explicitly mapped live
+  provider prices, preserving current Stripe/self-hosted compatibility.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| API build | Pass |
+| Outbound billing, multiprovider, PayPal protocol E2E | 16 tests passed |
+| Unknown-price provider-call regression | Pass; zero provider calls |
+
+## Remaining work
+
+- Replace the in-code/env catalog with database-backed plans, provider-price
+  mappings, activation dates, and feature entitlements.
+- Add trial, past-due, grace-period, suspension, downgrade, dunning, refund,
+  tax, invoice, and financial reconciliation workflows.
+
+# 40. Remediation Execution Log — Production Compose Runtime Health
+
+Date: 2026-07-11
+
+## Changes made
+
+- Production Compose now sets `restart: unless-stopped` for API, worker, and
+  tracker.
+- Added Docker health checks using the services' real local endpoints:
+  API `/live`, worker `/health`, and tracker `/live`.
+- Added start periods, bounded retries, and timeouts so first boot is not
+  mistaken for a crash.
+- Added a CI topology regression test that requires restart policy and HTTP
+  health checks for each production app service.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Compose hardening topology test | 7 passed |
+| Production readiness template check | Pass |
+| Production Compose config render | Pass |
+
+This closes the earlier Compose-specific resilience gap. It does not prove HA:
+production still needs managed Postgres/Redis, multi-replica orchestration,
+restore/failover drills, and Kubernetes-level probes/autoscaling evidence.
+
+# 41. Remediation Execution Log — Kubernetes Read-Only Root Filesystems
+
+Date: 2026-07-11
+
+- API, worker, and tracker Helm containers now set
+  `readOnlyRootFilesystem: true`.
+- Each workload receives only a writable `/tmp` `emptyDir` and `TMPDIR=/tmp`.
+- Existing `runAsNonRoot`, explicit UID/GID, capability drop,
+  `allowPrivilegeEscalation: false`, and RuntimeDefault seccomp controls remain
+  in place.
+- The topology test now enforces the entire restricted workload posture for all
+  three services.
+
+Verification: 8 topology/security tests passed, including the new regression
+guard. A Helm render against a real cluster policy engine remains required
+before calling this production-proven.
+
+# 42. Remediation Execution Log — Local Runtime And DKIM Haraka Proof
+
+Date: 2026-07-11
+
+- Main Compose API, worker, tracker, Postgres, Redis, inbound Haraka, outbound
+  Haraka, and Mailpit are running.
+- API `/live` and `/ready`, tracker `/live` and `/ready`, and worker `/health`
+  and `/ready` all returned HTTP 200.
+- API, tracker, and worker `/metrics` returned HTTP 401 without credentials.
+- Haraka inbound and outbound SMTP ports accepted TCP connections.
+- Outbound Haraka was rebuilt from the current tree; the running image contains
+  the `LEFT JOIN dkim_keys AS active_key` signer query.
+- Startup logs prove the DKIM plugin connected to Postgres, the event emitter
+  connected to Redis/BullMQ, and Haraka listened successfully on port 2525.
+
+The remaining Haraka gap is production infrastructure: trusted TLS secrets,
+PTR/HELO alignment, persistent queue storage, Kubernetes workloads/services,
+MTA metrics, failover testing, and real ISP deliverability evidence.
+
+# 43. Remediation Execution Log — Haraka Kubernetes Baseline
+
+Date: 2026-07-11
+
+- Added an outbound Haraka StatefulSet and internal SMTP Service.
+- Added PVC-backed outbound queue storage with configurable size/storage class.
+- Added an inbound Haraka Deployment and configurable LoadBalancer Service
+  exposing port 25 while the non-root container listens on 2526.
+- Both workloads mount trusted Kubernetes TLS Secrets and generated Haraka
+  `tls.ini` files, use read-only roots, drop capabilities, and define TCP
+  startup/readiness/liveness probes.
+- Worker SMTP host/port now resolve from the Helm release fullname.
+- Both Haraka images now run as the non-root `node` user.
+- Local images built successfully; recreated containers run as `node`, connect
+  to Postgres/Redis, and accept SMTP TCP connections on 2525/2526.
+- Ten topology tests passed, including durable queue, TLS mount, non-root, and
+  non-privileged inbound-port guards.
+
+Remaining production evidence: install/render with Helm, provision real TLS
+Secrets and a static inbound IP, validate PTR/HELO and DNS, exercise STARTTLS,
+and prove queue recovery during pod/node disruption.
+
+# 44. Remediation Execution Log — Privacy Erasure Finality
+
+Date: 2026-07-11
+
+- Added migration `044_privacy_erasure_objects.sql` with durable per-object
+  erasure items, retry status, attempt count, error, and completion timestamps.
+- Recipient deletion requests now begin as `pending`, not `completed`.
+- Every orphaned body object is recorded inside the erasure transaction before
+  the database rows commit.
+- Successful object deletion marks its item completed; storage failure records
+  the error and leaves the overall request pending.
+- The API returns HTTP 202 with `objects_pending` when external erasure is not
+  final, and returns completed only when all required objects are gone.
+- Shared/API builds pass; fresh migrations and privacy erasure tests pass,
+  including simulated object-store outage and deduplicated shared-body safety.
+
+Remaining privacy work: add a scheduled retry worker for failed object items,
+then extend the same per-store state machine to ClickHouse, queues/DLQ,
+logs/traces, and backup tombstones.
+
+# 45. Remediation Execution Log — Privacy Object Erasure Retries
+
+Date: 2026-07-11
+
+- Added a shared retry processor for pending/failed body-object erasures.
+- Retry rows are claimed with `FOR UPDATE SKIP LOCKED`, allowing multiple
+  workers without duplicate concurrent deletion attempts.
+- The worker scheduler runs the processor every five minutes with configurable
+  batch and maximum-attempt limits.
+- Storage-kind mismatches fail closed instead of deleting through the wrong
+  backend.
+- A parent deletion request becomes `completed` only after every object item is
+  completed; exhausted requests become `failed` for operator intervention.
+- Shared and worker TypeScript builds pass.
+- The focused privacy suite passes all 3 tests, including outage, durable
+  pending status, storage recovery, automatic retry, and final completion.
+
+Remaining privacy work: model ClickHouse, queues/DLQ, logs/traces, and backup
+tombstones as durable per-store erasure items; add metrics/alerts and an admin
+repair workflow for exhausted erasure requests.
+
+# 46. Remediation Execution Log — ClickHouse Subject Erasure
+
+Date: 2026-07-11
+
+- Recipient deletion now captures every affected message ID before PostgreSQL
+  removes the message rows.
+- When ClickHouse is enabled, each message becomes a durable erasure work item
+  in the same per-store state machine used by body storage.
+- The retry worker dispatches ClickHouse items through a tenant-and-message
+  scoped `ALTER TABLE ... DELETE` mutation with `mutations_sync=2`.
+- ClickHouse table identifiers are validated and values use ClickHouse query
+  parameters rather than interpolated SQL literals.
+- The API remains `pending`/HTTP 202 while any ClickHouse mutation is pending or
+  failed; it no longer derives completion only from body-storage outcomes.
+- Migration `045_privacy_erasure_item_identity.sql` makes durable item identity
+  include the store kind.
+- Shared, API, and worker builds pass. The ClickHouse and privacy suites pass
+  all 8 focused tests, including verification of tenant/message parameters and
+  synchronous mutation behavior.
+
+Remaining ClickHouse privacy risk: add a durable pre-insert tombstone check so
+an already-buffered or delayed event cannot be inserted after subject erasure.
+Queues/DLQ, logs/traces, and backup tombstones also remain outside the durable
+per-store completion state machine.
+
+# 47. Remediation Execution Log — Analytics Erasure Reinsertion Barrier
+
+Date: 2026-07-11
+
+- Added migration `046_privacy_message_tombstones.sql` with a minimal durable
+  `(customer_id, message_id)` erasure barrier.
+- Tombstones are written inside the same tenant transaction that deletes the
+  recipient's PostgreSQL messages and events.
+- Tombstones intentionally do not cascade from deletion-request history, so
+  retention cannot silently remove the reinsertion guard.
+- Live ClickHouse writes check the barrier before buffering and re-check it at
+  buffer flush time.
+- ClickHouse reconciliation filters tombstoned rows while still advancing its
+  durable watermark past them, avoiding an infinite reconciliation backlog.
+- Shared, API, and worker builds pass; migration 046 applied successfully.
+- Nine focused ClickHouse/privacy tests pass, including proof that a tombstoned
+  event is not shipped and that recipient deletion creates the tombstone.
+
+Remaining privacy stores: BullMQ waiting/delayed/failed jobs and DLQ payloads,
+logs/traces, and backup erasure/tombstone evidence. Queue erasure must avoid
+racing active workers and must not expose recipient PII during its scan.
+
+# 48. Remediation Execution Log — BullMQ And DLQ Subject Erasure
+
+Date: 2026-07-11
+
+- Recipient deletion now creates a durable `bullmq` erasure item for every
+  affected message ID.
+- Added bounded, structural payload scanning across send, events, webhooks, and
+  dead-letter queues, including nested webhook and DLQ payloads.
+- Waiting, delayed, failed, paused, completed, prioritized, and
+  waiting-children jobs containing the erased message ID are removed.
+- Active matching jobs are not force-removed; they keep the deletion request
+  pending and are retried after the worker releases them.
+- Queue cleanup is attempted immediately after the database transaction, so a
+  clean queue preserves the synchronous completed response. Redis failures or
+  active jobs fall back to the scheduled durable retry processor.
+- Unrelated jobs are preserved.
+- Shared, API, and worker builds pass. Four focused queue/privacy tests pass,
+  including send/event/webhook/DLQ removal and storage outage recovery.
+
+Remaining queue privacy risk: an already-active webhook request cannot be
+recalled after network transmission begins. Add a tombstone gate at the start
+of send/event/webhook workers to minimize that race further. Logs/traces and
+backup erasure evidence remain incomplete.
+
+# 49. Remediation Execution Log — Worker Privacy Tombstone Gates
+
+Date: 2026-07-11
+
+- Added a shared tenant/message tombstone lookup for stale-job rejection.
+- Send workers check the privacy barrier before the atomic message claim,
+  transport preparation, body loading, or SMTP delivery.
+- Event workers check it before event persistence, usage accounting, status
+  changes, suppression changes, ClickHouse writes, or webhook fanout.
+- Webhook workers extract the message ID from the structured payload and check
+  the barrier before endpoint lookup, SSRF resolution, signing, logging, or
+  network transmission.
+- Erased jobs complete as intentionally skipped rather than retrying or entering
+  the DLQ again.
+- Shared and worker builds pass. Seven focused tests pass, including behavioral
+  proof that tombstoned send/event/webhook jobs cause no transport, database
+  event, usage, webhook log, or network side effect.
+
+The unavoidable residual race is a webhook or SMTP request that crossed the
+network boundary immediately before the erasure transaction committed; no
+system can recall already transmitted data. Logs/traces and backup erasure
+evidence remain the next privacy/compliance gaps.
+
+# 50. Remediation Execution Log — Central Log And Trace Redaction
+
+Date: 2026-07-11
+
+- Added one shared privacy logger configuration used by API, worker, and
+  tracker runtimes.
+- Authorization/cookie headers, request bodies, passwords, tokens, API keys,
+  secrets, recipient/from addresses, email bodies, webhook/event payloads,
+  metadata, SMTP/provider responses, and webhook URLs are censored by default.
+- Opaque message/customer IDs remain available for operational correlation.
+- Added a dedicated error serializer so exception messages and stacks cannot
+  bypass structured-field redaction.
+- Added telemetry text sanitization for email addresses, bearer credentials,
+  platform API-key shapes, and secret-bearing URL query parameters.
+- OpenTelemetry exception recording now exports sanitized errors rather than
+  the original exception text/stack.
+- Shared, API, worker, and tracker builds pass. Six focused logging/tracing
+  tests pass with seeded credentials, recipient PII, bodies, payloads, URLs,
+  and exception data.
+
+Remaining observability privacy work: deploy and validate collector-side
+attribute allowlists, define log/trace retention and access controls, test the
+real production log sink, and produce deletion/expiration evidence for backup
+and immutable archival systems.
+
+# 51. Remediation Execution Log — Retention-Safe Audit Chain Archive
+
+Date: 2026-07-11
+
+- Added migration `047_audit_archive.sql` for complete canonical audit rows and
+  their chain links before hot-table deletion.
+- Audit retention now materializes candidates, archives them, and deletes them
+  atomically; an archive failure rolls back the deletion.
+- Archived rows preserve actor, action, resource, IP, metadata, timestamp,
+  sequence, previous hash, and row hash.
+- Chain verification now walks archived and hot links as one continuous chain.
+- New audit writes select their predecessor from both archive and hot storage,
+  so sequence/hash continuity survives complete hot-chain archival.
+- Unhashed legacy/direct audit rows are archived too, without falsely treating
+  them as verified chain links.
+- Migration 047 applied successfully. Shared build passes, and all 20 focused
+  audit-chain/retention tests pass, including archive verification and a new
+  append continuing at sequence 4 after links 1–3 were archived.
+
+This closes the local retention-breaks-chain defect. Enterprise 10/10 still
+requires exporting archive records and signed chain roots to an independently
+controlled WORM sink such as S3 Object Lock or a governed SIEM, with delivery
+acknowledgement, reconciliation, retention-lock proof, and restore verification.
+
+# 52. Remediation Execution Log — Governed Billing Plan Catalog
+
+Date: 2026-07-11
+
+- Added migration `048_billing_plan_catalog.sql` with governed plan definitions
+  and provider/environment-specific price mappings.
+- Plans now carry authoritative tier, daily quota, monthly quota, features, and
+  active state; price mappings carry provider, test/live environment, currency,
+  provider price ID, and active state.
+- Checkout validates the selected price against the customer's configured
+  provider and the active database catalog before provisioning a provider
+  customer or starting external billing I/O.
+- Subscription webhook application resolves quotas and tier from the same
+  catalog inside the billing transaction.
+- Production mode fails closed for placeholder internal prices, missing
+  mappings, inactive mappings, and inactive plans.
+- Legacy internal keys remain available only outside production for local/test
+  compatibility.
+- Migration 048 applied successfully. Shared/API builds pass, and all 23
+  focused catalog, price-resolution, outbound, and multi-provider tests pass.
+
+Remaining billing work: central feature entitlement enforcement, proration and
+downgrade previews, failed-payment/dunning state machine, provider invoice and
+line-item ingestion, refunds/credits, tax profiles/calculation, finance exports,
+and sandbox/live release evidence for every enabled provider.
+
+# 53. Remediation Execution Log — Billing Access And Dunning Baseline
+
+Date: 2026-07-11
+
+- Added migration `049_billing_dunning.sql` with per-customer healthy, grace,
+  restricted, recovered, and canceled states, failure counts, failure time,
+  grace deadline, and recovery time.
+- Catalog plans now carry baseline feature entitlements and retention/team-seat
+  limits.
+- Added one central billing-access evaluator returning send permission, denial
+  reason, grace deadline, plan, and feature map.
+- Added a shared feature-entitlement check that fails closed whenever billing
+  access is restricted.
+- Single and batch send acceptance now use the same evaluator rather than only
+  checking `billing_status=canceled`.
+- `past_due` receives a bounded, non-extending grace deadline; expired grace,
+  unpaid/incomplete, restricted, and canceled states are blocked.
+- Active/trialing subscription recovery clears the grace deadline and records
+  recovery; cancellation creates a terminal dunning state.
+- Migration 049 applied successfully. Shared/API builds pass and all 11 focused
+  entitlement, catalog, multi-provider, and billing tests pass.
+
+Remaining dunning work: ingest provider invoice/payment-failed events directly,
+send staged customer notifications, schedule grace-expiry transitions and
+operator alerts, enforce every catalog feature at its consuming route, and add
+proration/downgrade previews. Invoice line items, refunds, credits, tax, finance
+exports, and live provider lifecycle evidence remain incomplete.
+
+# 54. Remediation Execution Log — Stripe Invoice And Payment Lifecycle
+
+Date: 2026-07-11
+
+- Added migration `050_invoice_lifecycle.sql` with hosted invoice/PDF URLs,
+  due/paid timestamps, invoice update timestamps, and normalized invoice line
+  items.
+- Added parsing for Stripe invoice created, finalized, payment-failed, paid,
+  voided, and marked-uncollectible events.
+- Invoice processing uses the billing-event replay ledger and applies the event,
+  invoice upsert, line-item upserts, customer billing status, and dunning state
+  in one transaction.
+- Duplicate provider events return idempotently without incrementing failure
+  counts or duplicating invoice lines.
+- Payment failure activates the bounded grace state; payment recovery marks the
+  invoice paid, restores customer access, clears grace, and records recovery.
+- Marked-uncollectible invoices immediately restrict access.
+- Migration 050 applied successfully. Shared/API builds pass and all 11 focused
+  invoice, entitlement, and multi-provider tests pass.
+
+Remaining billing lifecycle work: signed end-to-end Stripe sandbox evidence,
+PayPal/Cashfree payment/invoice normalization, staged dunning notifications and
+grace-expiry alerts, customer invoice list/detail endpoints, proration and plan
+changes, refunds/credits, tax calculation/IDs, and finance reconciliation/export.
+
+# 55. Remediation Execution Log — Automated Dunning Notifications
+
+Date: 2026-07-11
+
+- Added migration `051_dunning_notifications.sql` with durable notification
+  stage, billing-cycle key, pending/sent/failed state, attempts, error, and sent
+  timestamps.
+- Added platform-email templates for payment failure, grace ending soon,
+  restriction, and recovery.
+- Added an hourly cross-replica-locked scheduler sweep.
+- Grace customers receive one payment-failed notification per billing cycle and
+  a second warning during the final 24 hours.
+- At the original deadline, the sweep atomically changes grace to restricted
+  and sends the restriction notice; repeated sweeps do not resend successful
+  stages.
+- Failed mail delivery remains retryable and records attempts/errors rather
+  than being silently treated as notified.
+- The sweep supports targeted customer repair while production scans every
+  outstanding grace/restricted account.
+- Migration 051 applied successfully. Shared/worker builds pass and all 6
+  focused dunning, invoice, and entitlement tests pass.
+
+Remaining dunning operations: recovery notification invocation on paid events,
+operator/PagerDuty alerting for notification failure or abnormal restriction
+volume, plan-specific grace policies, customer-visible dunning timeline, and
+credentialed provider sandbox evidence.
+
+# 56. Remediation Execution Log — Recovery Notice And Customer Invoice API
+
+Date: 2026-07-11
+
+- The dunning sweep now processes recovered accounts and sends exactly one
+  recovery/restored-access notification per recovery cycle.
+- Added tenant-scoped invoice summary pagination under
+  `GET /v1/account/billing/invoices`.
+- Added invoice detail with normalized line items under
+  `GET /v1/account/billing/invoices/:id`.
+- Both routes require `billing:manage`; invoice detail filters by active tenant
+  and returns 404 for a valid invoice UUID belonging to another organization.
+- Added validation for pagination cursor/limit and invoice UUID.
+- Added both operations to the published OpenAPI contract.
+- Shared, API, and worker builds pass. Thirteen focused dunning/invoice/API tests
+  and twenty-two OpenAPI/parity/breaking-change tests pass.
+
+Remaining billing UX: expose the dunning notification timeline and payment
+method state, add invoice download proxy/authorization policy, implement plan
+change/proration preview, normalize PayPal/Cashfree invoices, and add refunds,
+credits, tax profiles, and finance exports.
+
+# 57. Remediation Execution Log — Governed Plan-Change Preview
+
+Date: 2026-07-11
+
+- Added migration `052_plan_change_requests.sql` with current/target plan,
+  provider price, direction, request status, quota/feature deltas, warnings,
+  expiry, and audit timestamps.
+- Added `POST /v1/account/billing/plan-change/preview`, gated by
+  `billing:manage` and the provider-specific active catalog.
+- Preview calculates upgrade/downgrade/lateral direction, exact daily/monthly
+  quota differences, gained/lost boolean features, and current-month usage.
+- Dangerous downgrades warn when current usage exceeds the target quota or
+  enabled features would be removed.
+- Preview requests expire after 30 minutes and are audit-recorded.
+- The endpoint deliberately does not mutate subscription/customer state and
+  explicitly reports `provider_preview_required` for proration instead of
+  fabricating a financial amount.
+- Added the operation to OpenAPI. Migration 052 applied; shared/API builds pass;
+  all 34 focused billing/OpenAPI/parity/compatibility tests pass.
+
+Remaining plan-change work: add provider capability methods for native
+proration preview and subscription update, require explicit confirmation of a
+non-expired request, apply entitlement changes only from verified provider
+webhooks, handle downgrade timing at period end, and provide cancellation and
+rollback workflows.
+
+# 58. Remediation Execution Log — Stripe-Native Proration And Confirmation
+
+Date: 2026-07-12
+
+- Verified the current Stripe create-preview and subscription-update contracts
+  against official Stripe API documentation.
+- Added migration `053_subscription_plan_item.sql` to persist the base plan item
+  separately from the metered usage item and to retain preview amount,
+  proration amount/currency, and the exact proration timestamp.
+- Stripe previews now call `/v1/invoices/create_preview` with the existing
+  subscription/item, target catalog price, `create_prorations`, and a fixed
+  `proration_date`.
+- Added explicit confirmation at
+  `POST /v1/account/billing/plan-change/:id/confirm`.
+- Confirmation rejects missing, expired, unpreviewed, unsupported, or incomplete
+  subscription requests and reuses the preview's exact proration timestamp.
+- Stripe updates use `payment_behavior=pending_if_incomplete`,
+  `proration_behavior=create_prorations`, and an idempotency key derived from
+  the durable request ID.
+- Confirmation changes only the request to submitted/pending-provider state;
+  internal tier, quota, and entitlements remain unchanged until a verified
+  provider webhook confirms the new subscription price.
+- Added provider capability methods and deterministic mock coverage.
+- Added the confirmation operation to OpenAPI. Migration 053 applied; shared/API
+  builds pass; all 35 focused billing/OpenAPI/parity/compatibility tests pass.
+
+Remaining plan-change work: mark requests applied from the matching verified
+webhook, enforce period-end scheduling for downgrades, expire stale previews,
+add cancellation/rollback operations, and certify the flow with Stripe Test
+Clocks plus failed-payment/SCA scenarios. PayPal and Cashfree still require
+provider-specific change semantics or an explicit unsupported policy.
+
+# 59. Remediation Execution Log — Plan-Change Lifecycle Completion
+
+Date: 2026-07-12
+
+- Added migration `054_plan_change_lifecycle.sql` with applied/canceled
+  timestamps and an expiry index for unsubmitted previews.
+- Verified active/trialing subscription webhooks now correlate submitted
+  requests by tenant, provider, and provider price and mark them applied only
+  after the subscription state and entitlements are transactionally updated.
+- Provider update responses alone still cannot activate tier/quota changes.
+- Added tenant-scoped cancellation for previewed requests; submitted, applied,
+  expired, or already canceled requests return conflict and are not mutated.
+- Added an hourly cross-replica-locked expiry job for stale previews; submitted
+  requests are never expired by that sweep.
+- Added `DELETE /v1/account/billing/plan-change/:id` and documented it in
+  OpenAPI.
+- Migration 054 applied successfully. Shared/API/worker builds pass; all 35
+  focused lifecycle, billing, OpenAPI, parity, and compatibility tests pass.
+
+Remaining plan-change gaps: Stripe period-end downgrade scheduling and rollback,
+Test Clock/SCA/payment-failure evidence, reconciliation for a submitted request
+whose webhook never arrives, and explicit unsupported/provider-specific flows
+for PayPal and Cashfree.
+
+# 60. Remediation Execution Log — Missing-Webhook Plan Reconciliation
+
+Date: 2026-07-12
+
+- Extended the provider capability contract with authenticated subscription
+  retrieval.
+- Stripe retrieval reads the current subscription status and item/price IDs;
+  the mock provider models the same state deterministically for tests.
+- Added a bounded five-minute reconciliation job for submitted plan changes
+  older than the webhook-wait threshold.
+- Reconciliation applies a request only when the provider subscription contains
+  the exact requested provider price; it then reuses the transactional
+  subscription-state path to update tier, quotas, dunning, and request status.
+- Missing prices remain pending, unsupported providers are counted explicitly,
+  and provider/network failures remain retryable and observable.
+- Synthetic reconciliation event IDs are deterministic, preserving billing
+  event idempotency across repeated scheduler runs.
+- Shared/API/worker builds pass; all 16 focused provider, plan lifecycle, and
+  catalog tests pass, including missing-webhook recovery to applied/paid tier.
+
+Remaining work: add an operator alert/SLA for long-lived pending or unsupported
+requests, provider retrieval for PayPal/Cashfree or explicitly disable plan
+changes there, implement Stripe period-end downgrade scheduling/rollback, and
+prove the workflow with Test Clocks, SCA, network failure, and webhook delay.

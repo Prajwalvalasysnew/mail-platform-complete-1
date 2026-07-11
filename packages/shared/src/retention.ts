@@ -10,6 +10,7 @@
 // All cutoffs default from env vars and can be overridden per call — useful for
 // admin-triggered manual runs and for E2E tests (pass 0 to target recent rows).
 
+import { sql } from 'kysely';
 import { db } from './db.js';
 import { getBodyStore } from './storage.js';
 
@@ -107,11 +108,34 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   const eventsPurged = Number(eventsResult?.numDeletedRows ?? 0);
 
   // --- 4. Purge old audit log --------------------------------------------
-  const auditResult = await db
-    .deleteFrom('audit_log')
-    .where('occurred_at', '<', auditCutoff as any)
-    .executeTakeFirst();
-  const auditPurged = Number(auditResult?.numDeletedRows ?? 0);
+  const auditResult = await sql<{ count: string }>`
+    WITH candidates AS MATERIALIZED (
+      SELECT a.id, a.customer_id, a.api_key_id, a.actor_type, a.actor_id,
+        a.actor_label, a.action, a.resource, a.ip, a.metadata, a.occurred_at,
+        h.chain_key, h.seq, h.previous_hash, h.row_hash
+      FROM audit_log a
+      LEFT JOIN audit_log_hashes h ON h.audit_id = a.id
+      WHERE a.occurred_at < ${auditCutoff}
+    ), archived AS (
+      INSERT INTO audit_log_archive (
+        audit_id, customer_id, api_key_id, actor_type, actor_id, actor_label,
+        action, resource, ip, metadata, occurred_at,
+        chain_key, seq, previous_hash, row_hash
+      )
+      SELECT id, customer_id, api_key_id, actor_type, actor_id, actor_label,
+        action, resource, ip, metadata, occurred_at,
+        chain_key, seq, previous_hash, row_hash
+      FROM candidates
+      ON CONFLICT (audit_id) DO NOTHING
+      RETURNING audit_id
+    ), deleted AS (
+      DELETE FROM audit_log a USING candidates c
+      WHERE a.id = c.id
+      RETURNING a.id
+    )
+    SELECT COUNT(*)::text AS count FROM deleted
+  `.execute(db);
+  const auditPurged = Number(auditResult.rows[0]?.count ?? 0);
 
   // --- 5. Purge resolved/rejected review queue entries ------------------
   const reviewResult = await db

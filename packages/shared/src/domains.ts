@@ -4,7 +4,7 @@
 // filters by customer_id. DKIM private keys are encrypted at rest.
 
 import { promises as dns } from 'node:dns';
-import { withTenant } from './tenant-context.js';
+import { withTenant, type TenantExecutor } from './tenant-context.js';
 import { encryptSecret } from './encryption.js';
 import { generateDkimKeypair } from './dkim-rotation.js';
 
@@ -44,6 +44,14 @@ const DOMAIN_COLS = [
   'verification_token', 'created_at',
 ] as const;
 
+function runForTenant<T>(
+  customerId: string,
+  executor: TenantExecutor | undefined,
+  fn: (trx: TenantExecutor) => Promise<T>
+): Promise<T> {
+  return executor ? fn(executor) : withTenant(customerId, fn);
+}
+
 /** Strip PEM armor/newlines from a public key to get the DKIM DNS value. */
 export function dkimPublicDnsValue(pemPublicKey: string): string {
   return pemPublicKey
@@ -65,8 +73,8 @@ export function buildDomainDnsRecords(domain: string, selector: string, verifica
   ];
 }
 
-export async function listDomains(customerId: string): Promise<DomainRecord[]> {
-  const rows = await withTenant(customerId, (trx) =>
+export async function listDomains(customerId: string, executor?: TenantExecutor): Promise<DomainRecord[]> {
+  const rows = await runForTenant(customerId, executor, (trx) =>
     trx
       .selectFrom('sending_domains')
       .select([...DOMAIN_COLS])
@@ -78,8 +86,8 @@ export async function listDomains(customerId: string): Promise<DomainRecord[]> {
 }
 
 /** Fetch a single domain (org-scoped) with the DNS records to publish. */
-export async function getDomainWithDnsRecords(customerId: string, id: string): Promise<(DomainRecord & { dns_records: DnsRecord[] }) | null> {
-  const row = await withTenant(customerId, (trx) =>
+export async function getDomainWithDnsRecords(customerId: string, id: string, executor?: TenantExecutor): Promise<(DomainRecord & { dns_records: DnsRecord[] }) | null> {
+  const row = await runForTenant(customerId, executor, (trx) =>
     trx
       .selectFrom('sending_domains')
       .select([...DOMAIN_COLS])
@@ -220,8 +228,8 @@ export async function verifyDomain(customerId: string, id: string): Promise<Doma
   return { id, results, verified, ...(dmarc_warning ? { dmarc_warning } : {}) };
 }
 
-export async function deleteDomain(customerId: string, id: string): Promise<boolean> {
-  const res = await withTenant(customerId, (trx) =>
+export async function deleteDomain(customerId: string, id: string, executor?: TenantExecutor): Promise<boolean> {
+  const res = await runForTenant(customerId, executor, (trx) =>
     trx
       .deleteFrom('sending_domains')
       .where('id', '=', id)

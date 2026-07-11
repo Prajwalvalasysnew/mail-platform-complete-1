@@ -17,6 +17,7 @@ import {
   engagementEvents,
   QUEUE_PREFIX,
   type EventJobData,
+  isMessagePrivacyErased,
 } from '@platform/shared';
 
 // Either the shared Kysely instance or a transaction from it. Keyed off the
@@ -91,6 +92,10 @@ export function startEventWorker(logger: Logger) {
           return;
         }
         customerId = msg.customer_id;
+      }
+      if (await isMessagePrivacyErased(ev.message_id, customerId)) {
+        log.info('privacy tombstone present - dropping stale event job');
+        return;
       }
       // Idempotency key: a producer-supplied UUID, stable across a job's
       // retries and globally unique, so a retry after a partial failure can

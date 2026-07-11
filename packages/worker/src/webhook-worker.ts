@@ -15,6 +15,7 @@ import {
   QUEUE_PREFIX,
   webhookBackoffStrategy,
   type WebhookJobData,
+  isMessagePrivacyErased,
 } from '@platform/shared';
 
 const TIMEOUT_MS = Number(process.env.WEBHOOK_TIMEOUT_MS ?? 10_000);
@@ -93,6 +94,12 @@ export function startWebhookWorker(logger: Logger) {
       const log = logger.child({ webhook_id, event_type });
       const attempt = (job.attemptsMade ?? 0) + 1;
       const startMs = Date.now();
+
+      const messageId = typeof payload?.message_id === 'string' ? payload.message_id : null;
+      if (messageId && await isMessagePrivacyErased(messageId)) {
+        log.info({ message_id: messageId }, 'privacy tombstone present - dropping stale webhook job');
+        return;
+      }
 
       const wh = await db
         .selectFrom('webhooks')

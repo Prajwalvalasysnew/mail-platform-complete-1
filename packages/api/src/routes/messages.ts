@@ -91,7 +91,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
   app.get('/messages/activity', { preHandler: requireScope('messages') }, async (req) => {
     const auth = req.auth!;
     const query = normalizeMessageActivityQuery(req.query as Record<string, string>);
-    return listMessageActivity(auth.customer_id, query);
+    return tenantScoped(req, (trx) => listMessageActivity(auth.customer_id, query, trx));
   });
 
   // List scheduled messages (send_at in the future, not yet dispatched).

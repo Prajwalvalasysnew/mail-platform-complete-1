@@ -36,9 +36,9 @@ describe('billing webhook verifiers — missing secret', () => {
     expect(verifyStripeSignature('{}', undefined, undefined)).toBe(false);
   });
 
-  it('PayPal: REJECTS unsigned in production', () => {
+  it('PayPal: REJECTS missing official verification inputs in production', async () => {
     process.env.NODE_ENV = 'production';
-    expect(verifyPayPalSignature({ payload: '{}' })).toBe(false);
+    await expect(verifyPayPalSignature({ event: {} })).resolves.toBe(false);
   });
 
   it('Cashfree: REJECTS unsigned in production', () => {
@@ -115,6 +115,25 @@ describe('config-guard — billing webhook secret requirement', () => {
     const env = { ...baseSecure, BILLING_PROVIDER: 'mock' };
     const r = checkConfig(env as any);
     expect(r.errors.some((e) => e.includes('WEBHOOK_SECRET'))).toBe(false);
+  });
+
+  it('requires PAYPAL_WEBHOOK_ID when PayPal is the live provider', () => {
+    const env = {
+      ...baseSecure,
+      BILLING_PROVIDER: 'paypal',
+      PAYPAL_CLIENT_ID: 'paypal-client-id',
+      PAYPAL_CLIENT_SECRET: 'paypal-client-secret',
+    };
+    const r = checkConfig(env as any);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('PAYPAL_WEBHOOK_ID'))).toBe(true);
+  });
+
+  it('requires PayPal OAuth credentials when PayPal is selected', () => {
+    const r = checkConfig({ ...baseSecure, BILLING_PROVIDER: 'paypal' } as any);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('PAYPAL_CLIENT_ID'))).toBe(true);
+    expect(r.errors.some((e) => e.includes('PAYPAL_CLIENT_SECRET'))).toBe(true);
   });
 
   it('requires CASHFREE_WEBHOOK_SECRET only when Cashfree is live-configured', () => {

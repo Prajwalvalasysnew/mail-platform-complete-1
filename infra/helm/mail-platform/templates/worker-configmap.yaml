@@ -10,6 +10,10 @@ data:
   # Must match the containerPort/probe port in worker-deployment.yaml (9091).
   # The worker binary defaults to 9100, so without this the probes fail.
   WORKER_METRICS_PORT: "9091"
+  {{- if .Values.haraka.outbound.enabled }}
+  HARAKA_OUTBOUND_HOST: {{ printf "%s-haraka-outbound" (include "mail-platform.fullname" .) | quote }}
+  HARAKA_OUTBOUND_PORT: {{ .Values.haraka.outbound.servicePort | quote }}
+  {{- end }}
   {{- range $k, $v := .Values.worker.env }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}

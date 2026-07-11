@@ -63,6 +63,34 @@ worker:
     SEND_OUTBOX_DRAIN_LIMIT: "2000"
     LOG_LEVEL: info
 
+haraka:
+  outbound:
+    enabled: true
+    replicaCount: 1
+    image:
+      tag: ""
+    servicePort: 2525
+    tlsSecretName: haraka-outbound-tls
+    queueStorage:
+      size: 20Gi
+      storageClassName: ""
+    resources:
+      requests: { cpu: "250m", memory: "256Mi" }
+      limits: { cpu: "1000m", memory: "1Gi" }
+  inbound:
+    enabled: true
+    replicaCount: 2
+    image:
+      tag: ""
+    servicePort: 25
+    containerPort: 2526
+    serviceType: LoadBalancer
+    loadBalancerIP: ""
+    tlsSecretName: haraka-inbound-tls
+    resources:
+      requests: { cpu: "100m", memory: "128Mi" }
+      limits: { cpu: "500m", memory: "512Mi" }
+
 # ── Tracker ───────────────────────────────────────────────────────────────────
 tracker:
   replicaCount: 2
@@ -93,11 +121,16 @@ tracker:
 
 # ── Shared secrets (references to existing Kubernetes Secret objects) ─────────
 secrets:
-  # Name of the Secret holding DATABASE_URL, REDIS_URL, API_SECRET, etc.
+  # Name of the Secret holding role-specific database URLs, REDIS_URL,
+  # API_SECRET, etc.
   # Create this before installing the chart:
   #   kubectl create secret generic mail-platform-secrets \
   #     --from-env-file=.env.production
   existingSecret: mail-platform-secrets
+  databaseKeys:
+    api: API_DATABASE_URL
+    service: SERVICE_DATABASE_URL
+    migration: MIGRATION_DATABASE_URL
 
 # ── Migration job ─────────────────────────────────────────────────────────────
 migration:

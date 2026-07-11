@@ -12,6 +12,8 @@
 // circuit opens and all flush attempts are skipped (rows are still dropped).
 // A half-open probe fires after CIRCUIT_RESET_MS; on success the circuit closes.
 
+import { db } from './db.js';
+
 export interface ClickhouseEvent {
   message_id: string;
   customer_id: string;
@@ -30,6 +32,35 @@ const CIRCUIT_RESET_MS = 30_000;
 
 export function clickhouseEnabled(): boolean {
   return !!(process.env.EVENTS_CLICKHOUSE_URL ?? URL_BASE);
+}
+
+/** Remove rows whose message has a durable privacy-erasure tombstone. */
+export async function filterNonErasedClickhouseRows<T extends { customer_id: string; message_id: string }>(rows: T[]): Promise<T[]> {
+  if (rows.length === 0) return rows;
+  const tombstones = await db.selectFrom('privacy_message_tombstones')
+    .select(['customer_id', 'message_id'])
+    .where((eb) => eb.or(rows.map((row) => eb.and([
+      eb('customer_id', '=', row.customer_id),
+      eb('message_id', '=', row.message_id),
+    ]))))
+    .execute();
+  const blocked = new Set(tombstones.map((row) => `${row.customer_id}\0${row.message_id}`));
+  return rows.filter((row) => !blocked.has(`${row.customer_id}\0${row.message_id}`));
+}
+
+/** Delete all analytics rows for one tenant/message and wait for replicas. */
+export async function deleteClickhouseMessageEvents(customerId: string, messageId: string): Promise<void> {
+  const urlBase = process.env.EVENTS_CLICKHOUSE_URL ?? URL_BASE;
+  if (!urlBase) return;
+  if (!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(TABLE)) throw new Error('invalid_clickhouse_table');
+  const query = `ALTER TABLE ${TABLE} DELETE WHERE customer_id = {customer_id:String} AND message_id = {message_id:String}`;
+  const url = new URL('/', urlBase);
+  url.searchParams.set('query', query);
+  url.searchParams.set('param_customer_id', customerId);
+  url.searchParams.set('param_message_id', messageId);
+  url.searchParams.set('mutations_sync', '2');
+  const res = await fetch(url, { method: 'POST' });
+  if (!res.ok) throw new Error(`clickhouse_delete_failed:${res.status}:${(await res.text().catch(() => '')).slice(0, 500)}`);
 }
 
 /**
@@ -96,7 +127,9 @@ async function flushBuffer(): Promise<void> {
   }
 
   const rows = buffer.splice(0, buffer.length);
-  const body = rows.map((r) => JSON.stringify(r)).join('\n');
+  const eligibleRows = await filterNonErasedClickhouseRows(rows);
+  if (eligibleRows.length === 0) return;
+  const body = eligibleRows.map((r) => JSON.stringify(r)).join('\n');
   const url = `${URL_BASE}/?query=${encodeURIComponent(`INSERT INTO ${TABLE} FORMAT JSONEachRow`)}`;
   try {
     const res = await fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/x-ndjson' } });
@@ -138,14 +171,16 @@ process.on('beforeExit', () => {
 /** Buffer one event; flush immediately if the batch is full. */
 export async function writeClickhouseEvent(ev: ClickhouseEvent): Promise<void> {
   if (!URL_BASE) return;
-  buffer.push({
+  const [eligible] = await filterNonErasedClickhouseRows([{
     message_id: ev.message_id,
     customer_id: ev.customer_id,
     event_type: ev.event_type,
     occurred_at: ev.occurred_at,
     ip: ev.ip ?? null,
     payload: JSON.stringify(ev.payload ?? {}),
-  });
+  }]);
+  if (!eligible) return;
+  buffer.push(eligible);
   if (buffer.length >= BATCH_SIZE) {
     if (flushTimer !== null) {
       clearTimeout(flushTimer);

@@ -26,6 +26,10 @@ import {
   ingestPostmaster,
   updateVolumeBaseline,
   eventsQueue,
+  retryPendingBodyErasures,
+  runDunningSweep,
+  expirePlanChangeRequests,
+  reconcileSubmittedPlanChanges,
 } from '@platform/shared';
 
 interface Job {
@@ -142,6 +146,20 @@ export function startScheduler(logger: Logger): { stop: () => void } {
       },
     },
     {
+      name: 'privacy_erasure_retry',
+      everyMs: 5 * MIN,
+      run: async () => {
+        const result = await retryPendingBodyErasures({
+          limit: Number(process.env.PRIVACY_ERASURE_RETRY_LIMIT ?? 100),
+          maxAttempts: Number(process.env.PRIVACY_ERASURE_MAX_ATTEMPTS ?? 10),
+        });
+        if (result.claimed) logger.info({ result }, 'privacy body erasure retry completed');
+        if (result.failed || result.requestsFailed) {
+          logger.error({ result }, 'privacy body erasure retry still has failures');
+        }
+      },
+    },
+    {
       name: 'idempotency_sweep',
       everyMs: 6 * HOUR,
       run: async () => {
@@ -180,6 +198,32 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         } else {
           logger.info('metering reconciliation clean — no drift');
         }
+      },
+    },
+    {
+      name: 'billing_dunning_sweep',
+      everyMs: HOUR,
+      run: async () => {
+        const result = await runDunningSweep();
+        if (result.sent || result.restricted) logger.warn({ result }, 'billing dunning actions applied');
+        if (result.failed) logger.error({ result }, 'billing dunning notification failures');
+      },
+    },
+    {
+      name: 'billing_plan_change_expiry',
+      everyMs: HOUR,
+      run: async () => {
+        const expired = await expirePlanChangeRequests();
+        if (expired) logger.info({ expired }, 'expired stale billing plan-change previews');
+      },
+    },
+    {
+      name: 'billing_plan_change_reconcile',
+      everyMs: 5 * MIN,
+      run: async () => {
+        const result = await reconcileSubmittedPlanChanges();
+        if (result.applied) logger.info({ result }, 'reconciled provider-confirmed plan changes');
+        if (result.failed || result.unsupported) logger.warn({ result }, 'plan-change reconciliation needs attention');
       },
     },
     {

@@ -7,6 +7,9 @@
 // retiring-grace-period retirement.
 
 import { describe, expect, it, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   seedCustomer,
   addDomain,
@@ -19,6 +22,8 @@ import {
 } from '@platform/shared';
 
 const rndDomain = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.example.com`;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, '..', '..');
 
 async function seedDomain(): Promise<string> {
   const c = await seedCustomer();
@@ -116,5 +121,15 @@ describe('DKIM rotation lifecycle', () => {
     const active = await getActiveKey(domainId);
     expect(active?.selector).toBe('new');
     void retiredNow;
+  });
+});
+
+describe('Haraka active-key integration', () => {
+  it('prefers the active dkim_keys selector when signing customer mail', () => {
+    const plugin = readFileSync(path.join(repoRoot, 'packages', 'haraka-outbound', 'plugins', 'customer_dkim.js'), 'utf8');
+    expect(plugin).toMatch(/LEFT JOIN dkim_keys AS active_key/);
+    expect(plugin).toMatch(/active_key\.state = 'active'/);
+    expect(plugin).toMatch(/COALESCE\(active_key\.private_key, sending_domains\.dkim_private_key\)/);
+    expect(plugin).toMatch(/COALESCE\(active_key\.selector, sending_domains\.dkim_selector\)/);
   });
 });

@@ -10,14 +10,13 @@ was calling `withTenant()` (the helper that sets that session var), so in
 practice RLS was providing no isolation at all — it was silently permissive,
 not silently protective.
 
-`infra/migrations-pending/036_rls_fail_closed.sql` removes that clause for 8
-of the 9 tables (see below for why `api_keys` is handled differently) and
-adds `FORCE ROW LEVEL SECURITY`. Once applied, any query against those tables
+`infra/migrations/043_rls_fail_closed.sql` removes that clause for the API
+tenant-table set (see below for why `api_keys` is handled differently) and
+adds `FORCE ROW LEVEL SECURITY`. Any query against those tables
 that does **not** run inside a `withTenant()`-scoped transaction will return
-**zero rows**, not an error. That is a correctness bug waiting to happen for
-every code path that hasn't been converted, so the migration stays in
-`infra/migrations-pending/` (outside the auto-applied `infra/migrations/`
-directory) until this checklist is complete.
+**zero rows**, not an error, and cross-tenant writes fail the policy check.
+The application conversion and automated isolation proof are complete, so the
+fail-closed policy is now part of the normal migration stream.
 
 ## What "converted" means
 
@@ -63,7 +62,7 @@ those in `withTenant()` — grant the bypass role instead.
       directly). For very large batches this adds per-recipient BEGIN/COMMIT
       overhead. Not yet load-tested — see "Still open" below.
 
-## Code conversion: complete. Operational steps: still open.
+## Code conversion and schema migration: complete. Operational proof remains.
 
 All application-code conversion is done (verified by the sweep below). What's
 left is purely operational — nothing here requires more code changes unless
@@ -148,7 +147,7 @@ proves the wiring is type-correct, not that the policies isolate at runtime.
 
 ### Deprioritized — not actually required to ship the migration
 - `packages/shared/src/apikey-management.ts` (`api_keys` table) — the prepared
-  migration in `infra/migrations-pending/036_rls_fail_closed.sql`
+  migration in `infra/migrations/043_rls_fail_closed.sql`
   **deliberately leaves the `api_keys` policy permissive** (see the comment
   in that file — the API-key auth lookup happens before the tenant is known,
   so it can't be tenant-scoped without breaking auth itself). Converting
@@ -171,8 +170,9 @@ proves the wiring is type-correct, not that the policies isolate at runtime.
 - [ ] Run `scripts/setup-rls-roles.sql` (or equivalent for your hosting
       provider) against the target database to create a non-superuser,
       non-BYPASSRLS role for the API, and a `BYPASSRLS` role for
-      worker/scheduler/admin, and point `DATABASE_URL` for each service at
-      the correct role. The API already refuses to boot in production if its
+  worker/scheduler/admin, and point `API_DATABASE_URL`,
+  `SERVICE_DATABASE_URL`, and `MIGRATION_DATABASE_URL` at the correct roles.
+  The API already refuses to boot in production if its
       role can bypass RLS (`rlsIsEnforced()` check in `packages/api/src/server.ts`) —
       that check will start being meaningful once the fail-closed policy is
       live too.
@@ -186,18 +186,16 @@ proves the wiring is type-correct, not that the policies isolate at runtime.
       and proves: (1) tenant A cannot see tenant B's rows; (2) a query that
       omits the customer_id filter still cannot leak across tenants; (3) the
       app role is genuinely non-superuser/non-BYPASSRLS; and (4) the
-      null-tenant behavior matches whichever policy is applied — it detects
-      fail-closed vs permissive at runtime from `pg_policies` and asserts the
-      correct contract either way, so it stays green through the rollout and
-      will actively catch a regression from fail-closed back to permissive
+      null-tenant behavior is fail-closed and malicious cross-tenant writes
+      are rejected. It also verifies the API role cannot bypass RLS, so a
+      regression from fail-closed back to permissive fails CI.
       once 035 is applied. The remaining manual step is running this against a
       real staging DB with 035 applied (and confirming test 4 takes the
       fail-closed branch), plus the worker/scheduler-under-bypass-role check,
       which the automated test does not yet cover.
-- [ ] Once verified, move `infra/migrations-pending/036_rls_fail_closed.sql`
-      into `infra/migrations/` under the next free sequence number (there may
-      be later numbered migrations by then) and run it through the normal
-      migration pipeline.
+- [x] Fail-closed migration moved into the normal migration pipeline as
+      `043_rls_fail_closed.sql`; fresh-database migration and RLS isolation
+      tests pass.
 
 ## Pattern to follow for each remaining file
 

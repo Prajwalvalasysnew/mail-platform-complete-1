@@ -13,6 +13,7 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
 import { IORedisInstrumentation } from '@opentelemetry/instrumentation-ioredis';
+import { sanitizeTelemetryText } from './logging.js';
 
 const TRACER_NAME = 'mail-platform';
 
@@ -27,7 +28,8 @@ function adapt(span: OtelSpan): Span {
   return {
     setAttribute: (k, v) => { span.setAttribute(k, v); },
     recordException: (err) => {
-      const e = err instanceof Error ? err : new Error(String(err));
+      const original = err instanceof Error ? err.message : String(err);
+      const e = new Error(sanitizeTelemetryText(original));
       span.recordException(e);
       span.setStatus({ code: SpanStatusCode.ERROR, message: e.message });
     },

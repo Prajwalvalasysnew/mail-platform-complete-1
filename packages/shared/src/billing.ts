@@ -10,7 +10,9 @@
 
 import { sql } from 'kysely';
 import { db } from './db.js';
+import type { DbExecutor } from './db.js';
 import { getBillingProviderFor } from './billing-provider.js';
+import { sendDunningEmail } from './mailer.js';
 
 export const TIER_BY_PRICE: Record<string, { tier: 'free' | 'paid' | 'enterprise'; daily: number; monthly: number; plan: string }> = {
   price_free: { tier: 'free', daily: 100, monthly: 3000, plan: 'free' },
@@ -59,6 +61,42 @@ export function isKnownPrice(priceId: string | undefined | null): boolean {
   return resolvePlanForPrice(priceId) !== undefined;
 }
 
+export interface CatalogPlan {
+  tier: 'free' | 'paid' | 'enterprise';
+  daily: number;
+  monthly: number;
+  plan: string;
+  providerPriceId: string;
+}
+
+export async function resolveCatalogPlan(
+  priceId: string | undefined | null,
+  provider: string,
+  executor: DbExecutor = db,
+): Promise<CatalogPlan | undefined> {
+  if (!priceId) return undefined;
+  const environment = process.env.BILLING_ENVIRONMENT === 'test' ? 'test' : 'live';
+  const row = await executor.selectFrom('billing_plan_prices')
+    .innerJoin('billing_plans', 'billing_plans.plan_key', 'billing_plan_prices.plan_key')
+    .select(['billing_plans.plan_key', 'billing_plans.tier', 'billing_plans.daily_quota', 'billing_plans.monthly_quota', 'billing_plan_prices.provider_price_id'])
+    .where('billing_plan_prices.provider', '=', provider as any)
+    .where('billing_plan_prices.environment', '=', environment)
+    .where('billing_plan_prices.provider_price_id', '=', priceId)
+    .where('billing_plan_prices.active', '=', true)
+    .where('billing_plans.active', '=', true)
+    .executeTakeFirst();
+  if (row) return {
+    tier: row.tier, daily: row.daily_quota, monthly: row.monthly_quota,
+    plan: row.plan_key, providerPriceId: row.provider_price_id,
+  };
+  // Preserve self-hosted/test compatibility, but never accept placeholders in production.
+  if (process.env.NODE_ENV !== 'production') {
+    const legacy = resolvePlanForPrice(priceId);
+    if (legacy) return { ...legacy, providerPriceId: priceId };
+  }
+  return undefined;
+}
+
 export interface SubscriptionEvent {
   type: string;
   provider?: string;
@@ -69,6 +107,7 @@ export interface SubscriptionEvent {
   internal_customer_id?: string;
   provider_subscription_id?: string;
   subscription_item_id?: string;
+  plan_item_id?: string;
   price_id?: string;
   status?: string;
   current_period_start?: number; // unix seconds
@@ -140,17 +179,20 @@ export async function applySubscriptionState(ev: SubscriptionEvent): Promise<boo
       const free = TIER_BY_PRICE['price_free']!;
       await trx.updateTable('customers').set({ tier: free.tier, daily_quota: free.daily, monthly_quota: free.monthly, billing_status: 'canceled' }).where('id', '=', customer.id).execute();
       await trx.updateTable('subscriptions').set({ status: 'canceled' }).where('customer_id', '=', customer.id).execute();
+      await trx.insertInto('billing_dunning_state').values({ customer_id: customer.id, state: 'canceled' })
+        .onConflict((oc) => oc.column('customer_id').doUpdateSet({ state: 'canceled', grace_ends_at: null, updated_at: new Date() })).execute();
       return true;
     }
 
-    const plan = resolvePlanForPrice(ev.price_id);
+    const plan = await resolveCatalogPlan(ev.price_id, provider, trx);
 
     await trx
       .insertInto('subscriptions')
         .values({
           customer_id: customer.id,
         provider,
-        provider_subscription_id: ev.provider_subscription_id ?? null,
+          provider_subscription_id: ev.provider_subscription_id ?? null,
+        provider_plan_item_id: ev.plan_item_id ?? null,
         price_id: ev.price_id ?? null,
         plan: plan?.plan ?? 'free',
         status: status as any,
@@ -161,6 +203,7 @@ export async function applySubscriptionState(ev: SubscriptionEvent): Promise<boo
       .onConflict((oc) =>
         oc.column('provider_subscription_id').doUpdateSet({
           price_id: ev.price_id ?? null,
+          provider_plan_item_id: ev.plan_item_id ?? null,
           plan: plan?.plan ?? 'free',
           status: status as any,
           current_period_start: ev.current_period_start ? new Date(ev.current_period_start * 1000) : null,
@@ -172,7 +215,8 @@ export async function applySubscriptionState(ev: SubscriptionEvent): Promise<boo
       .execute();
 
     if (plan) {
-      const billingStatus = ['active', 'past_due', 'canceled', 'trialing'].includes(status) ? status : 'active';
+      const billingStatus = status === 'active' || status === 'trialing' ? status
+        : status === 'canceled' ? 'canceled' : 'past_due';
       await trx
         .updateTable('customers')
         .set({
@@ -185,13 +229,336 @@ export async function applySubscriptionState(ev: SubscriptionEvent): Promise<boo
         .where('id', '=', customer.id)
         .execute();
     }
+    if (status === 'active' || status === 'trialing') {
+      await trx.insertInto('billing_dunning_state').values({ customer_id: customer.id, state: 'healthy', recovered_at: new Date() })
+        .onConflict((oc) => oc.column('customer_id').doUpdateSet({ state: 'recovered', grace_ends_at: null, recovered_at: new Date(), updated_at: new Date() })).execute();
+    } else if (status === 'past_due') {
+      const graceEnds = new Date(Date.now() + Number(process.env.BILLING_GRACE_DAYS ?? 7) * 86_400_000);
+      await trx.insertInto('billing_dunning_state').values({ customer_id: customer.id, state: 'grace', failure_count: 1, grace_ends_at: graceEnds, last_failure_at: new Date() })
+        .onConflict((oc) => oc.column('customer_id').doUpdateSet((eb) => ({
+          state: 'grace', failure_count: eb('billing_dunning_state.failure_count', '+', 1),
+          grace_ends_at: sql`COALESCE(billing_dunning_state.grace_ends_at, ${graceEnds})`,
+          last_failure_at: new Date(), updated_at: new Date(),
+        }))).execute();
+    } else if (status === 'unpaid' || status === 'incomplete' || status === 'canceled') {
+      await trx.insertInto('billing_dunning_state').values({ customer_id: customer.id, state: 'restricted', failure_count: 1, last_failure_at: new Date() })
+        .onConflict((oc) => oc.column('customer_id').doUpdateSet({ state: 'restricted', grace_ends_at: null, last_failure_at: new Date(), updated_at: new Date() })).execute();
+    }
+    // The provider webhook is the authority for entitlement activation. Match
+    // the submitted request by tenant/provider price only after an active or
+    // trialing subscription event has been authenticated and applied.
+    if (plan && ev.price_id && (status === 'active' || status === 'trialing')) {
+      await trx.updateTable('billing_plan_change_requests').set({
+        status: 'applied', applied_at: new Date(), updated_at: new Date(),
+      }).where('customer_id', '=', customer.id)
+        .where('provider', '=', provider)
+        .where('provider_price_id', '=', ev.price_id)
+        .where('status', '=', 'checkout_started')
+        .execute();
+    }
     return true;
   });
+}
+
+export interface BillingAccess {
+  allowed: boolean;
+  reason?: 'billing_canceled' | 'payment_required' | 'grace_expired';
+  graceEndsAt: Date | null;
+  plan: string;
+  features: Record<string, unknown>;
+}
+
+export async function evaluateBillingAccess(customerId: string): Promise<BillingAccess> {
+  const customer = await db.selectFrom('customers').select(['billing_status', 'tier']).where('id', '=', customerId).executeTakeFirstOrThrow();
+  const subscription = await db.selectFrom('subscriptions').select(['plan', 'status']).where('customer_id', '=', customerId).orderBy('updated_at', 'desc').executeTakeFirst();
+  const planKey = subscription?.plan ?? (customer.tier === 'free' ? 'free' : customer.tier);
+  const plan = await db.selectFrom('billing_plans').select(['features']).where('plan_key', '=', planKey).where('active', '=', true).executeTakeFirst();
+  const dunning = await db.selectFrom('billing_dunning_state').select(['state', 'grace_ends_at']).where('customer_id', '=', customerId).executeTakeFirst();
+  const graceEndsAt = dunning?.grace_ends_at ? new Date(dunning.grace_ends_at as any) : null;
+  if (customer.billing_status === 'canceled' || dunning?.state === 'canceled') {
+    return { allowed: false, reason: 'billing_canceled', graceEndsAt, plan: planKey, features: plan?.features ?? {} };
+  }
+  if (dunning?.state === 'restricted' || subscription?.status === 'unpaid' || subscription?.status === 'incomplete') {
+    return { allowed: false, reason: 'payment_required', graceEndsAt, plan: planKey, features: plan?.features ?? {} };
+  }
+  if (customer.billing_status === 'past_due' || dunning?.state === 'grace') {
+    if (!graceEndsAt || graceEndsAt.getTime() <= Date.now()) {
+      return { allowed: false, reason: 'grace_expired', graceEndsAt, plan: planKey, features: plan?.features ?? {} };
+    }
+  }
+  return { allowed: true, graceEndsAt, plan: planKey, features: plan?.features ?? {} };
+}
+
+export async function hasEntitlement(customerId: string, feature: string): Promise<boolean> {
+  const access = await evaluateBillingAccess(customerId);
+  return access.allowed && access.features[feature] === true;
+}
+
+export interface DunningSweepResult { scanned: number; restricted: number; sent: number; failed: number }
+
+async function notifyDunning(input: { customerId: string; email: string; stage: 'payment_failed' | 'grace_ending' | 'restricted' | 'recovered'; cycleKey: string; graceEndsAt: Date | null }): Promise<'sent' | 'skipped' | 'failed'> {
+  const row = await db.insertInto('billing_dunning_notifications').values({
+    customer_id: input.customerId, stage: input.stage, cycle_key: input.cycleKey,
+  }).onConflict((oc) => oc.columns(['customer_id', 'stage', 'cycle_key']).doUpdateSet({ updated_at: new Date() }))
+    .returning(['id', 'status', 'attempts']).executeTakeFirstOrThrow();
+  if (row.status === 'sent') return 'skipped';
+  try {
+    await sendDunningEmail({ to: input.email, stage: input.stage, graceEndsAt: input.graceEndsAt });
+    await db.updateTable('billing_dunning_notifications').set({ status: 'sent', attempts: row.attempts + 1, sent_at: new Date(), last_error: null, updated_at: new Date().toISOString() }).where('id', '=', row.id).execute();
+    return 'sent';
+  } catch (error) {
+    await db.updateTable('billing_dunning_notifications').set({ status: 'failed', attempts: row.attempts + 1, last_error: (error instanceof Error ? error.message : String(error)).slice(0, 1000), updated_at: new Date().toISOString() }).where('id', '=', row.id).execute();
+    return 'failed';
+  }
+}
+
+export async function runDunningSweep(now = new Date(), options: { customerId?: string } = {}): Promise<DunningSweepResult> {
+  let query = db.selectFrom('billing_dunning_state')
+    .innerJoin('customers', 'customers.id', 'billing_dunning_state.customer_id')
+    .select(['billing_dunning_state.customer_id', 'billing_dunning_state.state', 'billing_dunning_state.grace_ends_at', 'billing_dunning_state.updated_at', 'customers.email'])
+    .where('billing_dunning_state.state', 'in', ['grace', 'restricted', 'recovered']);
+  if (options.customerId) query = query.where('billing_dunning_state.customer_id', '=', options.customerId);
+  const rows = await query.execute();
+  const result: DunningSweepResult = { scanned: rows.length, restricted: 0, sent: 0, failed: 0 };
+  for (const row of rows) {
+    const graceEnds = row.grace_ends_at ? new Date(row.grace_ends_at as any) : null;
+    const cycleKey = (graceEnds ?? new Date(row.updated_at as any)).toISOString();
+    const stages: Array<'payment_failed' | 'grace_ending' | 'restricted' | 'recovered'> = [];
+    if (row.state === 'grace') {
+      stages.push('payment_failed');
+      const remaining = graceEnds ? graceEnds.getTime() - now.getTime() : -1;
+      if (remaining > 0 && remaining <= 24 * 3600_000) stages.push('grace_ending');
+      if (remaining <= 0) {
+        await db.updateTable('billing_dunning_state').set({ state: 'restricted', updated_at: now.toISOString() }).where('customer_id', '=', row.customer_id).where('state', '=', 'grace').execute();
+        stages.push('restricted');
+        result.restricted++;
+      }
+    } else if (row.state === 'restricted') stages.push('restricted');
+    else stages.push('recovered');
+    for (const stage of stages) {
+      const outcome = await notifyDunning({ customerId: row.customer_id, email: row.email, stage, cycleKey, graceEndsAt: graceEnds });
+      if (outcome === 'sent') result.sent++;
+      if (outcome === 'failed') result.failed++;
+    }
+  }
+  return result;
+}
+
+export async function listCustomerInvoices(customerId: string, options: { limit?: number; before?: string } = {}) {
+  const limit = Math.max(1, Math.min(options.limit ?? 50, 100));
+  let query = db.selectFrom('invoices')
+    .select(['id', 'provider_invoice_id', 'period_start', 'period_end', 'billed_quantity', 'metered_quantity', 'amount_cents', 'currency', 'status', 'drift', 'hosted_invoice_url', 'invoice_pdf_url', 'due_at', 'paid_at', 'created_at'])
+    .where('customer_id', '=', customerId).orderBy('created_at', 'desc').limit(limit + 1);
+  if (options.before) query = query.where('created_at', '<', options.before as any);
+  const rows = await query.execute();
+  const hasMore = rows.length > limit;
+  const invoices = hasMore ? rows.slice(0, limit) : rows;
+  return { invoices, next_cursor: hasMore ? invoices.at(-1)!.created_at : null };
+}
+
+export async function getCustomerInvoice(customerId: string, invoiceId: string) {
+  const invoice = await db.selectFrom('invoices').selectAll()
+    .where('id', '=', invoiceId).where('customer_id', '=', customerId).executeTakeFirst();
+  if (!invoice) return null;
+  const lines = await db.selectFrom('invoice_line_items')
+    .select(['id', 'provider_line_item_id', 'description', 'quantity', 'amount_cents', 'currency', 'period_start', 'period_end', 'metadata'])
+    .where('invoice_id', '=', invoice.id).orderBy('id', 'asc').execute();
+  return { ...invoice, lines };
+}
+
+export async function previewPlanChange(customerId: string, targetPriceId: string) {
+  const customer = await db.selectFrom('customers').select(['billing_provider', 'tier', 'daily_quota', 'monthly_quota'])
+    .where('id', '=', customerId).executeTakeFirstOrThrow();
+  const target = await resolveCatalogPlan(targetPriceId, customer.billing_provider ?? 'stripe');
+  if (!target) throw new Error('unknown_price');
+  const currentSub = await db.selectFrom('subscriptions').select(['plan', 'provider_subscription_id', 'provider_plan_item_id']).where('customer_id', '=', customerId).orderBy('updated_at', 'desc').executeTakeFirst();
+  const currentPlanKey = currentSub?.plan ?? (customer.tier === 'free' ? 'free' : customer.tier);
+  const currentCatalog = await db.selectFrom('billing_plans').select(['features']).where('plan_key', '=', currentPlanKey).executeTakeFirst();
+  const targetCatalog = await db.selectFrom('billing_plans').select(['features']).where('plan_key', '=', target.plan).executeTakeFirstOrThrow();
+  const direction = target.monthly > customer.monthly_quota ? 'upgrade' : target.monthly < customer.monthly_quota ? 'downgrade' : 'lateral';
+  const currentFeatures = currentCatalog?.features ?? {};
+  const targetFeatures = targetCatalog.features ?? {};
+  const gained = Object.keys(targetFeatures).filter((key) => targetFeatures[key] === true && currentFeatures[key] !== true);
+  const lost = Object.keys(currentFeatures).filter((key) => currentFeatures[key] === true && targetFeatures[key] !== true);
+  const usage = await db.selectFrom('usage_daily').select(({ fn }) => fn.sum<number>('sent').as('sent'))
+    .where('customer_id', '=', customerId).where(sql<boolean>`date_trunc('month', usage_date) = date_trunc('month', CURRENT_DATE)`).executeTakeFirst();
+  const monthlyUsed = Number(usage?.sent ?? 0);
+  const warnings: string[] = [];
+  if (direction === 'downgrade' && monthlyUsed > target.monthly) warnings.push('current_month_usage_exceeds_target_quota');
+  if (lost.length) warnings.push('features_will_be_removed');
+  const prorationDate = Math.floor(Date.now() / 1000);
+  const provider = getBillingProviderFor(customer.billing_provider ?? 'stripe');
+  let providerPreview: { amountDue: number; currency: string; prorationAmount: number } | null = null;
+  if (currentSub?.provider_subscription_id && currentSub.provider_plan_item_id && provider.previewSubscriptionChange) {
+    providerPreview = await provider.previewSubscriptionChange({
+      subscriptionId: currentSub.provider_subscription_id, subscriptionItemId: currentSub.provider_plan_item_id,
+      priceId: target.providerPriceId, prorationDate,
+    });
+  }
+  const request = await db.insertInto('billing_plan_change_requests').values({
+    customer_id: customerId, current_plan: currentPlanKey, target_plan: target.plan,
+    provider: customer.billing_provider ?? 'stripe', provider_price_id: target.providerPriceId,
+    direction, quota_delta: { daily: target.daily - customer.daily_quota, monthly: target.monthly - customer.monthly_quota },
+    feature_delta: { gained, lost }, warnings,
+    proration_date: providerPreview ? prorationDate : null,
+    proration_amount_cents: providerPreview?.prorationAmount ?? null,
+    preview_amount_due_cents: providerPreview?.amountDue ?? null,
+    preview_currency: providerPreview?.currency ?? null,
+  }).returning(['id', 'expires_at']).executeTakeFirstOrThrow();
+  return {
+    request_id: request.id, current_plan: currentPlanKey, target_plan: target.plan, direction,
+    current: { daily_quota: customer.daily_quota, monthly_quota: customer.monthly_quota, features: currentFeatures },
+    target: { daily_quota: target.daily, monthly_quota: target.monthly, features: targetFeatures },
+    quota_delta: { daily: target.daily - customer.daily_quota, monthly: target.monthly - customer.monthly_quota },
+    feature_delta: { gained, lost }, current_month_usage: monthlyUsed, warnings,
+    proration: providerPreview
+      ? { available: true, date: prorationDate, amount_cents: providerPreview.prorationAmount, invoice_amount_due_cents: providerPreview.amountDue, currency: providerPreview.currency }
+      : { available: false, reason: 'provider_preview_required' }, expires_at: request.expires_at,
+  };
+}
+
+export async function confirmPlanChange(customerId: string, requestId: string) {
+  const request = await db.selectFrom('billing_plan_change_requests').selectAll()
+    .where('id', '=', requestId).where('customer_id', '=', customerId).executeTakeFirst();
+  if (!request) return { status: 'not_found' as const };
+  if (request.status !== 'previewed' || new Date(request.expires_at as any).getTime() <= Date.now()) return { status: 'expired' as const };
+  if (!request.proration_date) return { status: 'provider_preview_required' as const };
+  const subscription = await db.selectFrom('subscriptions').select(['provider_subscription_id', 'provider_plan_item_id'])
+    .where('customer_id', '=', customerId).orderBy('updated_at', 'desc').executeTakeFirst();
+  if (!subscription?.provider_subscription_id || !subscription.provider_plan_item_id) return { status: 'subscription_not_ready' as const };
+  const provider = getBillingProviderFor(request.provider);
+  if (!provider.updateSubscription) return { status: 'unsupported_provider' as const };
+  const updated = await provider.updateSubscription({ subscriptionId: subscription.provider_subscription_id,
+    subscriptionItemId: subscription.provider_plan_item_id, priceId: request.provider_price_id,
+    prorationDate: Number(request.proration_date), idempotencyKey: `plan-change:${request.id}` });
+  await db.updateTable('billing_plan_change_requests').set({ status: 'checkout_started', updated_at: new Date().toISOString() })
+    .where('id', '=', request.id).where('status', '=', 'previewed').execute();
+  return { status: 'pending_provider_confirmation' as const, provider_subscription_id: updated.id, provider_status: updated.status };
+}
+
+export async function cancelPlanChange(customerId: string, requestId: string): Promise<'canceled' | 'not_found' | 'not_cancelable'> {
+  const updated = await db.updateTable('billing_plan_change_requests').set({
+    status: 'canceled', canceled_at: new Date(), updated_at: new Date().toISOString(),
+  }).where('id', '=', requestId).where('customer_id', '=', customerId).where('status', '=', 'previewed')
+    .returning('id').executeTakeFirst();
+  if (updated) return 'canceled';
+  const exists = await db.selectFrom('billing_plan_change_requests').select('status')
+    .where('id', '=', requestId).where('customer_id', '=', customerId).executeTakeFirst();
+  return exists ? 'not_cancelable' : 'not_found';
+}
+
+export async function expirePlanChangeRequests(now = new Date()): Promise<number> {
+  const result = await db.updateTable('billing_plan_change_requests').set({ status: 'expired', updated_at: now.toISOString() })
+    .where('status', '=', 'previewed').where('expires_at', '<=', now as any).executeTakeFirst();
+  return Number(result.numUpdatedRows ?? 0);
+}
+
+export async function reconcileSubmittedPlanChanges(options: { staleMinutes?: number; limit?: number } = {}) {
+  const cutoff = new Date(Date.now() - Math.max(0, options.staleMinutes ?? 10) * 60_000);
+  const requests = await db.selectFrom('billing_plan_change_requests')
+    .select(['id', 'customer_id', 'provider', 'provider_price_id'])
+    .where('status', '=', 'checkout_started').where('updated_at', '<=', cutoff as any)
+    .orderBy('updated_at', 'asc').limit(Math.max(1, Math.min(options.limit ?? 100, 500))).execute();
+  const result = { scanned: requests.length, applied: 0, pending: 0, unsupported: 0, failed: 0 };
+  for (const request of requests) {
+    try {
+      const subscription = await db.selectFrom('subscriptions').select('provider_subscription_id')
+        .where('customer_id', '=', request.customer_id).where('provider', '=', request.provider).orderBy('updated_at', 'desc').executeTakeFirst();
+      const provider = getBillingProviderFor(request.provider);
+      if (!subscription?.provider_subscription_id || !provider.getSubscription) { result.unsupported++; continue; }
+      const remote = await provider.getSubscription(subscription.provider_subscription_id);
+      const item = remote.items.find((candidate) => candidate.priceId === request.provider_price_id);
+      if (!item) { result.pending++; continue; }
+      await applySubscriptionState({ provider: request.provider,
+        provider_event_id: `plan_reconcile:${request.id}:${remote.status}:${request.provider_price_id}`,
+        type: 'customer.subscription.updated', internal_customer_id: request.customer_id,
+        provider_subscription_id: remote.id, plan_item_id: item.id, price_id: item.priceId, status: remote.status });
+      const state = await db.selectFrom('billing_plan_change_requests').select('status').where('id', '=', request.id).executeTakeFirstOrThrow();
+      if (state.status === 'applied') result.applied++; else result.pending++;
+    } catch {
+      result.failed++;
+    }
+  }
+  return result;
 }
 
 export interface MeteringDrift {
   totalDrift: number;
   byCustomer: Array<{ customer_id: string; metered: number; billed: number; drift: number }>;
+}
+
+export interface InvoiceEvent {
+  provider: string;
+  provider_event_id: string;
+  type: string;
+  provider_customer_id: string;
+  provider_invoice_id: string;
+  amount_cents: number;
+  currency: string;
+  period_start: number;
+  period_end: number;
+  due_at?: number;
+  paid_at?: number;
+  hosted_invoice_url?: string | null;
+  invoice_pdf_url?: string | null;
+  billed_quantity?: number;
+  lines?: Array<{ id: string; description?: string | null; quantity?: number; amount_cents?: number; currency?: string; period_start?: number; period_end?: number; metadata?: Record<string, unknown> }>;
+  raw_payload?: unknown;
+}
+
+export async function applyInvoiceEvent(ev: InvoiceEvent): Promise<boolean> {
+  return db.transaction().execute(async (trx) => {
+    const marker = await trx.insertInto('billing_events').values({
+      provider_event_id: ev.provider_event_id, type: ev.type, provider: ev.provider, payload: ev.raw_payload as any,
+    }).onConflict((oc) => oc.column('provider_event_id').doNothing()).returning('provider_event_id').executeTakeFirst();
+    if (!marker) return false;
+    const customer = await trx.selectFrom('customers').select('id')
+      .where('stripe_customer_id', '=', ev.provider_customer_id).where('billing_provider', '=', ev.provider as any).executeTakeFirst();
+    if (!customer) return true;
+    const status = ev.type === 'invoice.paid' ? 'paid' : ev.type === 'invoice.voided' ? 'void'
+      : ev.type === 'invoice.marked_uncollectible' ? 'uncollectible' : 'open';
+    const invoice = await trx.insertInto('invoices').values({
+      customer_id: customer.id, provider_invoice_id: ev.provider_invoice_id,
+      period_start: new Date(ev.period_start * 1000).toISOString().slice(0, 10),
+      period_end: new Date(ev.period_end * 1000).toISOString().slice(0, 10),
+      billed_quantity: ev.billed_quantity ?? 0, amount_cents: ev.amount_cents,
+      currency: ev.currency.toLowerCase(), status, hosted_invoice_url: ev.hosted_invoice_url ?? null,
+      invoice_pdf_url: ev.invoice_pdf_url ?? null, due_at: ev.due_at ? new Date(ev.due_at * 1000) : null,
+      paid_at: ev.paid_at ? new Date(ev.paid_at * 1000) : null,
+    }).onConflict((oc) => oc.column('provider_invoice_id').doUpdateSet({
+      billed_quantity: ev.billed_quantity ?? 0, amount_cents: ev.amount_cents, currency: ev.currency.toLowerCase(),
+      status, hosted_invoice_url: ev.hosted_invoice_url ?? null, invoice_pdf_url: ev.invoice_pdf_url ?? null,
+      due_at: ev.due_at ? new Date(ev.due_at * 1000) : null, paid_at: ev.paid_at ? new Date(ev.paid_at * 1000) : null,
+      updated_at: new Date(),
+    })).returning('id').executeTakeFirstOrThrow();
+    for (const line of ev.lines ?? []) {
+      await trx.insertInto('invoice_line_items').values({
+        invoice_id: invoice.id, provider_line_item_id: line.id, description: line.description ?? null,
+        quantity: line.quantity ?? 0, amount_cents: line.amount_cents ?? 0,
+        currency: (line.currency ?? ev.currency).toLowerCase(),
+        period_start: line.period_start ? new Date(line.period_start * 1000) : null,
+        period_end: line.period_end ? new Date(line.period_end * 1000) : null, metadata: line.metadata ?? {},
+      }).onConflict((oc) => oc.columns(['invoice_id', 'provider_line_item_id']).doUpdateSet({
+        description: line.description ?? null, quantity: line.quantity ?? 0, amount_cents: line.amount_cents ?? 0,
+        metadata: line.metadata ?? {},
+      })).execute();
+    }
+    if (ev.type === 'invoice.payment_failed') {
+      const graceEnds = new Date(Date.now() + Number(process.env.BILLING_GRACE_DAYS ?? 7) * 86_400_000);
+      await trx.updateTable('customers').set({ billing_status: 'past_due' }).where('id', '=', customer.id).execute();
+      await trx.insertInto('billing_dunning_state').values({ customer_id: customer.id, state: 'grace', failure_count: 1, grace_ends_at: graceEnds, last_failure_at: new Date() })
+        .onConflict((oc) => oc.column('customer_id').doUpdateSet((eb) => ({ state: 'grace', failure_count: eb('billing_dunning_state.failure_count', '+', 1), grace_ends_at: sql`COALESCE(billing_dunning_state.grace_ends_at, ${graceEnds})`, last_failure_at: new Date(), updated_at: new Date() }))).execute();
+    } else if (ev.type === 'invoice.paid') {
+      await trx.updateTable('customers').set({ billing_status: 'active' }).where('id', '=', customer.id).where('billing_status', '!=', 'canceled').execute();
+      await trx.insertInto('billing_dunning_state').values({ customer_id: customer.id, state: 'recovered', recovered_at: new Date() })
+        .onConflict((oc) => oc.column('customer_id').doUpdateSet({ state: 'recovered', grace_ends_at: null, recovered_at: new Date(), updated_at: new Date() })).execute();
+    } else if (ev.type === 'invoice.marked_uncollectible') {
+      await trx.updateTable('customers').set({ billing_status: 'past_due' }).where('id', '=', customer.id).execute();
+      await trx.insertInto('billing_dunning_state').values({ customer_id: customer.id, state: 'restricted', failure_count: 1, last_failure_at: new Date() })
+        .onConflict((oc) => oc.column('customer_id').doUpdateSet({ state: 'restricted', grace_ends_at: null, updated_at: new Date() })).execute();
+    }
+    return true;
+  });
 }
 
 /**
@@ -310,14 +677,23 @@ export async function ensureBillingCustomer(customerId: string): Promise<string>
 }
 
 export async function startCheckout(input: { customerId: string; priceId: string; successUrl: string; cancelUrl: string }): Promise<{ id: string; url: string }> {
+  const billing = await db.selectFrom('customers').select('billing_provider').where('id', '=', input.customerId).executeTakeFirst();
+  if (!billing) throw new Error('customer_not_found');
+  const plan = await resolveCatalogPlan(input.priceId, billing.billing_provider ?? 'stripe');
+  if (!plan) throw new Error('unknown_price');
   const { providerName, providerCustomerId, email } = await ensureBillingCustomerContext(input.customerId);
   return getBillingProviderFor(providerName).createCheckoutSession({
     customerId: providerCustomerId,
-    priceId: input.priceId,
+    priceId: plan.providerPriceId,
     successUrl: input.successUrl,
     cancelUrl: input.cancelUrl,
     metadata: { customer_id: input.customerId, customer_email: email },
   });
+}
+
+export async function isCheckoutPriceAvailable(customerId: string, priceId: string): Promise<boolean> {
+  const customer = await db.selectFrom('customers').select('billing_provider').where('id', '=', customerId).executeTakeFirst();
+  return !!customer && !!(await resolveCatalogPlan(priceId, customer.billing_provider ?? 'stripe'));
 }
 
 export async function startBillingPortal(input: { customerId: string; returnUrl: string }): Promise<{ url: string }> {

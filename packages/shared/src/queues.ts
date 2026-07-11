@@ -250,6 +250,54 @@ export async function purgeAllDeadLetters(): Promise<number> {
 
 export const allQueues = [sendQueue, eventsQueue, webhooksQueue, deadLetterQueue];
 
+const PRIVACY_REMOVABLE_JOB_STATES = [
+  'waiting', 'delayed', 'failed', 'paused', 'completed', 'prioritized', 'waiting-children',
+] as const;
+
+function containsMessageId(value: unknown, messageId: string, depth = 0): boolean {
+  if (depth > 12 || value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.some((item) => containsMessageId(item, messageId, depth + 1));
+  if (typeof value !== 'object') return false;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key === 'message_id' && child === messageId) return true;
+    if (containsMessageId(child, messageId, depth + 1)) return true;
+  }
+  return false;
+}
+
+/** Remove retained/non-active BullMQ payloads for an erased message. */
+export async function purgeQueuedMessageData(messageId: string): Promise<{ removed: number; active: number }> {
+  let removed = 0;
+  let active = 0;
+  for (const queue of allQueues) {
+    // Removing jobs shifts offsets, so repeatedly read the first bounded page
+    // after each full scan that removed anything. This remains bounded in memory.
+    while (true) {
+      let removedThisScan = 0;
+      let offset = 0;
+      while (true) {
+        const jobs = await queue.getJobs(PRIVACY_REMOVABLE_JOB_STATES as any, offset, offset + 499, false);
+        for (const job of jobs.filter((candidate) => containsMessageId(candidate.data, messageId))) {
+          await job.remove();
+          removed++;
+          removedThisScan++;
+        }
+        if (jobs.length < 500) break;
+        offset += 500;
+      }
+      if (removedThisScan === 0) break;
+    }
+    let offset = 0;
+    while (true) {
+      const jobs = await queue.getJobs(['active'] as any, offset, offset + 499, false);
+      active += jobs.filter((job) => containsMessageId(job.data, messageId)).length;
+      if (jobs.length < 500) break;
+      offset += 500;
+    }
+  }
+  return { removed, active };
+}
+
 export async function closeQueues(): Promise<void> {
   await Promise.all(allQueues.map((q) => q.close()));
 }

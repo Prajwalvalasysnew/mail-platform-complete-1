@@ -11,6 +11,7 @@ import {
   WEBHOOK_EVENT_TYPES,
 } from '@platform/shared';
 import { requireCapability } from '../plugins/session-auth.js';
+import { tenantScoped } from '../lib/tenant.js';
 
 // Dashboard (human-session) webhook management for the active org, gated by the
 // settings:manage capability (owner / admin). Shares the same org-scoped
@@ -28,7 +29,7 @@ export const accountWebhookRoutes: FastifyPluginAsync = async (app) => {
   }
 
   app.get('/account/webhooks', { preHandler: manage }, async (req) => {
-    return { webhooks: await listWebhooks(req.user!.current_customer_id!) };
+    return { webhooks: await tenantScoped(req, (trx) => listWebhooks(req.user!.current_customer_id!, trx)) };
   });
 
   const CreateSchema = z.object({
@@ -40,6 +41,8 @@ export const accountWebhookRoutes: FastifyPluginAsync = async (app) => {
     if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
     const orgId = req.user!.current_customer_id!;
     try {
+      // Keep DNS validation outside the transaction; createWebhook opens its
+      // short tenant-scoped transaction after the SSRF check succeeds.
       const row = await createWebhook({ customerId: orgId, url: parsed.data.url, events: parsed.data.events });
       recordAuditSafe({ customerId: orgId, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email, action: 'webhook.created', resource: row.id, metadata: { url: row.url, events: row.events }, ip: req.ip });
       return reply.code(201).send(row);
@@ -60,6 +63,8 @@ export const accountWebhookRoutes: FastifyPluginAsync = async (app) => {
     const { id } = req.params as { id: string };
     const orgId = req.user!.current_customer_id!;
     try {
+      // updateWebhook may validate a new URL with DNS, so it owns a short
+      // tenant transaction after that network operation.
       const row = await updateWebhook(orgId, id, parsed.data);
       if (!row) return reply.code(404).send({ error: 'not_found' });
       recordAuditSafe({ customerId: orgId, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email, action: 'webhook.updated', resource: id, metadata: parsed.data, ip: req.ip });
@@ -73,7 +78,7 @@ export const accountWebhookRoutes: FastifyPluginAsync = async (app) => {
   app.post('/account/webhooks/:id/rotate-secret', { preHandler: manage }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const orgId = req.user!.current_customer_id!;
-    const row = await rotateWebhookSecret(orgId, id);
+    const row = await tenantScoped(req, (trx) => rotateWebhookSecret(orgId, id, trx));
     if (!row) return reply.code(404).send({ error: 'not_found' });
     recordAuditSafe({ customerId: orgId, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email, action: 'webhook.secret_rotated', resource: id, ip: req.ip });
     return reply.code(201).send({
@@ -85,7 +90,7 @@ export const accountWebhookRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/account/webhooks/:id', { preHandler: manage }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const orgId = req.user!.current_customer_id!;
-    const ok = await deleteWebhook(orgId, id);
+    const ok = await tenantScoped(req, (trx) => deleteWebhook(orgId, id, trx));
     if (!ok) return reply.code(404).send({ error: 'not_found' });
     recordAuditSafe({ customerId: orgId, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email, action: 'webhook.deleted', resource: id, ip: req.ip });
     return { ok: true };

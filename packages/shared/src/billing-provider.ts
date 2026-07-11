@@ -19,12 +19,16 @@ export interface BillingProvider {
   }): Promise<{ id: string; url: string }>;
   createPortalSession(input: { customerId: string; returnUrl: string }): Promise<{ url: string }>;
   reportUsage(input: { subscriptionItemId: string; quantity: number; timestamp?: number; idempotencyKey?: string }): Promise<void>;
+  previewSubscriptionChange?(input: { subscriptionId: string; subscriptionItemId: string; priceId: string; prorationDate: number }): Promise<{ amountDue: number; currency: string; prorationAmount: number }>;
+  updateSubscription?(input: { subscriptionId: string; subscriptionItemId: string; priceId: string; prorationDate: number; idempotencyKey: string }): Promise<{ id: string; status: string }>;
+  getSubscription?(subscriptionId: string): Promise<{ id: string; status: string; items: Array<{ id: string; priceId: string }> }>;
 }
 
 /** Deterministic, network-free provider. Default outside production. */
 export class MockBillingProvider implements BillingProvider {
   readonly name: string;
   readonly calls: Array<{ method: string; input: unknown }> = [];
+  private readonly subscriptions = new Map<string, { id: string; status: string; items: Array<{ id: string; priceId: string }> }>();
 
   constructor(name = 'mock') {
     this.name = name;
@@ -51,6 +55,19 @@ export class MockBillingProvider implements BillingProvider {
   }
   async reportUsage(input: { subscriptionItemId: string; quantity: number; timestamp?: number; idempotencyKey?: string }): Promise<void> {
     this.calls.push({ method: 'reportUsage', input });
+  }
+  async previewSubscriptionChange(input: { subscriptionId: string; subscriptionItemId: string; priceId: string; prorationDate: number }) {
+    this.calls.push({ method: 'previewSubscriptionChange', input });
+    return { amountDue: 0, currency: 'usd', prorationAmount: 0 };
+  }
+  async updateSubscription(input: { subscriptionId: string; subscriptionItemId: string; priceId: string; prorationDate: number; idempotencyKey: string }) {
+    this.calls.push({ method: 'updateSubscription', input });
+    this.subscriptions.set(input.subscriptionId, { id: input.subscriptionId, status: 'active', items: [{ id: input.subscriptionItemId, priceId: input.priceId }] });
+    return { id: input.subscriptionId, status: 'active' };
+  }
+  async getSubscription(subscriptionId: string) {
+    this.calls.push({ method: 'getSubscription', input: { subscriptionId } });
+    return this.subscriptions.get(subscriptionId) ?? { id: subscriptionId, status: 'active', items: [] };
   }
 }
 
@@ -97,6 +114,13 @@ export class StripeBillingProvider implements BillingProvider {
     if (!res.ok) throw new BillingProviderError(res.status, parsed?.error?.message ?? `Stripe error ${res.status}`);
     return parsed as T;
   }
+  private async get<T>(path: string): Promise<T> {
+    const res = await this.fetchImpl(`${this.baseUrl}${path}`, { headers: { authorization: `Bearer ${this.secretKey}` } });
+    const text = await res.text();
+    const parsed = text ? JSON.parse(text) : {};
+    if (!res.ok) throw new BillingProviderError(res.status, parsed?.error?.message ?? `Stripe error ${res.status}`);
+    return parsed as T;
+  }
 
   async createCustomer(input: { email: string; name?: string | null; metadata?: Record<string, string> }): Promise<{ id: string }> {
     const body: Record<string, string> = { email: input.email };
@@ -125,6 +149,31 @@ export class StripeBillingProvider implements BillingProvider {
       this.form({ quantity: input.quantity, timestamp: input.timestamp, action: 'set' }),
       input.idempotencyKey,
     );
+  }
+  async previewSubscriptionChange(input: { subscriptionId: string; subscriptionItemId: string; priceId: string; prorationDate: number }) {
+    const preview = await this.post<any>('/v1/invoices/create_preview', this.form({
+      subscription: input.subscriptionId,
+      'subscription_details[items][0][id]': input.subscriptionItemId,
+      'subscription_details[items][0][price]': input.priceId,
+      'subscription_details[proration_behavior]': 'create_prorations',
+      'subscription_details[proration_date]': input.prorationDate,
+    }));
+    const lines: any[] = preview.lines?.data ?? [];
+    const prorationAmount = lines.filter((line) => line.proration === true || line.parent?.subscription_item_details?.proration === true)
+      .reduce((sum, line) => sum + Number(line.amount ?? 0), 0);
+    return { amountDue: Number(preview.amount_due ?? 0), currency: preview.currency ?? 'usd', prorationAmount };
+  }
+  async updateSubscription(input: { subscriptionId: string; subscriptionItemId: string; priceId: string; prorationDate: number; idempotencyKey: string }) {
+    return this.post<{ id: string; status: string }>(`/v1/subscriptions/${encodeURIComponent(input.subscriptionId)}`, this.form({
+      'items[0][id]': input.subscriptionItemId, 'items[0][price]': input.priceId,
+      proration_behavior: 'create_prorations', payment_behavior: 'pending_if_incomplete',
+      proration_date: input.prorationDate,
+    }), input.idempotencyKey);
+  }
+  async getSubscription(subscriptionId: string) {
+    const subscription = await this.get<any>(`/v1/subscriptions/${encodeURIComponent(subscriptionId)}`);
+    return { id: subscription.id, status: subscription.status,
+      items: (subscription.items?.data ?? []).map((item: any) => ({ id: item.id, priceId: item.price?.id })) };
   }
 }
 

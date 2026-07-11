@@ -204,6 +204,7 @@ export interface Database {
   usage_daily: UsageDailyTable;
   audit_log: AuditLogTable;
   audit_log_hashes: AuditLogHashesTable;
+  audit_log_archive: AuditLogArchiveTable;
   legal_holds: LegalHoldsTable;
   clickhouse_sync_state: ClickhouseSyncStateTable;
   review_queue: ReviewQueueTable;
@@ -216,8 +217,16 @@ export interface Database {
   recipient_domain_intel: RecipientDomainIntelTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
+  deletion_object_items: DeletionObjectItemsTable;
+  privacy_message_tombstones: PrivacyMessageTombstonesTable;
   subscriptions: SubscriptionsTable;
+  billing_plans: BillingPlansTable;
+  billing_plan_prices: BillingPlanPricesTable;
+  billing_dunning_state: BillingDunningStateTable;
+  billing_dunning_notifications: BillingDunningNotificationsTable;
+  billing_plan_change_requests: BillingPlanChangeRequestsTable;
   invoices: InvoicesTable;
+  invoice_line_items: InvoiceLineItemsTable;
   billing_events: BillingEventsTable;
   quota_notifications: QuotaNotificationsTable;
   admin_users: AdminUsersTable;
@@ -281,6 +290,11 @@ export interface MembershipsTable {
   user_id: string;
   customer_id: string;
   role: Generated<MembershipRole>;
+  scim_managed: Generated<boolean>;
+  scim_external_id: string | null;
+  scim_display_name: string | null;
+  scim_active: Generated<boolean>;
+  scim_updated_at: Timestamp | null;
   created_at: Generated<Timestamp>;
 }
 
@@ -475,6 +489,25 @@ export interface AuditLogHashesTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface AuditLogArchiveTable {
+  audit_id: number;
+  customer_id: string | null;
+  api_key_id: string | null;
+  action: string;
+  resource: string | null;
+  ip: string | null;
+  metadata: Record<string, unknown>;
+  actor_type: 'user' | 'api_key' | 'admin' | 'system' | null;
+  actor_id: string | null;
+  actor_label: string | null;
+  occurred_at: Timestamp;
+  chain_key: string | null;
+  seq: number | null;
+  previous_hash: string | null;
+  row_hash: string | null;
+  archived_at: Generated<Timestamp>;
+}
+
 export interface LegalHoldsTable {
   id: Generated<string>;
   customer_id: string;
@@ -513,7 +546,7 @@ export interface IdempotencyKeysTable {
   status_code: number | null;
   response_body: Record<string, unknown> | null;
   created_at: Generated<Timestamp>;
-  completed_at: Timestamp | null;
+  completed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
 }
 
 // =====================================================
@@ -600,11 +633,32 @@ export interface DeletionRequestsTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface DeletionObjectItemsTable {
+  id: Generated<string>;
+  deletion_request_id: string;
+  object_key: string;
+  storage_kind: string;
+  status: Generated<'pending' | 'completed' | 'failed'>;
+  attempts: Generated<number>;
+  last_error: string | null;
+  completed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  created_at: Generated<Timestamp>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+export interface PrivacyMessageTombstonesTable {
+  customer_id: string;
+  message_id: string;
+  deletion_request_id: string;
+  created_at: Generated<Timestamp>;
+}
+
 export interface SubscriptionsTable {
   id: Generated<string>;
   customer_id: string;
   provider: Generated<string>;
   provider_subscription_id: string | null;
+  provider_plan_item_id: string | null;
   price_id: string | null;
   plan: Generated<string>;
   status: Generated<'active' | 'past_due' | 'canceled' | 'trialing' | 'incomplete' | 'unpaid'>;
@@ -613,6 +667,75 @@ export interface SubscriptionsTable {
   cancel_at_period_end: Generated<boolean>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+}
+
+export interface BillingPlansTable {
+  plan_key: string;
+  display_name: string;
+  tier: 'free' | 'paid' | 'enterprise';
+  daily_quota: number;
+  monthly_quota: number;
+  features: Generated<Record<string, unknown>>;
+  active: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface BillingPlanPricesTable {
+  id: Generated<string>;
+  plan_key: string;
+  provider: 'stripe' | 'paypal' | 'cashfree' | 'mock';
+  environment: Generated<'test' | 'live'>;
+  provider_price_id: string;
+  currency: string | null;
+  active: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+}
+
+export interface BillingDunningStateTable {
+  customer_id: string;
+  state: Generated<'healthy' | 'grace' | 'restricted' | 'recovered' | 'canceled'>;
+  failure_count: Generated<number>;
+  grace_ends_at: Timestamp | null;
+  last_failure_at: Timestamp | null;
+  recovered_at: Timestamp | null;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+export interface BillingDunningNotificationsTable {
+  id: Generated<string>;
+  customer_id: string;
+  stage: 'payment_failed' | 'grace_ending' | 'restricted' | 'recovered';
+  cycle_key: string;
+  status: Generated<'pending' | 'sent' | 'failed'>;
+  attempts: Generated<number>;
+  last_error: string | null;
+  sent_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+export interface BillingPlanChangeRequestsTable {
+  id: Generated<string>;
+  customer_id: string;
+  current_plan: string;
+  target_plan: string;
+  provider: string;
+  provider_price_id: string;
+  direction: 'upgrade' | 'downgrade' | 'lateral';
+  status: Generated<'previewed' | 'checkout_started' | 'applied' | 'canceled' | 'expired'>;
+  quota_delta: Generated<Record<string, unknown>>;
+  feature_delta: Generated<Record<string, unknown>>;
+  warnings: Generated<unknown[]>;
+  proration_date: number | null;
+  proration_amount_cents: number | null;
+  preview_amount_due_cents: number | null;
+  preview_currency: string | null;
+  applied_at: Timestamp | null;
+  canceled_at: Timestamp | null;
+  expires_at: Generated<Timestamp>;
+  created_at: Generated<Timestamp>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 export interface InvoicesTable {
@@ -627,7 +750,25 @@ export interface InvoicesTable {
   currency: Generated<string>;
   status: Generated<'draft' | 'open' | 'paid' | 'void' | 'uncollectible'>;
   drift: Generated<number>;
+  hosted_invoice_url: string | null;
+  invoice_pdf_url: string | null;
+  due_at: Timestamp | null;
+  paid_at: Timestamp | null;
   created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface InvoiceLineItemsTable {
+  id: Generated<string>;
+  invoice_id: string;
+  provider_line_item_id: string;
+  description: string | null;
+  quantity: Generated<number>;
+  amount_cents: Generated<number>;
+  currency: Generated<string>;
+  period_start: Timestamp | null;
+  period_end: Timestamp | null;
+  metadata: Generated<Record<string, unknown>>;
 }
 
 export interface BillingEventsTable {

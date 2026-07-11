@@ -1,5 +1,5 @@
 import { sql } from 'kysely';
-import { withTenant } from './tenant-context.js';
+import { withTenant, type TenantExecutor } from './tenant-context.js';
 
 export const MESSAGE_EVENT_TYPES = [
   'queued',
@@ -93,9 +93,10 @@ export function normalizeMessageActivityQuery(raw: MessageActivityQueryRaw): Mes
 
 export async function listMessageActivity(
   customerId: string,
-  q: MessageActivityQuery
+  q: MessageActivityQuery,
+  executor?: TenantExecutor
 ): Promise<{ events: MessageActivityEntry[]; next_cursor: number | null }> {
-  const rows = await withTenant(customerId, async (trx) => {
+  const queryActivity = async (trx: TenantExecutor) => {
     let query = trx
       .selectFrom('events')
       .innerJoin('messages', 'messages.message_id', 'events.message_id')
@@ -134,7 +135,8 @@ export async function listMessageActivity(
       .orderBy('events.id', 'desc')
       .limit(q.limit + 1)
       .execute()) as unknown as MessageActivityEntry[];
-  });
+  };
+  const rows = await (executor ? queryActivity(executor) : withTenant(customerId, queryActivity));
 
   const normalized = rows.map((row) => ({
     ...row,

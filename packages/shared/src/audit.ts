@@ -108,13 +108,14 @@ export async function recordAudit(input: RecordAuditInput): Promise<void> {
     // xact-scoped advisory lock is released at commit.
     await sql`SELECT pg_advisory_xact_lock(${chainLockKey(chainKey).toString()}::bigint)`.execute(trx);
 
-    const prev = await trx
-      .selectFrom('audit_log_hashes')
-      .select(['seq', 'row_hash'])
-      .where('chain_key', '=', chainKey)
-      .orderBy('seq', 'desc')
-      .limit(1)
-      .executeTakeFirst();
+    const prevResult = await sql<{ seq: string | number; row_hash: string }>`
+      SELECT seq, row_hash FROM (
+        SELECT seq, row_hash FROM audit_log_hashes WHERE chain_key = ${chainKey}
+        UNION ALL
+        SELECT seq, row_hash FROM audit_log_archive WHERE chain_key = ${chainKey}
+      ) links ORDER BY seq DESC LIMIT 1
+    `.execute(trx);
+    const prev = prevResult.rows[0];
 
     const previousHash = prev?.row_hash ?? AUDIT_GENESIS_HASH;
     const seq = (prev ? Number(prev.seq) : 0) + 1;
@@ -226,12 +227,21 @@ export interface AuditChainVerifyResult {
  * `chainKey` is the customer id, or 'system' for the null-customer chain.
  */
 export async function verifyAuditChain(chainKey: string): Promise<AuditChainVerifyResult> {
-  const links = await db
+  const hotLinks = await db
     .selectFrom('audit_log_hashes')
     .select(['audit_id', 'seq', 'previous_hash', 'row_hash'])
     .where('chain_key', '=', chainKey)
     .orderBy('seq', 'asc')
     .execute();
+  const archived = await db.selectFrom('audit_log_archive')
+    .selectAll().where('chain_key', '=', chainKey).where('seq', 'is not', null).orderBy('seq', 'asc').execute();
+  const links = [
+    ...archived.map((row) => ({
+      audit_id: row.audit_id, seq: row.seq!, previous_hash: row.previous_hash!, row_hash: row.row_hash!,
+      archivedRow: { ...row, id: row.audit_id },
+    })),
+    ...hotLinks.map((row) => ({ ...row, archivedRow: null })),
+  ].sort((a, b) => Number(a.seq) - Number(b.seq));
 
   let expectedPrev = AUDIT_GENESIS_HASH;
   let expectedSeq = 1;
@@ -245,7 +255,7 @@ export async function verifyAuditChain(chainKey: string): Promise<AuditChainVeri
       return { chain_key: chainKey, ok: false, links_checked: expectedSeq - 1, broken_at: { audit_id: link.audit_id, seq, reason: 'previous_hash_mismatch' } };
     }
 
-    const row = await db
+    const row = link.archivedRow ?? await db
       .selectFrom('audit_log')
       .select(['id', 'customer_id', 'api_key_id', 'actor_type', 'actor_id', 'actor_label', 'action', 'resource', 'ip', 'metadata', 'occurred_at'])
       .where('id', '=', link.audit_id)

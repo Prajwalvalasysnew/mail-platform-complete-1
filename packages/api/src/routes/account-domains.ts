@@ -10,6 +10,7 @@ import {
   DomainError,
 } from '@platform/shared';
 import { requireCapability } from '../plugins/session-auth.js';
+import { tenantScoped } from '../lib/tenant.js';
 
 // Dashboard (human-session) sending-domain management for the active org, gated
 // by the domains:manage capability (owner / admin / developer). Shares the
@@ -19,12 +20,12 @@ export const accountDomainRoutes: FastifyPluginAsync = async (app) => {
   const manage = requireCapability('domains:manage');
 
   app.get('/account/domains', { preHandler: manage }, async (req) => {
-    return { domains: await listDomains(req.user!.current_customer_id!) };
+    return { domains: await tenantScoped(req, (trx) => listDomains(req.user!.current_customer_id!, trx)) };
   });
 
   app.get('/account/domains/:id', { preHandler: manage }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const domain = await getDomainWithDnsRecords(req.user!.current_customer_id!, id);
+    const domain = await tenantScoped(req, (trx) => getDomainWithDnsRecords(req.user!.current_customer_id!, id, trx));
     if (!domain) return reply.code(404).send({ error: 'not_found' });
     return domain;
   });
@@ -61,7 +62,7 @@ export const accountDomainRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/account/domains/:id', { preHandler: manage }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const orgId = req.user!.current_customer_id!;
-    const ok = await deleteDomain(orgId, id);
+    const ok = await tenantScoped(req, (trx) => deleteDomain(orgId, id, trx));
     if (!ok) return reply.code(404).send({ error: 'not_found' });
     recordAuditSafe({ customerId: orgId, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email, action: 'domain.deleted', resource: id, ip: req.ip });
     return { ok: true };

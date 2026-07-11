@@ -12,7 +12,10 @@ COPY packages/haraka-inbound/config ./config
 COPY packages/haraka-inbound/plugins ./plugins
 
 RUN mkdir -p queue
+RUN chown -R node:node /app
 
-EXPOSE 25
+USER node
+
+EXPOSE 2526
 
 CMD ["./node_modules/.bin/haraka", "-c", "."]

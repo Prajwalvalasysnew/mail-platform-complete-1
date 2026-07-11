@@ -10,7 +10,9 @@ const useTemplate = envPath.endsWith('.example');
 
 const required = [
   'NODE_ENV',
-  'DATABASE_URL',
+  'API_DATABASE_URL',
+  'SERVICE_DATABASE_URL',
+  'MIGRATION_DATABASE_URL',
   'POSTGRES_PASSWORD',
   'REDIS_PASSWORD',
   'HARAKA_OUTBOUND_PASS',
@@ -35,6 +37,9 @@ const required = [
 ];
 
 const secretNames = new Set([
+  'API_DATABASE_URL',
+  'SERVICE_DATABASE_URL',
+  'MIGRATION_DATABASE_URL',
   'POSTGRES_PASSWORD',
   'REDIS_PASSWORD',
   'HARAKA_OUTBOUND_PASS',

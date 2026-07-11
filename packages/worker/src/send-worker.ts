@@ -20,6 +20,7 @@ import {
   addSuppression,
   type SendJobData,
   loadMessageBody,
+  isMessagePrivacyErased,
 } from '@platform/shared';
 
 const TRACKING_DOMAIN = process.env.TRACKING_DOMAIN ?? 'http://localhost:4000';
@@ -116,6 +117,13 @@ export function startSendWorker(logger: Logger) {
       return withRemoteContext((job.data as any)._trace, async () => {
       const timer = sendDuration.startTimer();
       const log = logger.child({ message_id: job.data.message_id });
+
+      if (await isMessagePrivacyErased(job.data.message_id, job.data.customer_id)) {
+        log.info('privacy tombstone present - dropping stale send job');
+        decrementQueueDepth(job.data.customer_id).catch(() => {});
+        timer();
+        return { skipped: true, erased: true };
+      }
 
       // ATOMIC CLAIM: flip queued -> sending in a single UPDATE ... RETURNING.
       // With the old select/check/update pattern, two workers processing a

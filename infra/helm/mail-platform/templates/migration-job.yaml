@@ -42,6 +42,12 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ .Values.secrets.existingSecret }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.databaseKeys.migration }}
           resources:
             {{- toYaml .Values.migration.resources | nindent 12 }}
 {{- end }}

@@ -58,3 +58,5 @@ export * from './failure-taxonomy.js';
 export * from './error-codes.js';
 export * from './legal-hold.js';
 export * from './clickhouse-reconcile.js';
+export * from './privacy-erasure.js';
+export * from './logging.js';

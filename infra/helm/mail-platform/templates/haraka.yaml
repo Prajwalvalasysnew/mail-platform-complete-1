@@ -1,0 +1,171 @@
+{{- if .Values.haraka.outbound.enabled }}
+{{- $outTag := include "mail-platform.imageTag" (dict "componentTag" .Values.haraka.outbound.image.tag "globalTag" .Values.global.image.tag "Chart" .Chart) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-haraka-outbound-tls
+  namespace: {{ .Values.namespace }}
+data:
+  tls.ini: |
+    [main]
+    key=/etc/haraka/tls/tls.key
+    cert=/etc/haraka/tls/tls.crt
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-haraka-outbound
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "haraka-outbound") | nindent 4 }}
+  ports:
+    - name: smtp
+      port: {{ .Values.haraka.outbound.servicePort }}
+      targetPort: smtp
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-haraka-outbound
+  namespace: {{ .Values.namespace }}
+spec:
+  serviceName: {{ include "mail-platform.fullname" . }}-haraka-outbound
+  replicas: {{ .Values.haraka.outbound.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "haraka-outbound") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "haraka-outbound") | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: haraka-outbound
+          image: "{{ .Values.global.image.registry }}/{{ .Values.global.image.repository }}-haraka-outbound:{{ $outTag }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          ports:
+            - { name: smtp, containerPort: 2525 }
+          envFrom:
+            - secretRef: { name: {{ .Values.secrets.existingSecret }} }
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.secrets.existingSecret }}, key: {{ .Values.secrets.databaseKeys.service }} }
+          readinessProbe: { tcpSocket: { port: smtp }, periodSeconds: 5 }
+          livenessProbe: { tcpSocket: { port: smtp }, periodSeconds: 10 }
+          startupProbe: { tcpSocket: { port: smtp }, periodSeconds: 5, failureThreshold: 24 }
+          resources:
+            {{- toYaml .Values.haraka.outbound.resources | nindent 12 }}
+          volumeMounts:
+            - { name: queue, mountPath: /app/queue }
+            - { name: tmp, mountPath: /tmp }
+            - { name: tls, mountPath: /etc/haraka/tls, readOnly: true }
+            - { name: tls-config, mountPath: /app/config/tls.ini, subPath: tls.ini, readOnly: true }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - name: tls
+          secret: { secretName: {{ .Values.haraka.outbound.tlsSecretName }} }
+        - name: tls-config
+          configMap: { name: {{ include "mail-platform.fullname" . }}-haraka-outbound-tls }
+  volumeClaimTemplates:
+    - metadata: { name: queue }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.haraka.outbound.queueStorage.storageClassName }}
+        storageClassName: {{ .Values.haraka.outbound.queueStorage.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests: { storage: {{ .Values.haraka.outbound.queueStorage.size }} }
+{{- end }}
+{{- if .Values.haraka.inbound.enabled }}
+---
+{{- $inTag := include "mail-platform.imageTag" (dict "componentTag" .Values.haraka.inbound.image.tag "globalTag" .Values.global.image.tag "Chart" .Chart) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-haraka-inbound-tls
+  namespace: {{ .Values.namespace }}
+data:
+  tls.ini: |
+    [main]
+    key=/etc/haraka/tls/tls.key
+    cert=/etc/haraka/tls/tls.crt
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-haraka-inbound
+  namespace: {{ .Values.namespace }}
+spec:
+  type: {{ .Values.haraka.inbound.serviceType }}
+  {{- if .Values.haraka.inbound.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.haraka.inbound.loadBalancerIP }}
+  {{- end }}
+  selector:
+    {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "haraka-inbound") | nindent 4 }}
+  ports:
+    - name: smtp
+      port: {{ .Values.haraka.inbound.servicePort }}
+      targetPort: smtp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-haraka-inbound
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.haraka.inbound.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "haraka-inbound") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "haraka-inbound") | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: haraka-inbound
+          image: "{{ .Values.global.image.registry }}/{{ .Values.global.image.repository }}-haraka-inbound:{{ $inTag }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          ports:
+            - { name: smtp, containerPort: {{ .Values.haraka.inbound.containerPort }} }
+          envFrom:
+            - secretRef: { name: {{ .Values.secrets.existingSecret }} }
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.secrets.existingSecret }}, key: {{ .Values.secrets.databaseKeys.service }} }
+          readinessProbe: { tcpSocket: { port: smtp }, periodSeconds: 5 }
+          livenessProbe: { tcpSocket: { port: smtp }, periodSeconds: 10 }
+          startupProbe: { tcpSocket: { port: smtp }, periodSeconds: 5, failureThreshold: 24 }
+          resources:
+            {{- toYaml .Values.haraka.inbound.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: tls, mountPath: /etc/haraka/tls, readOnly: true }
+            - { name: tls-config, mountPath: /app/config/tls.ini, subPath: tls.ini, readOnly: true }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - name: tls
+          secret: { secretName: {{ .Values.haraka.inbound.tlsSecretName }} }
+        - name: tls-config
+          configMap: { name: {{ include "mail-platform.fullname" . }}-haraka-inbound-tls }
+{{- end }}
