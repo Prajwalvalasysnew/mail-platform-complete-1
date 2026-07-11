@@ -116,6 +116,17 @@ describe('clickhouse reconciliation', () => {
     expect(again.shipped).toBe(0);
   });
 
+  it('ships a stable event_id (the ClickHouse dedup key) equal to the Postgres id', async () => {
+    const c = await seedCustomer();
+    const ids = await insertEvents(c.customerId, 3);
+    await reconcileClickhouse({ batchSize: 100 });
+    const shippedIds = received.map((line) => JSON.parse(line).event_id);
+    // Every shipped row carries an event_id, and our inserted ids are covered —
+    // so a hot-path write of the same event (same id) collapses in ClickHouse.
+    expect(shippedIds.every((id) => typeof id === 'number')).toBe(true);
+    for (const id of ids) expect(shippedIds).toContain(id);
+  });
+
   it('does NOT advance the watermark when the insert fails (events retried, not lost)', async () => {
     const c = await seedCustomer();
     const ids = await insertEvents(c.customerId, 4);

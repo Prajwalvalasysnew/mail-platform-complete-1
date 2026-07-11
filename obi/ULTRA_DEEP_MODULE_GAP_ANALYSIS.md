@@ -9135,3 +9135,54 @@ Phase 2 (billing completeness) is now done at code level: operator SLA alerts,
 period-end downgrades, invoice tax, and refunds/credit notes. Remaining billing
 items are provider-lifecycle parity (PayPal/Cashfree plan changes) and Stripe
 Test Clock/SCA certification, both of which need live provider sandboxes.
+
+# 66. Remediation Execution Log — ClickHouse Analytics Deduplication
+
+Date: 2026-07-11
+
+Closed the analytics-durability gaps "durable analytics outbox" and "strong
+ClickHouse deduplication engine/key proof" at code/schema level. The durable
+outbox already existed (Postgres `events` + watermark reconciler), but every
+event was written to ClickHouse twice — once by the best-effort hot path and
+once by the reconciler — into a plain `MergeTree` whose sorting key did not
+identify an event, and a `SummingMergeTree count()` rollup. Result: duplicate
+analytics rows and double-counted daily totals.
+
+## The fix — dedup on a shared idempotency key
+
+- Both writers now emit `event_id` = the Postgres `events.id` (globally unique,
+  monotonic). The hot path reads it from the freshly-inserted event row; the
+  reconciler reads it from the `events` scan — so a given event carries the same
+  key on both inserts.
+- `mail.events` is now a **ReplacingMergeTree** with `ORDER BY (customer_id,
+  occurred_at, message_id, event_type, event_id)` — the two inserts of one event
+  collapse to a single row on merge.
+- `mail.events_daily` is now an **AggregatingMergeTree** over
+  `uniqExact(event_id)`, counting DISTINCT events so a duplicate insert never
+  inflates the count (the old `count()` rollup double-counted). Query with
+  `uniqExactMerge(event_uniq)`.
+
+## Changes made
+
+- `infra/clickhouse/init.sql`: `event_id` column, ReplacingMergeTree base keyed
+  on event_id, uniqExact daily rollup + MV.
+- `packages/shared/src/clickhouse.ts`: `event_id` on `ClickhouseEvent`/`Row`,
+  emitted by the hot-path buffer.
+- `packages/shared/src/clickhouse-reconcile.ts`: ships `event_id = events.id`.
+- `packages/worker/src/event-worker.ts`: hot-path dual-write passes
+  `event_id: inserted.id`.
+- `docs/CLICKHOUSE_DURABILITY.md`: documented the dedup design and the pending
+  live-infra drill.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| `clickhouse-reconcile` (incl. stable event_id shipped) | 7/7 passed |
+| `clickhouse-schema` guard (engine / dedup key / uniqExact) | 3/3 passed |
+| Full test suite | 108 files / 700 tests passed, exit 0 |
+
+Pending (live-infra evidence): insert the same event via both paths against a
+real ClickHouse, force a merge, and assert one stored row and one counted event
+— tracked with the Phase 4 operational drills (backup/restore, failover).
