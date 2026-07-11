@@ -517,6 +517,18 @@ export const openapiSpec = {
         responses: { '200': { description: 'Invoice summaries and next cursor' } },
       },
     },
+    '/account/billing/credit-notes': {
+      get: {
+        summary: 'List provider-issued credit notes / refunds for the active organization',
+        operationId: 'listAccountCreditNotes',
+        security: [{ userSessionAuth: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 100 } },
+          { name: 'before', in: 'query', required: false, schema: { type: 'string', format: 'date-time' } },
+        ],
+        responses: { '200': { description: 'Credit note summaries and next cursor' } },
+      },
+    },
     '/account/billing/invoices/{id}': {
       get: {
         summary: 'Get an invoice and normalized line items',

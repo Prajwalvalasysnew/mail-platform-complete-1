@@ -127,6 +127,21 @@ describe('outbound billing', () => {
     expect((await req(other.token, 'GET', `/v1/account/billing/invoices/${invoice.id}`)).statusCode).toBe(404);
   });
 
+  it('lists provider-issued credit notes scoped to the tenant', async () => {
+    const owner = await register(`bill-cn-${Date.now()}@example.com`);
+    const other = await register(`bill-cn-other-${Date.now()}@example.com`);
+    await db.insertInto('credit_notes').values({
+      customer_id: owner.customerId, provider: 'stripe', provider_credit_note_id: `cn_api_${Date.now()}`,
+      amount_cents: 900, currency: 'usd', reason: 'duplicate', status: 'issued',
+    }).execute();
+    const list = await req(owner.token, 'GET', '/v1/account/billing/credit-notes');
+    expect(list.statusCode).toBe(200);
+    expect(list.json().credit_notes).toHaveLength(1);
+    expect(list.json().credit_notes[0]).toMatchObject({ amount_cents: 900, reason: 'duplicate', status: 'issued' });
+    // Another tenant sees none of it.
+    expect((await req(other.token, 'GET', '/v1/account/billing/credit-notes')).json().credit_notes).toHaveLength(0);
+  });
+
   it('creates a governed plan-change preview without mutating the subscription', async () => {
     const c = await register(`bill-plan-preview-${Date.now()}@example.com`);
     const preview = await req(c.token, 'POST', '/v1/account/billing/plan-change/preview', { price_id: 'price_pro' });

@@ -9070,3 +9070,68 @@ period boundary and stay reversible until then.
 
 Remaining billing work: refunds/credit notes, invoice tax fields, PayPal/
 Cashfree plan-change lifecycle parity, and Stripe Test Clock/SCA certification.
+
+# 64. Remediation Execution Log — Invoice Tax Fields
+
+Date: 2026-07-11
+
+Invoices previously stored only a single `amount_cents` with no record of the
+tax the provider assessed, so customer-facing invoices and finance exports could
+not show VAT/GST/sales tax separately. We now persist the provider-calculated
+tax (Stripe Tax or externally computed) rather than computing it ourselves.
+
+## Changes made
+
+- `infra/migrations/056_invoice_tax.sql`: `invoices.tax_cents` (default 0).
+- `packages/shared/src/schema.ts`: `tax_cents` on `InvoicesTable`.
+- `packages/shared/src/billing.ts`: `InvoiceEvent.tax_cents`; `applyInvoiceEvent`
+  persists it on insert and update; `listCustomerInvoices` selects it (detail
+  uses `selectAll`, so it is already returned).
+- `packages/api/src/routes/billing.ts`: `stripeInvoiceEvent` reads Stripe's
+  aggregate `tax`, falling back to summing `total_tax_amounts[].amount`.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (shared, api) | passed |
+| Invoice lifecycle tests (incl. tax parse/sum/persist) | 4/4 passed |
+
+# 65. Remediation Execution Log — Refunds And Credit Notes
+
+Date: 2026-07-11
+
+Closed the billing gap "refunds and credit notes." Providers issue a credit note
+when money is refunded or written off against an invoice (Stripe `credit_note`).
+We now record provider-issued credit notes idempotently and expose them to the
+customer, rather than initiating refunds ourselves — so billing history and
+finance exports reflect exactly what the provider issued.
+
+## Changes made
+
+- `infra/migrations/057_credit_notes.sql`: `credit_notes` table (customer- and
+  invoice-linked, unique on `provider_credit_note_id`, `issued`/`void` status).
+- `packages/shared/src/schema.ts`: `CreditNotesTable` + registration.
+- `packages/shared/src/billing.ts`: `CreditNoteEvent`, idempotent
+  `applyCreditNoteEvent` (links to the local invoice, upserts on replay, voids on
+  `credit_note.voided`), and `listCustomerCreditNotes`.
+- `packages/api/src/routes/billing.ts`: `stripeCreditNoteEvent` parser wired into
+  the Stripe webhook after the invoice-event branch.
+- `packages/api/src/routes/account-billing.ts`: `GET /account/billing/credit-notes`
+  (billing:manage, tenant-scoped).
+- `packages/shared/src/openapi.ts`: documented the new route (`listAccountCreditNotes`).
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| Credit-note unit tests (parse / apply+link / idempotent / void) | passed |
+| Credit-note tenant-scoped list e2e | passed |
+| OpenAPI parity + breaking-change guards | 22/22 passed |
+| Full test suite | 107 files / 696 tests passed, exit 0 |
+
+Phase 2 (billing completeness) is now done at code level: operator SLA alerts,
+period-end downgrades, invoice tax, and refunds/credit notes. Remaining billing
+items are provider-lifecycle parity (PayPal/Cashfree plan changes) and Stripe
+Test Clock/SCA certification, both of which need live provider sandboxes.

@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { startCheckout, startBillingPortal, getBillingOverview, getCustomerInvoice, listCustomerInvoices, previewPlanChange, confirmPlanChange, cancelPlanChange, recordAuditSafe, isCheckoutPriceAvailable } from '@platform/shared';
+import { startCheckout, startBillingPortal, getBillingOverview, getCustomerInvoice, listCustomerInvoices, listCustomerCreditNotes, previewPlanChange, confirmPlanChange, cancelPlanChange, recordAuditSafe, isCheckoutPriceAvailable } from '@platform/shared';
 import { requireCapability } from '../plugins/session-auth.js';
 
 // Customer-facing billing under /v1/account/billing. All routes require the
@@ -59,6 +59,12 @@ export const accountBillingRoutes: FastifyPluginAsync = async (app) => {
     const parsed = InvoiceListQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
     return listCustomerInvoices(req.user!.current_customer_id!, parsed.data);
+  });
+
+  app.get('/account/billing/credit-notes', { preHandler: requireCapability('billing:manage') }, async (req, reply) => {
+    const parsed = InvoiceListQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    return listCustomerCreditNotes(req.user!.current_customer_id!, parsed.data);
   });
 
   app.get<{ Params: { id: string } }>('/account/billing/invoices/:id', { preHandler: requireCapability('billing:manage') }, async (req, reply) => {

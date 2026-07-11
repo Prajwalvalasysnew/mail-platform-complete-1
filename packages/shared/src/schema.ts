@@ -226,6 +226,7 @@ export interface Database {
   billing_dunning_notifications: BillingDunningNotificationsTable;
   billing_plan_change_requests: BillingPlanChangeRequestsTable;
   invoices: InvoicesTable;
+  credit_notes: CreditNotesTable;
   invoice_line_items: InvoiceLineItemsTable;
   billing_events: BillingEventsTable;
   quota_notifications: QuotaNotificationsTable;
@@ -748,6 +749,7 @@ export interface InvoicesTable {
   billed_quantity: Generated<number>;
   metered_quantity: Generated<number>;
   amount_cents: Generated<number>;
+  tax_cents: Generated<number>;
   currency: Generated<string>;
   status: Generated<'draft' | 'open' | 'paid' | 'void' | 'uncollectible'>;
   drift: Generated<number>;
@@ -770,6 +772,23 @@ export interface InvoiceLineItemsTable {
   period_start: Timestamp | null;
   period_end: Timestamp | null;
   metadata: Generated<Record<string, unknown>>;
+}
+
+export interface CreditNotesTable {
+  id: Generated<string>;
+  customer_id: string;
+  invoice_id: string | null;
+  provider: string;
+  provider_credit_note_id: string;
+  provider_invoice_id: string | null;
+  number: string | null;
+  amount_cents: Generated<number>;
+  currency: Generated<string>;
+  reason: string | null;
+  memo: string | null;
+  status: Generated<'issued' | 'void'>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface BillingEventsTable {
