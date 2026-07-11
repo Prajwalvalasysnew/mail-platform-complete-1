@@ -12,10 +12,8 @@
 //   1. .env.test        — shared test defaults, safe to commit.
 //   2. .env.test.local   — developer/CI-specific overrides (e.g. non-default
 //                         ports), takes priority over .env.test.
-// Real environment variables already exported by the shell/CI are set before
-// this file runs and are untouched by step 1 (dotenv never overrides existing
-// process.env keys by default); step 2 uses override:true so .env.test.local
-// can still win over .env.test's defaults for the same key.
+// Real environment variables exported by the shell/CI always take priority.
+// .env.test.local overrides only the shared defaults from .env.test.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
@@ -25,8 +23,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..', '..');
 
 export async function setup() {
+  const externalEnvironment = { ...process.env };
   dotenv.config({ path: path.join(repoRoot, '.env.test') });
   dotenv.config({ path: path.join(repoRoot, '.env.test.local'), override: true });
+
+  // dotenv's override option cannot distinguish values loaded from
+  // .env.test from values explicitly supplied by CI. Restore the latter so a
+  // developer-local file can never redirect CI to local-only ports/services.
+  for (const [key, value] of Object.entries(externalEnvironment)) {
+    if (value !== undefined) process.env[key] = value;
+  }
 
   if (!process.env.DATABASE_URL) {
     // Fail loudly and immediately rather than letting the first test's DB
