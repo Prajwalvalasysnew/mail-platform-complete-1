@@ -9,6 +9,12 @@ permissions:
   contents: read
   actions: read
 
+# A new push to the same PR supersedes the previous result. Cancel the old run
+# immediately so broken integration tests cannot consume runner time forever.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
