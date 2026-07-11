@@ -8,7 +8,6 @@ on:
 permissions:
   contents: read
   actions: read
-  security-events: write
 
 jobs:
   build-and-test:
@@ -131,9 +130,10 @@ jobs:
           vuln-type: os,library
 
       # Upload SARIF so findings appear in GitHub Security → Code scanning.
-      - name: Upload Trivy SARIF to GitHub Security
-        if: always()   # upload even if the scan step failed
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Upload Trivy SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          sarif_file: trivy-${{ matrix.service.name }}.sarif
-          category: trivy-${{ matrix.service.name }}
+          name: trivy-${{ matrix.service.name }}
+          path: trivy-${{ matrix.service.name }}.sarif
+          if-no-files-found: error
