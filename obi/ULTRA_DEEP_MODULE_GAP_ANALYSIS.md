@@ -9379,3 +9379,60 @@ time-boxed, reason-bound, and audited, with a flagged emergency path.
 Remaining enterprise items need real external parties: SCIM interoperability
 certification with real IdPs, phishing-resistant MFA / passkeys (WebAuthn),
 external penetration test, and SOC 2 evidence.
+
+# 71. Remediation Execution Log — WebAuthn / Passkey Groundwork
+
+Date: 2026-07-11
+
+Completed the codeable part of the "phishing-resistant MFA / passkeys" item with
+a self-contained WebAuthn implementation (no new dependencies, matching how the
+platform builds its own TOTP/Ed25519 crypto).
+
+## What was built
+
+- **Minimal CBOR decoder** for the types WebAuthn uses (ints, byte/text strings,
+  arrays, maps) — enough for `attestationObject` and COSE keys.
+- **COSE → key**: EC2/ES256 (P-256) and OKP/Ed25519 public keys converted to
+  SPKI and loaded as Node key objects.
+- **authenticatorData parsing** (rpIdHash, flags, sign count, attested credential
+  data).
+- **clientDataJSON validation**: type + origin binding, with the challenge
+  returned for single-use consumption.
+- **Assertion verification**: `authenticatorData || SHA-256(clientDataJSON)`
+  checked against the stored public key (ES256/EdDSA), plus **signature-counter
+  clone detection**.
+- **Single-use challenge lifecycle** (issue/consume, TTL, replay-proof).
+- **Ceremonies**: `registerPasskey` (verifies clientData + rpIdHash, consumes the
+  challenge, stores the COSE public key) and `authenticatePasskey` (verifies the
+  assertion, advances/guards the counter). Plus `listPasskeys` / `deletePasskey`.
+- **Dashboard routes**: `POST /account/webauthn/register/options`,
+  `POST /account/webauthn/register`, `GET /account/webauthn/credentials`,
+  `DELETE /account/webauthn/credentials/:id` (session-auth gated).
+
+## Scope note
+
+We accept `none` attestation (the common passkey case) and do not validate
+attestation certificate chains (packed/tpm/android-key) — a deployment-specific
+trust decision left as follow-up, along with wiring passkeys as a login/step-up
+factor. The cryptographic core (challenge/origin binding, assertion
+verification, clone detection) is complete and tested.
+
+## Changes made
+
+- `infra/migrations/061_webauthn.sql`; `schema.ts` credential + challenge tables.
+- `packages/shared/src/webauthn.ts` (new); exported from the index.
+- `packages/api/src/routes/account.ts`: passkey routes.
+- `packages/tests/openapi-route-parity.test.ts`: allowlisted the dashboard routes.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| WebAuthn tests (CBOR, register, real assertion, clone detection, tamper/origin, single-use, owner-scoped delete) | 7/7 passed |
+| Route-parity ratchet | passed |
+| Full test suite | 112 files / 719 tests passed, exit 0 |
+
+The register + authenticate tests drive a synthetic P-256 authenticator built
+in-test (CBOR attestationObject + COSE key + real ECDSA signatures), so the full
+ceremony — not just the helpers — is exercised.

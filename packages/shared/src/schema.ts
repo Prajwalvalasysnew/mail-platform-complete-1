@@ -235,6 +235,8 @@ export interface Database {
   admin_users: AdminUsersTable;
   admin_sessions: AdminSessionsTable;
   admin_elevations: AdminElevationsTable;
+  webauthn_credentials: WebauthnCredentialsTable;
+  webauthn_challenges: WebauthnChallengesTable;
   volume_baselines: VolumeBaselinesTable;
   users: UsersTable;
   scim_tokens: ScimTokensTable;
@@ -821,6 +823,29 @@ export interface QuotaNotificationsTable {
   period: string;
   threshold: number;
   notified_at: Generated<Timestamp>;
+}
+
+export interface WebauthnCredentialsTable {
+  id: Generated<string>;
+  user_id: string;
+  credential_id: string;
+  public_key: string;
+  alg: number;
+  sign_count: Generated<number>;
+  aaguid: string | null;
+  transports: string | null;
+  name: string | null;
+  created_at: Generated<Timestamp>;
+  last_used_at: Timestamp | null;
+}
+
+export interface WebauthnChallengesTable {
+  id: Generated<string>;
+  user_id: string | null;
+  purpose: 'register' | 'authenticate';
+  challenge: string;
+  expires_at: Timestamp;
+  created_at: Generated<Timestamp>;
 }
 
 export interface AdminElevationsTable {

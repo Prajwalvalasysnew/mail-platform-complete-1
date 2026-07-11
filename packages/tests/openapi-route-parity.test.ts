@@ -193,6 +193,9 @@ describe('OpenAPI route parity', () => {
       'GET /account/billing', 'POST /account/billing/checkout', 'POST /account/billing/portal',
       // Organization SSO enforcement policy (dashboard, settings:manage gated).
       'GET /account/settings/sso', 'PATCH /account/settings/sso',
+      // WebAuthn / passkey management (dashboard, session-auth gated).
+      'POST /account/webauthn/register/options', 'POST /account/webauthn/register',
+      'GET /account/webauthn/credentials', 'DELETE /account/webauthn/credentials/{id}',
       // Audit & support (dashboard).
       'GET /audit', 'GET /account/audit', 'GET /account/audit/verify', 'GET /support/tickets', 'POST /support/tickets',
       'GET /support/tickets/{id}', 'POST /support/tickets/{id}/messages',
