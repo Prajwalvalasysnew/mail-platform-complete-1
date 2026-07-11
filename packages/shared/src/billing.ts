@@ -422,12 +422,28 @@ export async function confirmPlanChange(customerId: string, requestId: string) {
     .where('id', '=', requestId).where('customer_id', '=', customerId).executeTakeFirst();
   if (!request) return { status: 'not_found' as const };
   if (request.status !== 'previewed' || new Date(request.expires_at as any).getTime() <= Date.now()) return { status: 'expired' as const };
-  if (!request.proration_date) return { status: 'provider_preview_required' as const };
-  const subscription = await db.selectFrom('subscriptions').select(['provider_subscription_id', 'provider_plan_item_id'])
+  const subscription = await db.selectFrom('subscriptions').select(['provider_subscription_id', 'provider_plan_item_id', 'current_period_end'])
     .where('customer_id', '=', customerId).orderBy('updated_at', 'desc').executeTakeFirst();
   if (!subscription?.provider_subscription_id || !subscription.provider_plan_item_id) return { status: 'subscription_not_ready' as const };
   const provider = getBillingProviderFor(request.provider);
   if (!provider.updateSubscription) return { status: 'unsupported_provider' as const };
+
+  // Downgrades take effect at period end, not immediately: the customer already
+  // paid for the current period, so they keep their higher capacity until the
+  // boundary, and the request stays cancellable (rollback) until it applies.
+  // BILLING_DOWNGRADE_AT_PERIOD_END=0 restores legacy immediate proration.
+  if (request.direction === 'downgrade' && process.env.BILLING_DOWNGRADE_AT_PERIOD_END !== '0') {
+    const effectiveAt = subscription.current_period_end
+      ? new Date(subscription.current_period_end as any)
+      : new Date(Date.now() + Number(process.env.BILLING_DEFAULT_PERIOD_DAYS ?? 30) * 86_400_000);
+    await db.updateTable('billing_plan_change_requests').set({
+      status: 'scheduled', scheduled_effective_at: effectiveAt, updated_at: new Date().toISOString(),
+    }).where('id', '=', request.id).where('status', '=', 'previewed').execute();
+    return { status: 'scheduled' as const, effective_at: effectiveAt.toISOString() };
+  }
+
+  // Upgrades / lateral moves apply immediately with provider proration.
+  if (!request.proration_date) return { status: 'provider_preview_required' as const };
   const updated = await provider.updateSubscription({ subscriptionId: subscription.provider_subscription_id,
     subscriptionItemId: subscription.provider_plan_item_id, priceId: request.provider_price_id,
     prorationDate: Number(request.proration_date), idempotencyKey: `plan-change:${request.id}` });
@@ -437,9 +453,12 @@ export async function confirmPlanChange(customerId: string, requestId: string) {
 }
 
 export async function cancelPlanChange(customerId: string, requestId: string): Promise<'canceled' | 'not_found' | 'not_cancelable'> {
+  // Cancellable states: an unsubmitted preview, or a scheduled downgrade that
+  // has not yet reached its period-end effective date (rollback). Once a change
+  // is submitted to the provider or applied, it can no longer be cancelled here.
   const updated = await db.updateTable('billing_plan_change_requests').set({
     status: 'canceled', canceled_at: new Date(), updated_at: new Date().toISOString(),
-  }).where('id', '=', requestId).where('customer_id', '=', customerId).where('status', '=', 'previewed')
+  }).where('id', '=', requestId).where('customer_id', '=', customerId).where('status', 'in', ['previewed', 'scheduled'])
     .returning('id').executeTakeFirst();
   if (updated) return 'canceled';
   const exists = await db.selectFrom('billing_plan_change_requests').select('status')
@@ -489,6 +508,45 @@ export async function reconcileSubmittedPlanChanges(options: { staleMinutes?: nu
         provider_event_id: `plan_reconcile:${request.id}:${remote.status}:${request.provider_price_id}`,
         type: 'customer.subscription.updated', internal_customer_id: request.customer_id,
         provider_subscription_id: remote.id, plan_item_id: item.id, price_id: item.priceId, status: remote.status });
+      const state = await db.selectFrom('billing_plan_change_requests').select('status').where('id', '=', request.id).executeTakeFirstOrThrow();
+      if (state.status === 'applied') result.applied++; else result.pending++;
+    } catch {
+      result.failed++;
+    }
+  }
+  return result;
+}
+
+// Apply scheduled downgrades whose period-end effective date has arrived. Each
+// due request is submitted to the provider (no proration — the customer used
+// the full period) and then finalized through the provider-authoritative
+// applySubscriptionState path, which lowers the tier/quota and marks the
+// request 'applied'. Rollbacks (cancelPlanChange) that happened before the
+// boundary already moved the request to 'canceled', so it is never seen here.
+export async function applyScheduledDowngrades(now = new Date(), limit = 200) {
+  const due = await db.selectFrom('billing_plan_change_requests')
+    .select(['id', 'customer_id', 'provider', 'provider_price_id'])
+    .where('status', '=', 'scheduled').where('scheduled_effective_at', '<=', now as any)
+    .orderBy('scheduled_effective_at', 'asc').limit(Math.max(1, Math.min(limit, 500))).execute();
+  const result = { scanned: due.length, applied: 0, pending: 0, unsupported: 0, failed: 0 };
+  for (const request of due) {
+    try {
+      const subscription = await db.selectFrom('subscriptions').select(['provider_subscription_id', 'provider_plan_item_id'])
+        .where('customer_id', '=', request.customer_id).where('provider', '=', request.provider).orderBy('updated_at', 'desc').executeTakeFirst();
+      const provider = getBillingProviderFor(request.provider);
+      if (!subscription?.provider_subscription_id || !subscription.provider_plan_item_id || !provider.updateSubscription) { result.unsupported++; continue; }
+      // Move to submitted first so a concurrent provider webhook and this apply
+      // path converge on the same row via the checkout_started matcher.
+      await db.updateTable('billing_plan_change_requests').set({ status: 'checkout_started', updated_at: new Date().toISOString() })
+        .where('id', '=', request.id).where('status', '=', 'scheduled').execute();
+      const updated = await provider.updateSubscription({ subscriptionId: subscription.provider_subscription_id,
+        subscriptionItemId: subscription.provider_plan_item_id, priceId: request.provider_price_id,
+        prorationDate: Math.floor(now.getTime() / 1000), idempotencyKey: `scheduled-downgrade:${request.id}` });
+      await applySubscriptionState({ provider: request.provider,
+        provider_event_id: `scheduled_downgrade:${request.id}:${updated.status}:${request.provider_price_id}`,
+        type: 'customer.subscription.updated', internal_customer_id: request.customer_id,
+        provider_subscription_id: updated.id, plan_item_id: subscription.provider_plan_item_id,
+        price_id: request.provider_price_id, status: updated.status });
       const state = await db.selectFrom('billing_plan_change_requests').select('status').where('id', '=', request.id).executeTakeFirstOrThrow();
       if (state.status === 'applied') result.applied++; else result.pending++;
     } catch {

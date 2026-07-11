@@ -30,6 +30,7 @@ import {
   runDunningSweep,
   expirePlanChangeRequests,
   reconcileSubmittedPlanChanges,
+  applyScheduledDowngrades,
   countStuckPlanChanges,
   billingStuckRequests,
 } from '@platform/shared';
@@ -226,6 +227,18 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         const result = await reconcileSubmittedPlanChanges();
         if (result.applied) logger.info({ result }, 'reconciled provider-confirmed plan changes');
         if (result.failed || result.unsupported) logger.warn({ result }, 'plan-change reconciliation needs attention');
+      },
+    },
+    {
+      // Apply period-end downgrades once their scheduled effective date has
+      // arrived. Runs every 10 minutes so an at-boundary downgrade takes effect
+      // promptly after the period rolls over.
+      name: 'billing_scheduled_downgrade_apply',
+      everyMs: 10 * MIN,
+      run: async () => {
+        const result = await applyScheduledDowngrades();
+        if (result.applied) logger.info({ result }, 'applied scheduled period-end downgrades');
+        if (result.failed || result.unsupported) logger.warn({ result }, 'scheduled downgrade application needs attention');
       },
     },
     {

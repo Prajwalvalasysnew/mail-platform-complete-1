@@ -87,6 +87,13 @@ export const accountBillingRoutes: FastifyPluginAsync = async (app) => {
     if (!z.string().uuid().safeParse(req.params.id).success) return reply.code(400).send({ error: 'validation_failed' });
     const result = await confirmPlanChange(req.user!.current_customer_id!, req.params.id);
     if (result.status === 'not_found') return reply.code(404).send({ error: 'not_found' });
+    // A downgrade is scheduled at period end rather than submitted immediately;
+    // that is a successful outcome, not a conflict.
+    if (result.status === 'scheduled') {
+      recordAuditSafe({ customerId: req.user!.current_customer_id, actorType: 'user', actorId: req.user!.user_id,
+        action: 'billing.plan_change_scheduled', resource: req.params.id, metadata: { effective_at: result.effective_at }, ip: req.ip });
+      return reply.code(202).send(result);
+    }
     if (result.status !== 'pending_provider_confirmation') return reply.code(409).send({ error: result.status });
     recordAuditSafe({ customerId: req.user!.current_customer_id, actorType: 'user', actorId: req.user!.user_id,
       action: 'billing.plan_change_submitted', resource: req.params.id, metadata: { provider_status: result.provider_status }, ip: req.ip });

@@ -9012,3 +9012,61 @@ alertable.
 | New `billing-plan-change-sla` test | 2/2 passed |
 | Full billing test group | 11 files / 50 tests passed |
 | `alerts.yml` YAML parse | valid (3 groups, 16 rules) |
+
+# 63. Remediation Execution Log — Period-End Downgrade Scheduling And Rollback
+
+Date: 2026-07-11
+
+Closed the §60 remaining-work item "implement Stripe period-end downgrade
+scheduling/rollback." Previously every confirmed plan change — including
+downgrades — applied immediately with provider proration, which credited unused
+time and dropped the customer's capacity mid-period. Downgrades now defer to the
+period boundary and stay reversible until then.
+
+## Behaviour
+
+- **Upgrades / lateral moves**: unchanged — applied immediately with provider
+  proration (`pending_provider_confirmation`).
+- **Downgrades**: `confirmPlanChange` records the request as `scheduled` with
+  `scheduled_effective_at` = the subscription's `current_period_end` (falling
+  back to `now + BILLING_DEFAULT_PERIOD_DAYS`, default 30). No provider mutation
+  occurs and the customer keeps their paid capacity until the boundary. The
+  route returns `202 { status: 'scheduled', effective_at }`.
+- **Rollback**: `cancelPlanChange` (DELETE) now cancels both unsubmitted
+  previews and `scheduled` downgrades, so a customer can reverse a pending
+  downgrade any time before it applies.
+- **Apply**: a new `applyScheduledDowngrades()` job submits each due request to
+  the provider (no proration — the full period was used) and finalizes it
+  through the provider-authoritative `applySubscriptionState` path, which lowers
+  tier/quota and marks the request `applied`. Wired into the worker scheduler as
+  `billing_scheduled_downgrade_apply` (every 10 minutes).
+- `BILLING_DOWNGRADE_AT_PERIOD_END=0` restores legacy immediate proration.
+
+## Changes made
+
+- `infra/migrations/055_scheduled_downgrades.sql`: added the `scheduled` status
+  to the plan-change CHECK constraint, a `scheduled_effective_at` column, and a
+  partial index driving the apply job.
+- `packages/shared/src/schema.ts`: extended the status union and added the
+  column type.
+- `packages/shared/src/billing.ts`: downgrade branch in `confirmPlanChange`,
+  rollback in `cancelPlanChange`, and the new `applyScheduledDowngrades()`.
+- `packages/api/src/routes/account-billing.ts`: `scheduled` is a 202 success
+  with a distinct audit event.
+- `packages/worker/src/scheduler.ts`: `billing_scheduled_downgrade_apply` job.
+- `packages/shared/src/openapi.ts`: documented the scheduled/rollback semantics
+  (descriptions only — non-breaking).
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| New downgrade e2e tests (schedule / rollback / apply) | 3/3 passed |
+| Full billing-outbound suite | 16/16 passed |
+| Migrations (fresh apply of 055) | passed |
+| OpenAPI parity + breaking-change guards | 22/22 passed |
+| Full test suite | 107 files / 690 tests passed, exit 0 |
+
+Remaining billing work: refunds/credit notes, invoice tax fields, PayPal/
+Cashfree plan-change lifecycle parity, and Stripe Test Clock/SCA certification.

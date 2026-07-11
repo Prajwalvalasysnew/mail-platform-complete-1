@@ -548,19 +548,19 @@ export const openapiSpec = {
         security: [{ userSessionAuth: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
         responses: {
-          '202': { description: 'Submitted; entitlements remain unchanged pending verified provider webhook' },
+          '202': { description: 'Upgrades are submitted immediately (status "pending_provider_confirmation") with entitlements unchanged pending a verified provider webhook; downgrades are scheduled at period end (status "scheduled" with an "effective_at" date) and the customer keeps current capacity until then' },
           '409': { description: 'Preview expired, unsupported, or subscription not ready', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
         },
       },
     },
     '/account/billing/plan-change/{id}': {
       delete: {
-        summary: 'Cancel an unsubmitted plan-change preview',
+        summary: 'Cancel an unsubmitted preview or roll back a scheduled downgrade',
         operationId: 'cancelAccountPlanChange',
         security: [{ userSessionAuth: [] }],
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
         responses: {
-          '204': { description: 'Preview canceled' },
+          '204': { description: 'Preview canceled, or a scheduled downgrade rolled back before its effective date' },
           '409': { description: 'Request already submitted, applied, expired, or canceled' },
         },
       },

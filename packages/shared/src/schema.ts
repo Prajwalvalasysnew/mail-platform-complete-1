@@ -723,7 +723,7 @@ export interface BillingPlanChangeRequestsTable {
   provider: string;
   provider_price_id: string;
   direction: 'upgrade' | 'downgrade' | 'lateral';
-  status: Generated<'previewed' | 'checkout_started' | 'applied' | 'canceled' | 'expired'>;
+  status: Generated<'previewed' | 'checkout_started' | 'scheduled' | 'applied' | 'canceled' | 'expired'>;
   quota_delta: Generated<Record<string, unknown>>;
   feature_delta: Generated<Record<string, unknown>>;
   warnings: Generated<unknown[]>;
@@ -733,6 +733,7 @@ export interface BillingPlanChangeRequestsTable {
   preview_currency: string | null;
   applied_at: Timestamp | null;
   canceled_at: Timestamp | null;
+  scheduled_effective_at: Timestamp | null;
   expires_at: Generated<Timestamp>;
   created_at: Generated<Timestamp>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
