@@ -9277,3 +9277,54 @@ Remaining enterprise items need real IdPs / external auditors: SCIM
 interoperability certification, phishing-resistant MFA / passkeys (WebAuthn),
 JIT administration + break-glass approvals, an external WORM audit sink with
 signed roots, data-residency enforcement, and an external penetration test / SOC 2.
+
+# 69. Remediation Execution Log — Signed Audit Checkpoints And WORM Sink
+
+Date: 2026-07-11
+
+Continued Phase 5 with the "external WORM audit sink with signed roots" item.
+The audit hash chain already detects in-place edits, but an attacker with full
+DB write access could rewrite `audit_log` AND `audit_log_hashes` together and
+recompute a self-consistent chain — undetectable from inside the database.
+Signed checkpoints exported to an append-only sink close that gap.
+
+## Design
+
+- **Signed roots (Ed25519).** `signAuditCheckpoint(chainKey)` reads the current
+  chain head (highest seq + row_hash across hot + archive), signs the canonical
+  `(chain_key, seq, row_hash, checkpoint_at)` with an Ed25519 key, stores it in
+  `audit_checkpoints`, and exports it to the WORM sink. External verifiers need
+  only the published public key.
+- **WORM sink seam.** `WormAuditSink` with `NullWormSink` (default) and
+  `FilesystemWormSink` (append-only JSONL when `AUDIT_WORM_DIR` is set);
+  production injects an S3-Object-Lock/immutable sink. Injectable like the other
+  seams (`setWormAuditSink`).
+- **Verification.** `verifyAuditCheckpoint` checks (1) the signature is
+  authentic and (2) the live chain at that seq still carries the signed
+  row_hash. A silent rewrite passes (1) but FAILS (2) — the tamper is caught by
+  the externally-held root.
+- **Key management.** `AUDIT_SIGNING_KEY_PEM` (PKCS#8) in production (required,
+  or it throws); an ephemeral dev key with a warning otherwise. Public key
+  exposed via `auditSigningPublicKeyPem()`.
+- Hourly `audit_checkpoint` scheduler job signs every chain
+  (`checkpointAllAuditChains`).
+
+## Changes made
+
+- `infra/migrations/059_audit_checkpoints.sql`; `schema.ts`
+  `AuditCheckpointsTable`.
+- `packages/shared/src/audit-worm.ts` (new); exported from the index.
+- `packages/worker/src/scheduler.ts`: hourly `audit_checkpoint` job.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| WORM tests (sign+verify, rewrite detection, wrong key, checkpoint-all) | 4/4 passed |
+| Full test suite | 110 files / 706 tests passed, exit 0 |
+
+The tamper-detection test proves the core property: after a self-consistent
+rewrite of the head link, the signature stays valid but `matchesChain` is false
+(`row_hash_diverged`). Pending live-infra evidence: an actual immutable object
+store (S3 Object Lock) as the production sink and periodic external verification.

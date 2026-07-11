@@ -44,6 +44,7 @@ export * from './user-sessions.js';
 export * from './mfa.js';
 export * from './invites.js';
 export * from './audit.js';
+export * from './audit-worm.js';
 export * from './outbox.js';
 export * from './locks.js';
 export * from './message-activity.js';

@@ -206,6 +206,7 @@ export interface Database {
   audit_log: AuditLogTable;
   audit_log_hashes: AuditLogHashesTable;
   audit_log_archive: AuditLogArchiveTable;
+  audit_checkpoints: AuditCheckpointsTable;
   legal_holds: LegalHoldsTable;
   clickhouse_sync_state: ClickhouseSyncStateTable;
   review_queue: ReviewQueueTable;
@@ -508,6 +509,16 @@ export interface AuditLogArchiveTable {
   previous_hash: string | null;
   row_hash: string | null;
   archived_at: Generated<Timestamp>;
+}
+
+export interface AuditCheckpointsTable {
+  id: Generated<string>;
+  chain_key: string;
+  seq: number;
+  row_hash: string;
+  key_id: string;
+  signature: string;
+  checkpoint_at: Generated<Timestamp>;
 }
 
 export interface LegalHoldsTable {

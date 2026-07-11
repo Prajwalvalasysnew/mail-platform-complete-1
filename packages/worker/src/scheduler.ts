@@ -33,6 +33,7 @@ import {
   applyScheduledDowngrades,
   countStuckPlanChanges,
   billingStuckRequests,
+  checkpointAllAuditChains,
 } from '@platform/shared';
 
 interface Job {
@@ -253,6 +254,16 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         const stuck = await countStuckPlanChanges(slaMinutes);
         billingStuckRequests.set({ kind: 'plan_change_submitted' }, stuck);
         if (stuck) logger.error({ stuck, slaMinutes }, 'billing plan-change requests breached operator SLA');
+      },
+    },
+    {
+      // Sign each audit chain's head and export the signed root to the WORM
+      // sink, so a later DB rewrite is detectable against an external record.
+      name: 'audit_checkpoint',
+      everyMs: HOUR,
+      run: async () => {
+        const result = await checkpointAllAuditChains();
+        if (result.signed) logger.info({ result }, 'signed audit chain checkpoints');
       },
     },
     {
