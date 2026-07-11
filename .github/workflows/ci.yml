@@ -38,7 +38,11 @@ jobs:
       REDIS_HOST: localhost
       REDIS_PORT: '6379'
       JWT_SECRET: ci-jwt-secret-padding-padding-padding-padding-padding
-      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      # Quoted so YAML does not coerce an all-digit value to an integer (an
+      # unquoted 64-zero scalar parses as int 0 -> env "0" -> decodeKey fails
+      # "master key must decode to 32 bytes"). A non-zero 64-hex key is used so
+      # the value is unmistakably a 32-byte hex string.
+      ENCRYPTION_KEY: '1111111111111111111111111111111111111111111111111111111111111111'
       API_KEY_PEPPER: ci-pepper-padding-padding-padding-padding
       VERP_SECRET: ci-verp-secret-padding-padding-padding-padding
       NODE_ENV: test
