@@ -176,6 +176,7 @@ export function startEventWorker(logger: Logger) {
       // Dual-write to ClickHouse (event firehose / analytics). Best-effort:
       // Postgres above is the source of truth; a CH outage never fails the job.
       await writeClickhouseEvent({
+        event_id: Number(inserted.id), // dedup key shared with the reconciler
         message_id: ev.message_id,
         customer_id: customerId,
         event_type: ev.event_type,

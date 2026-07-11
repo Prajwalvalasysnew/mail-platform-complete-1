@@ -141,6 +141,13 @@ export const engagementEvents = new Counter({
   registers: [registry],
 });
 
+export const billingStuckRequests = new Gauge({
+  name: 'mp_billing_stuck_requests',
+  help: 'Billing requests past their operator SLA (submitted to a provider but not yet applied/reconciled)',
+  labelNames: ['kind'], // plan_change_submitted
+  registers: [registry],
+});
+
 export async function metricsText(): Promise<string> {
   return registry.metrics();
 }

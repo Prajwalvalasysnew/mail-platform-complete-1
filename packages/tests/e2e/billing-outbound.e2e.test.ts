@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, afterEach, describe, expect, it } from 'vitest';
 import { buildTestApp } from './harness.js';
-import { applySubscriptionState, db, reconcileSubmittedPlanChanges, setBillingProvider, MockBillingProvider, reportMeteredUsage } from '@platform/shared';
+import { applySubscriptionState, db, reconcileSubmittedPlanChanges, applyScheduledDowngrades, setBillingProvider, MockBillingProvider, reportMeteredUsage } from '@platform/shared';
 import type { FastifyInstance } from 'fastify';
 
 let app: FastifyInstance;
@@ -127,6 +127,21 @@ describe('outbound billing', () => {
     expect((await req(other.token, 'GET', `/v1/account/billing/invoices/${invoice.id}`)).statusCode).toBe(404);
   });
 
+  it('lists provider-issued credit notes scoped to the tenant', async () => {
+    const owner = await register(`bill-cn-${Date.now()}@example.com`);
+    const other = await register(`bill-cn-other-${Date.now()}@example.com`);
+    await db.insertInto('credit_notes').values({
+      customer_id: owner.customerId, provider: 'stripe', provider_credit_note_id: `cn_api_${Date.now()}`,
+      amount_cents: 900, currency: 'usd', reason: 'duplicate', status: 'issued',
+    }).execute();
+    const list = await req(owner.token, 'GET', '/v1/account/billing/credit-notes');
+    expect(list.statusCode).toBe(200);
+    expect(list.json().credit_notes).toHaveLength(1);
+    expect(list.json().credit_notes[0]).toMatchObject({ amount_cents: 900, reason: 'duplicate', status: 'issued' });
+    // Another tenant sees none of it.
+    expect((await req(other.token, 'GET', '/v1/account/billing/credit-notes')).json().credit_notes).toHaveLength(0);
+  });
+
   it('creates a governed plan-change preview without mutating the subscription', async () => {
     const c = await register(`bill-plan-preview-${Date.now()}@example.com`);
     const preview = await req(c.token, 'POST', '/v1/account/billing/plan-change/preview', { price_id: 'price_pro' });
@@ -187,6 +202,72 @@ describe('outbound billing', () => {
     expect(mock.calls.some((call) => call.method === 'getSubscription')).toBe(true);
     expect(await db.selectFrom('billing_plan_change_requests').select('status').where('id', '=', preview.json().request_id).executeTakeFirstOrThrow()).toMatchObject({ status: 'applied' });
     expect(await db.selectFrom('customers').select('tier').where('id', '=', c.customerId).executeTakeFirstOrThrow()).toMatchObject({ tier: 'paid' });
+  });
+
+  // Set up a customer already on a higher (paid) plan with an active provider
+  // subscription, so a change to price_free is a genuine downgrade.
+  async function seedPaidCustomer(email: string, periodEnd: Date) {
+    const c = await register(email);
+    await db.updateTable('customers').set({ tier: 'paid', daily_quota: 100_000, monthly_quota: 1_000_000 } as any)
+      .where('id', '=', c.customerId).execute();
+    await db.insertInto('subscriptions').values({ customer_id: c.customerId, provider: 'stripe',
+      provider_subscription_id: `sub_down_${email}`, provider_plan_item_id: 'si_down_plan',
+      plan: 'paid', status: 'active', price_id: 'price_pro', current_period_end: periodEnd }).execute();
+    return c;
+  }
+
+  it('schedules a downgrade at period end instead of applying it immediately', async () => {
+    mock = new MockBillingProvider('stripe');
+    setBillingProvider(mock);
+    const periodEnd = new Date(Date.now() + 20 * 86_400_000);
+    const c = await seedPaidCustomer(`bill-down-schedule-${Date.now()}@example.com`, periodEnd);
+    const preview = await req(c.token, 'POST', '/v1/account/billing/plan-change/preview', { price_id: 'price_free' });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json().direction).toBe('downgrade');
+    const confirm = await req(c.token, 'POST', `/v1/account/billing/plan-change/${preview.json().request_id}/confirm`);
+    expect(confirm.statusCode).toBe(202);
+    expect(confirm.json().status).toBe('scheduled');
+    expect(new Date(confirm.json().effective_at).getTime()).toBe(periodEnd.getTime());
+    // The provider is NOT called to change the subscription yet, and the
+    // customer keeps their paid capacity until the boundary.
+    expect(mock.calls.some((call) => call.method === 'updateSubscription')).toBe(false);
+    expect(await db.selectFrom('customers').select('tier').where('id', '=', c.customerId).executeTakeFirstOrThrow()).toMatchObject({ tier: 'paid' });
+    expect(await db.selectFrom('billing_plan_change_requests').select('status').where('id', '=', preview.json().request_id).executeTakeFirstOrThrow()).toMatchObject({ status: 'scheduled' });
+  });
+
+  it('rolls back a scheduled downgrade before its effective date', async () => {
+    mock = new MockBillingProvider('stripe');
+    setBillingProvider(mock);
+    const periodEnd = new Date(Date.now() + 20 * 86_400_000);
+    const c = await seedPaidCustomer(`bill-down-rollback-${Date.now()}@example.com`, periodEnd);
+    const preview = await req(c.token, 'POST', '/v1/account/billing/plan-change/preview', { price_id: 'price_free' });
+    const requestId = preview.json().request_id;
+    expect((await req(c.token, 'POST', `/v1/account/billing/plan-change/${requestId}/confirm`)).json().status).toBe('scheduled');
+    // Rollback via the same cancel endpoint.
+    expect((await req(c.token, 'DELETE', `/v1/account/billing/plan-change/${requestId}`)).statusCode).toBe(204);
+    expect(await db.selectFrom('billing_plan_change_requests').select('status').where('id', '=', requestId).executeTakeFirstOrThrow()).toMatchObject({ status: 'canceled' });
+    // A rolled-back downgrade must never be applied by the scheduler.
+    await applyScheduledDowngrades(new Date(periodEnd.getTime() + 1000));
+    expect(await db.selectFrom('customers').select('tier').where('id', '=', c.customerId).executeTakeFirstOrThrow()).toMatchObject({ tier: 'paid' });
+  });
+
+  it('applies a scheduled downgrade once its effective date passes', async () => {
+    mock = new MockBillingProvider('stripe');
+    setBillingProvider(mock);
+    const periodEnd = new Date(Date.now() + 20 * 86_400_000);
+    const c = await seedPaidCustomer(`bill-down-apply-${Date.now()}@example.com`, periodEnd);
+    const preview = await req(c.token, 'POST', '/v1/account/billing/plan-change/preview', { price_id: 'price_free' });
+    const requestId = preview.json().request_id;
+    expect((await req(c.token, 'POST', `/v1/account/billing/plan-change/${requestId}/confirm`)).json().status).toBe('scheduled');
+    // Before the boundary, nothing applies.
+    expect((await applyScheduledDowngrades(new Date())).applied).toBe(0);
+    expect(await db.selectFrom('customers').select('tier').where('id', '=', c.customerId).executeTakeFirstOrThrow()).toMatchObject({ tier: 'paid' });
+    // At/after the boundary, the downgrade is submitted and finalized.
+    const result = await applyScheduledDowngrades(new Date(periodEnd.getTime() + 1000));
+    expect(result.applied).toBeGreaterThanOrEqual(1);
+    expect(mock.calls.some((call) => call.method === 'updateSubscription')).toBe(true);
+    expect(await db.selectFrom('billing_plan_change_requests').select('status').where('id', '=', requestId).executeTakeFirstOrThrow()).toMatchObject({ status: 'applied' });
+    expect(await db.selectFrom('customers').select('tier').where('id', '=', c.customerId).executeTakeFirstOrThrow()).toMatchObject({ tier: 'free' });
   });
 
   it('reports metered usage (delivered count) to the provider', async () => {

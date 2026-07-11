@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import crypto from 'node:crypto';
-import { applyInvoiceEvent, applySubscriptionState, TIER_BY_PRICE, isKnownPrice } from '@platform/shared';
+import { applyInvoiceEvent, applyCreditNoteEvent, applySubscriptionState, TIER_BY_PRICE, isKnownPrice } from '@platform/shared';
 
 /**
  * Provider-keyed billing webhooks. /billing/webhook remains a Stripe-compatible
@@ -216,10 +216,16 @@ export function stripeInvoiceEvent(event: any) {
   const periodStart = invoice.period_start ?? lines[0]?.period?.start ?? invoice.created;
   const periodEnd = invoice.period_end ?? lines[0]?.period?.end ?? periodStart;
   if (!periodStart || !periodEnd) return null;
+  // Prefer Stripe's aggregate `tax` field; fall back to summing per-rate
+  // total_tax_amounts so we still capture tax on older/partial payloads.
+  const taxAmounts: any[] = invoice.total_tax_amounts ?? [];
+  const taxCents = invoice.tax != null
+    ? Number(invoice.tax)
+    : taxAmounts.reduce((sum, t) => sum + Number(t.amount ?? 0), 0);
   return {
     provider: 'stripe', provider_event_id: event.id, type: event.type,
     provider_customer_id: invoice.customer, provider_invoice_id: invoice.id,
-    amount_cents: Number(invoice.amount_due ?? invoice.total ?? 0), currency: invoice.currency ?? 'usd',
+    amount_cents: Number(invoice.amount_due ?? invoice.total ?? 0), tax_cents: taxCents, currency: invoice.currency ?? 'usd',
     period_start: periodStart, period_end: periodEnd, due_at: invoice.due_date,
     paid_at: invoice.status_transitions?.paid_at, hosted_invoice_url: invoice.hosted_invoice_url,
     invoice_pdf_url: invoice.invoice_pdf,
@@ -227,6 +233,20 @@ export function stripeInvoiceEvent(event: any) {
     lines: lines.map((line) => ({ id: line.id, description: line.description, quantity: line.quantity,
       amount_cents: line.amount, currency: line.currency, period_start: line.period?.start,
       period_end: line.period?.end, metadata: line.metadata ?? {} })), raw_payload: event,
+  };
+}
+
+export function stripeCreditNoteEvent(event: any) {
+  const supported = ['credit_note.created', 'credit_note.updated', 'credit_note.voided'];
+  if (!supported.includes(event?.type)) return null;
+  const note = event?.data?.object ?? {};
+  if (!event?.id || !note.id || !note.customer) return null;
+  return {
+    provider: 'stripe', provider_event_id: event.id, type: event.type,
+    provider_customer_id: note.customer, provider_credit_note_id: note.id,
+    provider_invoice_id: note.invoice ?? null, number: note.number ?? null,
+    amount_cents: Number(note.total ?? note.amount ?? 0), currency: note.currency ?? 'usd',
+    reason: note.reason ?? null, memo: note.memo ?? null, raw_payload: event,
   };
 }
 
@@ -338,6 +358,11 @@ async function handleWebhook(req: FastifyRequest, reply: any, provider: string) 
     const invoiceEvent = stripeInvoiceEvent(event);
     if (invoiceEvent) {
       const applied = await applyInvoiceEvent(invoiceEvent);
+      return reply.code(200).send({ received: true, applied });
+    }
+    const creditNoteEvent = stripeCreditNoteEvent(event);
+    if (creditNoteEvent) {
+      const applied = await applyCreditNoteEvent(creditNoteEvent);
       return reply.code(200).send({ received: true, applied });
     }
   }

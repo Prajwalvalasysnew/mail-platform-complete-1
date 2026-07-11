@@ -63,6 +63,7 @@ export async function reconcileClickhouse(opts: { batchSize?: number; maxBatches
     if (rows.length === 0) break;
 
     const chRows = await filterNonErasedClickhouseRows(rows.map((r) => ({
+      event_id: Number(r.id), // same idempotency key the hot-path emits → CH dedups the pair
       message_id: r.message_id,
       customer_id: r.customer_id,
       event_type: r.event_type,

@@ -8940,3 +8940,499 @@ Remaining work: add an operator alert/SLA for long-lived pending or unsupported
 requests, provider retrieval for PayPal/Cashfree or explicitly disable plan
 changes there, implement Stripe period-end downgrade scheduling/rollback, and
 prove the workflow with Test Clocks, SCA, network failure, and webhook delay.
+
+# 61. Remediation Execution Log — Full-Suite Certification Baseline
+
+Date: 2026-07-11
+
+Re-established a clean, trustworthy build/test/audit baseline from a fresh
+clone before continuing the 7.4→10 remediation programme. The prior full-suite
+run surfaced exactly one regression: the recent governed plan-change route
+(`packages/api/src/routes/account-billing.ts`) began returning two
+machine-readable error codes — `unknown_price` (422) and `not_cancelable`
+(409) — that were never added to the stable error-code registry, so the
+`error-registry` completeness guard failed.
+
+## Changes made
+
+- Registered `unknown_price` (422) and `not_cancelable` (409) in
+  `packages/shared/src/error-codes.ts` with descriptions and HTTP statuses,
+  restoring the emitted-vs-registered contract. Both are additive (new codes),
+  so the backward-compatibility baseline is unaffected.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (shared, api, worker, tracker, sdk) | passed |
+| `error-registry` guard (previously failing) | 3/3 passed |
+| Full test suite | 106 files / 685 tests passed, exit 0 |
+| Production dependency audit (`npm audit --omit=dev`) | 0 vulnerabilities |
+
+The suite runs green in ~131s against dockerized Postgres/Redis/Mailpit test
+infrastructure with clean process shutdown (no open-handle timeout).
+
+Remaining work (forward plan): billing completeness — Stripe period-end
+downgrade scheduling and rollback, refunds/credit notes, invoice tax fields,
+and an operator SLA alert for stuck plan-change/dunning requests; a durable
+analytics outbox; and the operational-evidence items (Helm render, k6 soak,
+Redis/Postgres failover and restore drills, Haraka TLS/PTR/HELO) that require a
+live environment rather than the code sandbox.
+
+# 62. Remediation Execution Log — Operator SLA Alert For Stuck Plan Changes
+
+Date: 2026-07-11
+
+Closed the §60 remaining-work item "add an operator alert/SLA for long-lived
+pending or unsupported requests." A plan-change request submitted to the
+provider (`status='checkout_started'`) is normally applied by a webhook or by
+`reconcileSubmittedPlanChanges()`. If the provider never reflects the requested
+price, or the provider is unsupported for authenticated retrieval, the request
+could linger indefinitely with no operator signal. It is now observed and
+alertable.
+
+## Changes made
+
+- `packages/shared/src/billing.ts`: added `countStuckPlanChanges(slaMinutes=60)`
+  — counts `checkout_started` requests whose `updated_at` is older than the SLA
+  window.
+- `packages/shared/src/metrics.ts`: added gauge `mp_billing_stuck_requests`
+  (label `kind`) for the breach count.
+- `packages/worker/src/scheduler.ts`: added a 5-minute `billing_plan_change_sla`
+  job that publishes the gauge and logs an error on any breach. The window is
+  configurable via `BILLING_PLAN_CHANGE_SLA_MINUTES` (default 60).
+- `infra/prometheus/alerts.yml`: added the `BillingPlanChangeStuck` warning
+  alert (fires when the gauge > 0 for 15m) with operator remediation guidance.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (shared, worker) | passed |
+| New `billing-plan-change-sla` test | 2/2 passed |
+| Full billing test group | 11 files / 50 tests passed |
+| `alerts.yml` YAML parse | valid (3 groups, 16 rules) |
+
+# 63. Remediation Execution Log — Period-End Downgrade Scheduling And Rollback
+
+Date: 2026-07-11
+
+Closed the §60 remaining-work item "implement Stripe period-end downgrade
+scheduling/rollback." Previously every confirmed plan change — including
+downgrades — applied immediately with provider proration, which credited unused
+time and dropped the customer's capacity mid-period. Downgrades now defer to the
+period boundary and stay reversible until then.
+
+## Behaviour
+
+- **Upgrades / lateral moves**: unchanged — applied immediately with provider
+  proration (`pending_provider_confirmation`).
+- **Downgrades**: `confirmPlanChange` records the request as `scheduled` with
+  `scheduled_effective_at` = the subscription's `current_period_end` (falling
+  back to `now + BILLING_DEFAULT_PERIOD_DAYS`, default 30). No provider mutation
+  occurs and the customer keeps their paid capacity until the boundary. The
+  route returns `202 { status: 'scheduled', effective_at }`.
+- **Rollback**: `cancelPlanChange` (DELETE) now cancels both unsubmitted
+  previews and `scheduled` downgrades, so a customer can reverse a pending
+  downgrade any time before it applies.
+- **Apply**: a new `applyScheduledDowngrades()` job submits each due request to
+  the provider (no proration — the full period was used) and finalizes it
+  through the provider-authoritative `applySubscriptionState` path, which lowers
+  tier/quota and marks the request `applied`. Wired into the worker scheduler as
+  `billing_scheduled_downgrade_apply` (every 10 minutes).
+- `BILLING_DOWNGRADE_AT_PERIOD_END=0` restores legacy immediate proration.
+
+## Changes made
+
+- `infra/migrations/055_scheduled_downgrades.sql`: added the `scheduled` status
+  to the plan-change CHECK constraint, a `scheduled_effective_at` column, and a
+  partial index driving the apply job.
+- `packages/shared/src/schema.ts`: extended the status union and added the
+  column type.
+- `packages/shared/src/billing.ts`: downgrade branch in `confirmPlanChange`,
+  rollback in `cancelPlanChange`, and the new `applyScheduledDowngrades()`.
+- `packages/api/src/routes/account-billing.ts`: `scheduled` is a 202 success
+  with a distinct audit event.
+- `packages/worker/src/scheduler.ts`: `billing_scheduled_downgrade_apply` job.
+- `packages/shared/src/openapi.ts`: documented the scheduled/rollback semantics
+  (descriptions only — non-breaking).
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| New downgrade e2e tests (schedule / rollback / apply) | 3/3 passed |
+| Full billing-outbound suite | 16/16 passed |
+| Migrations (fresh apply of 055) | passed |
+| OpenAPI parity + breaking-change guards | 22/22 passed |
+| Full test suite | 107 files / 690 tests passed, exit 0 |
+
+Remaining billing work: refunds/credit notes, invoice tax fields, PayPal/
+Cashfree plan-change lifecycle parity, and Stripe Test Clock/SCA certification.
+
+# 64. Remediation Execution Log — Invoice Tax Fields
+
+Date: 2026-07-11
+
+Invoices previously stored only a single `amount_cents` with no record of the
+tax the provider assessed, so customer-facing invoices and finance exports could
+not show VAT/GST/sales tax separately. We now persist the provider-calculated
+tax (Stripe Tax or externally computed) rather than computing it ourselves.
+
+## Changes made
+
+- `infra/migrations/056_invoice_tax.sql`: `invoices.tax_cents` (default 0).
+- `packages/shared/src/schema.ts`: `tax_cents` on `InvoicesTable`.
+- `packages/shared/src/billing.ts`: `InvoiceEvent.tax_cents`; `applyInvoiceEvent`
+  persists it on insert and update; `listCustomerInvoices` selects it (detail
+  uses `selectAll`, so it is already returned).
+- `packages/api/src/routes/billing.ts`: `stripeInvoiceEvent` reads Stripe's
+  aggregate `tax`, falling back to summing `total_tax_amounts[].amount`.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (shared, api) | passed |
+| Invoice lifecycle tests (incl. tax parse/sum/persist) | 4/4 passed |
+
+# 65. Remediation Execution Log — Refunds And Credit Notes
+
+Date: 2026-07-11
+
+Closed the billing gap "refunds and credit notes." Providers issue a credit note
+when money is refunded or written off against an invoice (Stripe `credit_note`).
+We now record provider-issued credit notes idempotently and expose them to the
+customer, rather than initiating refunds ourselves — so billing history and
+finance exports reflect exactly what the provider issued.
+
+## Changes made
+
+- `infra/migrations/057_credit_notes.sql`: `credit_notes` table (customer- and
+  invoice-linked, unique on `provider_credit_note_id`, `issued`/`void` status).
+- `packages/shared/src/schema.ts`: `CreditNotesTable` + registration.
+- `packages/shared/src/billing.ts`: `CreditNoteEvent`, idempotent
+  `applyCreditNoteEvent` (links to the local invoice, upserts on replay, voids on
+  `credit_note.voided`), and `listCustomerCreditNotes`.
+- `packages/api/src/routes/billing.ts`: `stripeCreditNoteEvent` parser wired into
+  the Stripe webhook after the invoice-event branch.
+- `packages/api/src/routes/account-billing.ts`: `GET /account/billing/credit-notes`
+  (billing:manage, tenant-scoped).
+- `packages/shared/src/openapi.ts`: documented the new route (`listAccountCreditNotes`).
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| Credit-note unit tests (parse / apply+link / idempotent / void) | passed |
+| Credit-note tenant-scoped list e2e | passed |
+| OpenAPI parity + breaking-change guards | 22/22 passed |
+| Full test suite | 107 files / 696 tests passed, exit 0 |
+
+Phase 2 (billing completeness) is now done at code level: operator SLA alerts,
+period-end downgrades, invoice tax, and refunds/credit notes. Remaining billing
+items are provider-lifecycle parity (PayPal/Cashfree plan changes) and Stripe
+Test Clock/SCA certification, both of which need live provider sandboxes.
+
+# 66. Remediation Execution Log — ClickHouse Analytics Deduplication
+
+Date: 2026-07-11
+
+Closed the analytics-durability gaps "durable analytics outbox" and "strong
+ClickHouse deduplication engine/key proof" at code/schema level. The durable
+outbox already existed (Postgres `events` + watermark reconciler), but every
+event was written to ClickHouse twice — once by the best-effort hot path and
+once by the reconciler — into a plain `MergeTree` whose sorting key did not
+identify an event, and a `SummingMergeTree count()` rollup. Result: duplicate
+analytics rows and double-counted daily totals.
+
+## The fix — dedup on a shared idempotency key
+
+- Both writers now emit `event_id` = the Postgres `events.id` (globally unique,
+  monotonic). The hot path reads it from the freshly-inserted event row; the
+  reconciler reads it from the `events` scan — so a given event carries the same
+  key on both inserts.
+- `mail.events` is now a **ReplacingMergeTree** with `ORDER BY (customer_id,
+  occurred_at, message_id, event_type, event_id)` — the two inserts of one event
+  collapse to a single row on merge.
+- `mail.events_daily` is now an **AggregatingMergeTree** over
+  `uniqExact(event_id)`, counting DISTINCT events so a duplicate insert never
+  inflates the count (the old `count()` rollup double-counted). Query with
+  `uniqExactMerge(event_uniq)`.
+
+## Changes made
+
+- `infra/clickhouse/init.sql`: `event_id` column, ReplacingMergeTree base keyed
+  on event_id, uniqExact daily rollup + MV.
+- `packages/shared/src/clickhouse.ts`: `event_id` on `ClickhouseEvent`/`Row`,
+  emitted by the hot-path buffer.
+- `packages/shared/src/clickhouse-reconcile.ts`: ships `event_id = events.id`.
+- `packages/worker/src/event-worker.ts`: hot-path dual-write passes
+  `event_id: inserted.id`.
+- `docs/CLICKHOUSE_DURABILITY.md`: documented the dedup design and the pending
+  live-infra drill.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| `clickhouse-reconcile` (incl. stable event_id shipped) | 7/7 passed |
+| `clickhouse-schema` guard (engine / dedup key / uniqExact) | 3/3 passed |
+| Full test suite | 108 files / 700 tests passed, exit 0 |
+
+Pending (live-infra evidence): insert the same event via both paths against a
+real ClickHouse, force a merge, and assert one stored row and one counted event
+— tracked with the Phase 4 operational drills (backup/restore, failover).
+
+# 67. Remediation Execution Log — Operational Drills And Load Tooling
+
+Date: 2026-07-11
+
+Built the tooling side of the "HA/DR and failure evidence" and "operational
+certification" gaps so the evidence is reproducible on demand, and produced the
+evidence that is achievable in a code sandbox.
+
+## Changes made
+
+- `scripts/helm-render-check.sh` (new): lints the chart, renders it with default
+  AND production-like overlays, and parses every document to confirm valid
+  Kubernetes YAML with the required workload kinds. **Executed: PASSED** — helm
+  3.16 installed, chart lints (0 failures), 27 valid manifests per overlay. This
+  closes the long-standing "Helm rendering not executed (Helm unavailable)"
+  certification item.
+- `scripts/redis-failover-drill.sh` (new): primary + AOF replica, kills the
+  primary, promotes the replica, and asserts durability (marker + queued jobs
+  survive) and availability (promoted node accepts writes). **Executed: PASSED.**
+- `scripts/backup-restore-drill.sh`: added a measured restore time (RTO proxy)
+  to the existing dump/restore integrity drill.
+- `infra/loadtest/tracker.js` (new): k6 open/click throughput scenario with
+  latency/answer-rate SLO thresholds, complementing the existing `send.js`.
+- `docs/OPERATIONAL_DRILLS.md` (new): operator runbook indexing every drill,
+  what it proves, and what still requires live infrastructure.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| `helm lint` + render (default + production overlays) | PASSED — 27 valid manifests each |
+| `redis-failover-drill.sh` (durability + availability) | PASSED (executed) |
+| Shell scripts `bash -n` | all valid |
+| k6 scenarios syntax (`node --check`, ESM) | valid |
+| `migration-topology` infra test | 10/10 passed |
+
+Remaining Phase 4 items require live infrastructure rather than code: k6 soak
+against staging with a capacity report; automatic Redis/Postgres failover with
+measured RPO/RTO on production-sized data; the live-ClickHouse dedup drill; real
+Haraka TLS/PTR/HELO; and worker chaos (crash/partition/SMTP-outage) injection.
+These are enumerated in `docs/OPERATIONAL_DRILLS.md`.
+
+# 68. Remediation Execution Log — Customer SSO Enforcement
+
+Date: 2026-07-11
+
+Began Phase 5 (enterprise identity) with the "complete customer SSO enforcement"
+item. The platform already had SCIM provisioning and an admin-plane
+password-login-disabled posture, but a customer organization had no way to
+mandate SSO for its own members — a password login always worked. Now an org can
+enforce SSO, and password authentication is refused for its members.
+
+## Behaviour
+
+- `customers.sso_enforced` (per-tenant flag). When set, any member of that org is
+  blocked from password login with `password_login_disabled` (403) — checked
+  only AFTER the password is verified, so it cannot be used to probe which
+  accounts exist or are SSO-enforced.
+- The check fails strict (`isSsoEnforcedForUser`): if ANY of the user's active
+  orgs enforces SSO, password login is refused, so an enterprise mandate can't be
+  bypassed via a second, non-enforcing org. SSO login does not use the password
+  path and is unaffected.
+- Owners/admins toggle the policy from the dashboard; an existing session can
+  disable it (not password-gated), so enabling it can never hard-lock the org.
+
+## Changes made
+
+- `infra/migrations/058_sso_enforcement.sql`: `customers.sso_enforced` (default
+  false).
+- `packages/shared/src/schema.ts`: `sso_enforced` on `CustomersTable`.
+- `packages/shared/src/sso.ts` (new): `isSsoEnforcedForUser`,
+  `getOrgSsoEnforcement`, `setOrgSsoEnforcement`; exported from the index.
+- `packages/api/src/routes/account.ts`: login gate after `authenticate`, plus
+  `GET`/`PATCH /account/settings/sso` (settings:manage) with audit events.
+- `packages/tests/openapi-route-parity.test.ts`: allowlisted the two dashboard
+  routes with rationale.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| SSO enforcement e2e (enable→block→disable→restore, validation, auth) | 2/2 passed |
+| OpenAPI route-parity ratchet | passed |
+| Full test suite | 109 files / 702 tests passed, exit 0 |
+
+Remaining enterprise items need real IdPs / external auditors: SCIM
+interoperability certification, phishing-resistant MFA / passkeys (WebAuthn),
+JIT administration + break-glass approvals, an external WORM audit sink with
+signed roots, data-residency enforcement, and an external penetration test / SOC 2.
+
+# 69. Remediation Execution Log — Signed Audit Checkpoints And WORM Sink
+
+Date: 2026-07-11
+
+Continued Phase 5 with the "external WORM audit sink with signed roots" item.
+The audit hash chain already detects in-place edits, but an attacker with full
+DB write access could rewrite `audit_log` AND `audit_log_hashes` together and
+recompute a self-consistent chain — undetectable from inside the database.
+Signed checkpoints exported to an append-only sink close that gap.
+
+## Design
+
+- **Signed roots (Ed25519).** `signAuditCheckpoint(chainKey)` reads the current
+  chain head (highest seq + row_hash across hot + archive), signs the canonical
+  `(chain_key, seq, row_hash, checkpoint_at)` with an Ed25519 key, stores it in
+  `audit_checkpoints`, and exports it to the WORM sink. External verifiers need
+  only the published public key.
+- **WORM sink seam.** `WormAuditSink` with `NullWormSink` (default) and
+  `FilesystemWormSink` (append-only JSONL when `AUDIT_WORM_DIR` is set);
+  production injects an S3-Object-Lock/immutable sink. Injectable like the other
+  seams (`setWormAuditSink`).
+- **Verification.** `verifyAuditCheckpoint` checks (1) the signature is
+  authentic and (2) the live chain at that seq still carries the signed
+  row_hash. A silent rewrite passes (1) but FAILS (2) — the tamper is caught by
+  the externally-held root.
+- **Key management.** `AUDIT_SIGNING_KEY_PEM` (PKCS#8) in production (required,
+  or it throws); an ephemeral dev key with a warning otherwise. Public key
+  exposed via `auditSigningPublicKeyPem()`.
+- Hourly `audit_checkpoint` scheduler job signs every chain
+  (`checkpointAllAuditChains`).
+
+## Changes made
+
+- `infra/migrations/059_audit_checkpoints.sql`; `schema.ts`
+  `AuditCheckpointsTable`.
+- `packages/shared/src/audit-worm.ts` (new); exported from the index.
+- `packages/worker/src/scheduler.ts`: hourly `audit_checkpoint` job.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| WORM tests (sign+verify, rewrite detection, wrong key, checkpoint-all) | 4/4 passed |
+| Full test suite | 110 files / 706 tests passed, exit 0 |
+
+The tamper-detection test proves the core property: after a self-consistent
+rewrite of the head link, the signature stays valid but `matchesChain` is false
+(`row_hash_diverged`). Pending live-infra evidence: an actual immutable object
+store (S3 Object Lock) as the production sink and periodic external verification.
+
+# 70. Remediation Execution Log — JIT Admin Elevation And Break-Glass
+
+Date: 2026-07-11
+
+Continued Phase 5 with the "JIT administration and break-glass approvals" item.
+Admins previously carried a fixed standing role with no way to run least-
+privilege day-to-day and elevate only when needed. Now elevation is just-in-time,
+time-boxed, reason-bound, and audited, with a flagged emergency path.
+
+## Design
+
+- **Effective role = max(standing, active elevation).** `resolveAdminSession`
+  now computes this, so every existing `requireAdmin`/`roleAtLeast` guard honours
+  an elevation automatically. `AdminContext` gains `standing_role` and `elevated`
+  for transparency.
+- **Normal JIT grant** (`grantElevation`, breakGlass=false): four-eyes — the
+  grantor cannot elevate themselves and cannot grant above their own STANDING
+  role (checked from admin_users, so an already-elevated session can't launder
+  further privilege).
+- **Break-glass** (breakGlass=true): self-service emergency elevation, allowed to
+  exceed the actor's own role but gated by a standing floor (operator+), a
+  shorter TTL cap, and a mandatory reason; the row is flagged `break_glass`.
+- TTL caps (`ADMIN_ELEVATION_MAX_MINUTES` / `ADMIN_BREAK_GLASS_MAX_MINUTES`),
+  `activeElevatedRole` filters on `expires_at` so a lapsed elevation stops
+  counting even before the sweep, `revokeElevation` for early cutoff, and an
+  `admin_elevation_expiry` scheduler job. Every grant/revoke is audited (and now
+  covered by the signed audit checkpoints from §69).
+
+## Changes made
+
+- `infra/migrations/060_admin_elevations.sql`; `schema.ts`
+  `AdminElevationsTable`.
+- `packages/shared/src/admin-jit.ts` (new): grant/revoke/expire/active/list.
+- `packages/shared/src/admin.ts`: effective-role computation in
+  `resolveAdminSession`; `AdminContext` extended.
+- `packages/api/src/routes/admin.ts`: `GET/POST /admin/elevations`,
+  `POST /admin/elevations/break-glass`, `DELETE /admin/elevations/:id`.
+- `packages/worker/src/scheduler.ts`: `admin_elevation_expiry` job.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| JIT elevation tests (four-eyes, ceiling, effective-role, break-glass floor, TTL, expiry, revoke) | 6/6 passed |
+| Full test suite (admin plane regression) | 111 files / 712 tests passed, exit 0 |
+
+Remaining enterprise items need real external parties: SCIM interoperability
+certification with real IdPs, phishing-resistant MFA / passkeys (WebAuthn),
+external penetration test, and SOC 2 evidence.
+
+# 71. Remediation Execution Log — WebAuthn / Passkey Groundwork
+
+Date: 2026-07-11
+
+Completed the codeable part of the "phishing-resistant MFA / passkeys" item with
+a self-contained WebAuthn implementation (no new dependencies, matching how the
+platform builds its own TOTP/Ed25519 crypto).
+
+## What was built
+
+- **Minimal CBOR decoder** for the types WebAuthn uses (ints, byte/text strings,
+  arrays, maps) — enough for `attestationObject` and COSE keys.
+- **COSE → key**: EC2/ES256 (P-256) and OKP/Ed25519 public keys converted to
+  SPKI and loaded as Node key objects.
+- **authenticatorData parsing** (rpIdHash, flags, sign count, attested credential
+  data).
+- **clientDataJSON validation**: type + origin binding, with the challenge
+  returned for single-use consumption.
+- **Assertion verification**: `authenticatorData || SHA-256(clientDataJSON)`
+  checked against the stored public key (ES256/EdDSA), plus **signature-counter
+  clone detection**.
+- **Single-use challenge lifecycle** (issue/consume, TTL, replay-proof).
+- **Ceremonies**: `registerPasskey` (verifies clientData + rpIdHash, consumes the
+  challenge, stores the COSE public key) and `authenticatePasskey` (verifies the
+  assertion, advances/guards the counter). Plus `listPasskeys` / `deletePasskey`.
+- **Dashboard routes**: `POST /account/webauthn/register/options`,
+  `POST /account/webauthn/register`, `GET /account/webauthn/credentials`,
+  `DELETE /account/webauthn/credentials/:id` (session-auth gated).
+
+## Scope note
+
+We accept `none` attestation (the common passkey case) and do not validate
+attestation certificate chains (packed/tpm/android-key) — a deployment-specific
+trust decision left as follow-up, along with wiring passkeys as a login/step-up
+factor. The cryptographic core (challenge/origin binding, assertion
+verification, clone detection) is complete and tested.
+
+## Changes made
+
+- `infra/migrations/061_webauthn.sql`; `schema.ts` credential + challenge tables.
+- `packages/shared/src/webauthn.ts` (new); exported from the index.
+- `packages/api/src/routes/account.ts`: passkey routes.
+- `packages/tests/openapi-route-parity.test.ts`: allowlisted the dashboard routes.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| WebAuthn tests (CBOR, register, real assertion, clone detection, tamper/origin, single-use, owner-scoped delete) | 7/7 passed |
+| Route-parity ratchet | passed |
+| Full test suite | 112 files / 719 tests passed, exit 0 |
+
+The register + authenticate tests drive a synthetic P-256 authenticator built
+in-test (CBOR attestationObject + COSE key + real ECDSA signatures), so the full
+ceremony — not just the helpers — is exercised.

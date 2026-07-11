@@ -23,6 +23,9 @@ import {
   updateAdminUser,
   setAdminPassword,
   auditAdminAction,
+  grantElevation,
+  revokeElevation,
+  listActiveElevations,
   listBillingEvents,
   getBillingEvent,
   replayBillingEvent,
@@ -910,6 +913,56 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     if (!ok) return reply.code(404).send({ error: 'not_found' });
     await auditAdminAction(req.admin!, 'reset_admin_password', 'admin_user', { admin_user_id: id });
     return { ok: true };
+  });
+
+  // ---- Just-in-time admin elevation / break-glass ----
+  app.get('/elevations', { preHandler: requireAdmin('operator') }, async () => {
+    return { elevations: await listActiveElevations() };
+  });
+
+  const GrantElevationSchema = z.object({
+    admin_user_id: z.string().uuid(),
+    role: z.enum(['support', 'operator', 'admin', 'superadmin']),
+    reason: z.string().min(3).max(500),
+    ttl_minutes: z.number().int().min(1).max(1440),
+  });
+  // Normal JIT grant to ANOTHER admin (four-eyes enforced in grantElevation).
+  app.post('/elevations', { preHandler: requireAdmin('admin') }, async (req, reply) => {
+    const parsed = GrantElevationSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    const result = await grantElevation({
+      adminUserId: parsed.data.admin_user_id, role: parsed.data.role, reason: parsed.data.reason,
+      ttlMinutes: parsed.data.ttl_minutes, grantedBy: req.admin!.admin_user_id, breakGlass: false,
+    });
+    if (!result.ok) return reply.code(result.status).send({ error: result.status === 400 ? 'validation_failed' : 'forbidden', message: result.error });
+    return reply.code(201).send(result.elevation);
+  });
+
+  const BreakGlassSchema = z.object({
+    role: z.enum(['support', 'operator', 'admin', 'superadmin']),
+    reason: z.string().min(3).max(500),
+    ttl_minutes: z.number().int().min(1).max(1440),
+  });
+  // Emergency SELF-elevation. Flagged, short-TTL, heavily audited.
+  app.post('/elevations/break-glass', { preHandler: requireAdmin('operator') }, async (req, reply) => {
+    const parsed = BreakGlassSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    // Use the STANDING role identity for the self-grant so an already-elevated
+    // session can't chain further elevations.
+    const result = await grantElevation({
+      adminUserId: req.admin!.admin_user_id, role: parsed.data.role, reason: parsed.data.reason,
+      ttlMinutes: parsed.data.ttl_minutes, grantedBy: req.admin!.admin_user_id, breakGlass: true,
+    });
+    if (!result.ok) return reply.code(result.status).send({ error: result.status === 400 ? 'validation_failed' : 'forbidden', message: result.error });
+    return reply.code(201).send(result.elevation);
+  });
+
+  app.delete('/elevations/:id', { preHandler: requireAdmin('admin') }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!z.string().uuid().safeParse(id).success) return reply.code(400).send({ error: 'validation_failed' });
+    const ok = await revokeElevation(id, req.admin!.admin_user_id);
+    if (!ok) return reply.code(404).send({ error: 'not_found' });
+    return reply.code(204).send();
   });
 
   // ---- Customer plan / quota management ----

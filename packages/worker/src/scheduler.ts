@@ -30,6 +30,11 @@ import {
   runDunningSweep,
   expirePlanChangeRequests,
   reconcileSubmittedPlanChanges,
+  applyScheduledDowngrades,
+  countStuckPlanChanges,
+  billingStuckRequests,
+  checkpointAllAuditChains,
+  expireElevations,
 } from '@platform/shared';
 
 interface Job {
@@ -224,6 +229,52 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         const result = await reconcileSubmittedPlanChanges();
         if (result.applied) logger.info({ result }, 'reconciled provider-confirmed plan changes');
         if (result.failed || result.unsupported) logger.warn({ result }, 'plan-change reconciliation needs attention');
+      },
+    },
+    {
+      // Apply period-end downgrades once their scheduled effective date has
+      // arrived. Runs every 10 minutes so an at-boundary downgrade takes effect
+      // promptly after the period rolls over.
+      name: 'billing_scheduled_downgrade_apply',
+      everyMs: 10 * MIN,
+      run: async () => {
+        const result = await applyScheduledDowngrades();
+        if (result.applied) logger.info({ result }, 'applied scheduled period-end downgrades');
+        if (result.failed || result.unsupported) logger.warn({ result }, 'scheduled downgrade application needs attention');
+      },
+    },
+    {
+      // Operator SLA: surface plan-change requests that were submitted to the
+      // provider but have not been applied/reconciled within the SLA window.
+      // Publishes a gauge for Prometheus (BillingPlanChangeStuck alert) so a
+      // human is paged instead of the request silently lingering forever.
+      name: 'billing_plan_change_sla',
+      everyMs: 5 * MIN,
+      run: async () => {
+        const slaMinutes = Number(process.env.BILLING_PLAN_CHANGE_SLA_MINUTES ?? 60);
+        const stuck = await countStuckPlanChanges(slaMinutes);
+        billingStuckRequests.set({ kind: 'plan_change_submitted' }, stuck);
+        if (stuck) logger.error({ stuck, slaMinutes }, 'billing plan-change requests breached operator SLA');
+      },
+    },
+    {
+      // Expire elapsed JIT admin elevations (defence in depth — the effective
+      // role lookup already filters on expires_at, this closes out the rows).
+      name: 'admin_elevation_expiry',
+      everyMs: 5 * MIN,
+      run: async () => {
+        const expired = await expireElevations();
+        if (expired) logger.info({ expired }, 'expired admin elevations');
+      },
+    },
+    {
+      // Sign each audit chain's head and export the signed root to the WORM
+      // sink, so a later DB rewrite is detectable against an external record.
+      name: 'audit_checkpoint',
+      everyMs: HOUR,
+      run: async () => {
+        const result = await checkpointAllAuditChains();
+        if (result.signed) logger.info({ result }, 'signed audit chain checkpoints');
       },
     },
     {

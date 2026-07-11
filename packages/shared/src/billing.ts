@@ -347,7 +347,7 @@ export async function runDunningSweep(now = new Date(), options: { customerId?: 
 export async function listCustomerInvoices(customerId: string, options: { limit?: number; before?: string } = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? 50, 100));
   let query = db.selectFrom('invoices')
-    .select(['id', 'provider_invoice_id', 'period_start', 'period_end', 'billed_quantity', 'metered_quantity', 'amount_cents', 'currency', 'status', 'drift', 'hosted_invoice_url', 'invoice_pdf_url', 'due_at', 'paid_at', 'created_at'])
+    .select(['id', 'provider_invoice_id', 'period_start', 'period_end', 'billed_quantity', 'metered_quantity', 'amount_cents', 'tax_cents', 'currency', 'status', 'drift', 'hosted_invoice_url', 'invoice_pdf_url', 'due_at', 'paid_at', 'created_at'])
     .where('customer_id', '=', customerId).orderBy('created_at', 'desc').limit(limit + 1);
   if (options.before) query = query.where('created_at', '<', options.before as any);
   const rows = await query.execute();
@@ -422,12 +422,28 @@ export async function confirmPlanChange(customerId: string, requestId: string) {
     .where('id', '=', requestId).where('customer_id', '=', customerId).executeTakeFirst();
   if (!request) return { status: 'not_found' as const };
   if (request.status !== 'previewed' || new Date(request.expires_at as any).getTime() <= Date.now()) return { status: 'expired' as const };
-  if (!request.proration_date) return { status: 'provider_preview_required' as const };
-  const subscription = await db.selectFrom('subscriptions').select(['provider_subscription_id', 'provider_plan_item_id'])
+  const subscription = await db.selectFrom('subscriptions').select(['provider_subscription_id', 'provider_plan_item_id', 'current_period_end'])
     .where('customer_id', '=', customerId).orderBy('updated_at', 'desc').executeTakeFirst();
   if (!subscription?.provider_subscription_id || !subscription.provider_plan_item_id) return { status: 'subscription_not_ready' as const };
   const provider = getBillingProviderFor(request.provider);
   if (!provider.updateSubscription) return { status: 'unsupported_provider' as const };
+
+  // Downgrades take effect at period end, not immediately: the customer already
+  // paid for the current period, so they keep their higher capacity until the
+  // boundary, and the request stays cancellable (rollback) until it applies.
+  // BILLING_DOWNGRADE_AT_PERIOD_END=0 restores legacy immediate proration.
+  if (request.direction === 'downgrade' && process.env.BILLING_DOWNGRADE_AT_PERIOD_END !== '0') {
+    const effectiveAt = subscription.current_period_end
+      ? new Date(subscription.current_period_end as any)
+      : new Date(Date.now() + Number(process.env.BILLING_DEFAULT_PERIOD_DAYS ?? 30) * 86_400_000);
+    await db.updateTable('billing_plan_change_requests').set({
+      status: 'scheduled', scheduled_effective_at: effectiveAt, updated_at: new Date().toISOString(),
+    }).where('id', '=', request.id).where('status', '=', 'previewed').execute();
+    return { status: 'scheduled' as const, effective_at: effectiveAt.toISOString() };
+  }
+
+  // Upgrades / lateral moves apply immediately with provider proration.
+  if (!request.proration_date) return { status: 'provider_preview_required' as const };
   const updated = await provider.updateSubscription({ subscriptionId: subscription.provider_subscription_id,
     subscriptionItemId: subscription.provider_plan_item_id, priceId: request.provider_price_id,
     prorationDate: Number(request.proration_date), idempotencyKey: `plan-change:${request.id}` });
@@ -437,9 +453,12 @@ export async function confirmPlanChange(customerId: string, requestId: string) {
 }
 
 export async function cancelPlanChange(customerId: string, requestId: string): Promise<'canceled' | 'not_found' | 'not_cancelable'> {
+  // Cancellable states: an unsubmitted preview, or a scheduled downgrade that
+  // has not yet reached its period-end effective date (rollback). Once a change
+  // is submitted to the provider or applied, it can no longer be cancelled here.
   const updated = await db.updateTable('billing_plan_change_requests').set({
     status: 'canceled', canceled_at: new Date(), updated_at: new Date().toISOString(),
-  }).where('id', '=', requestId).where('customer_id', '=', customerId).where('status', '=', 'previewed')
+  }).where('id', '=', requestId).where('customer_id', '=', customerId).where('status', 'in', ['previewed', 'scheduled'])
     .returning('id').executeTakeFirst();
   if (updated) return 'canceled';
   const exists = await db.selectFrom('billing_plan_change_requests').select('status')
@@ -451,6 +470,22 @@ export async function expirePlanChangeRequests(now = new Date()): Promise<number
   const result = await db.updateTable('billing_plan_change_requests').set({ status: 'expired', updated_at: now.toISOString() })
     .where('status', '=', 'previewed').where('expires_at', '<=', now as any).executeTakeFirst();
   return Number(result.numUpdatedRows ?? 0);
+}
+
+// Operator SLA observation. A plan-change request that has been submitted to
+// the provider (status='checkout_started') but never confirmed by a webhook or
+// picked up by reconcileSubmittedPlanChanges() should not linger indefinitely:
+// it means the provider never reflected the requested price, or the provider is
+// unsupported for authenticated retrieval. Anything past the SLA window is a
+// breach an operator must investigate. Returns the count of breaching requests.
+export async function countStuckPlanChanges(slaMinutes = 60): Promise<number> {
+  const cutoff = new Date(Date.now() - Math.max(0, slaMinutes) * 60_000);
+  const row = await db.selectFrom('billing_plan_change_requests')
+    .select(({ fn }) => fn.countAll<number>().as('count'))
+    .where('status', '=', 'checkout_started')
+    .where('updated_at', '<=', cutoff as any)
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
 }
 
 export async function reconcileSubmittedPlanChanges(options: { staleMinutes?: number; limit?: number } = {}) {
@@ -482,6 +517,45 @@ export async function reconcileSubmittedPlanChanges(options: { staleMinutes?: nu
   return result;
 }
 
+// Apply scheduled downgrades whose period-end effective date has arrived. Each
+// due request is submitted to the provider (no proration — the customer used
+// the full period) and then finalized through the provider-authoritative
+// applySubscriptionState path, which lowers the tier/quota and marks the
+// request 'applied'. Rollbacks (cancelPlanChange) that happened before the
+// boundary already moved the request to 'canceled', so it is never seen here.
+export async function applyScheduledDowngrades(now = new Date(), limit = 200) {
+  const due = await db.selectFrom('billing_plan_change_requests')
+    .select(['id', 'customer_id', 'provider', 'provider_price_id'])
+    .where('status', '=', 'scheduled').where('scheduled_effective_at', '<=', now as any)
+    .orderBy('scheduled_effective_at', 'asc').limit(Math.max(1, Math.min(limit, 500))).execute();
+  const result = { scanned: due.length, applied: 0, pending: 0, unsupported: 0, failed: 0 };
+  for (const request of due) {
+    try {
+      const subscription = await db.selectFrom('subscriptions').select(['provider_subscription_id', 'provider_plan_item_id'])
+        .where('customer_id', '=', request.customer_id).where('provider', '=', request.provider).orderBy('updated_at', 'desc').executeTakeFirst();
+      const provider = getBillingProviderFor(request.provider);
+      if (!subscription?.provider_subscription_id || !subscription.provider_plan_item_id || !provider.updateSubscription) { result.unsupported++; continue; }
+      // Move to submitted first so a concurrent provider webhook and this apply
+      // path converge on the same row via the checkout_started matcher.
+      await db.updateTable('billing_plan_change_requests').set({ status: 'checkout_started', updated_at: new Date().toISOString() })
+        .where('id', '=', request.id).where('status', '=', 'scheduled').execute();
+      const updated = await provider.updateSubscription({ subscriptionId: subscription.provider_subscription_id,
+        subscriptionItemId: subscription.provider_plan_item_id, priceId: request.provider_price_id,
+        prorationDate: Math.floor(now.getTime() / 1000), idempotencyKey: `scheduled-downgrade:${request.id}` });
+      await applySubscriptionState({ provider: request.provider,
+        provider_event_id: `scheduled_downgrade:${request.id}:${updated.status}:${request.provider_price_id}`,
+        type: 'customer.subscription.updated', internal_customer_id: request.customer_id,
+        provider_subscription_id: updated.id, plan_item_id: subscription.provider_plan_item_id,
+        price_id: request.provider_price_id, status: updated.status });
+      const state = await db.selectFrom('billing_plan_change_requests').select('status').where('id', '=', request.id).executeTakeFirstOrThrow();
+      if (state.status === 'applied') result.applied++; else result.pending++;
+    } catch {
+      result.failed++;
+    }
+  }
+  return result;
+}
+
 export interface MeteringDrift {
   totalDrift: number;
   byCustomer: Array<{ customer_id: string; metered: number; billed: number; drift: number }>;
@@ -494,6 +568,7 @@ export interface InvoiceEvent {
   provider_customer_id: string;
   provider_invoice_id: string;
   amount_cents: number;
+  tax_cents?: number;
   currency: string;
   period_start: number;
   period_end: number;
@@ -521,12 +596,12 @@ export async function applyInvoiceEvent(ev: InvoiceEvent): Promise<boolean> {
       customer_id: customer.id, provider_invoice_id: ev.provider_invoice_id,
       period_start: new Date(ev.period_start * 1000).toISOString().slice(0, 10),
       period_end: new Date(ev.period_end * 1000).toISOString().slice(0, 10),
-      billed_quantity: ev.billed_quantity ?? 0, amount_cents: ev.amount_cents,
+      billed_quantity: ev.billed_quantity ?? 0, amount_cents: ev.amount_cents, tax_cents: ev.tax_cents ?? 0,
       currency: ev.currency.toLowerCase(), status, hosted_invoice_url: ev.hosted_invoice_url ?? null,
       invoice_pdf_url: ev.invoice_pdf_url ?? null, due_at: ev.due_at ? new Date(ev.due_at * 1000) : null,
       paid_at: ev.paid_at ? new Date(ev.paid_at * 1000) : null,
     }).onConflict((oc) => oc.column('provider_invoice_id').doUpdateSet({
-      billed_quantity: ev.billed_quantity ?? 0, amount_cents: ev.amount_cents, currency: ev.currency.toLowerCase(),
+      billed_quantity: ev.billed_quantity ?? 0, amount_cents: ev.amount_cents, tax_cents: ev.tax_cents ?? 0, currency: ev.currency.toLowerCase(),
       status, hosted_invoice_url: ev.hosted_invoice_url ?? null, invoice_pdf_url: ev.invoice_pdf_url ?? null,
       due_at: ev.due_at ? new Date(ev.due_at * 1000) : null, paid_at: ev.paid_at ? new Date(ev.paid_at * 1000) : null,
       updated_at: new Date(),
@@ -559,6 +634,63 @@ export async function applyInvoiceEvent(ev: InvoiceEvent): Promise<boolean> {
     }
     return true;
   });
+}
+
+export interface CreditNoteEvent {
+  provider: string;
+  provider_event_id: string;
+  type: string; // credit_note.created | credit_note.updated | credit_note.voided
+  provider_customer_id: string;
+  provider_credit_note_id: string;
+  provider_invoice_id?: string | null;
+  number?: string | null;
+  amount_cents: number;
+  currency: string;
+  reason?: string | null;
+  memo?: string | null;
+  raw_payload?: unknown;
+}
+
+/**
+ * Idempotently record a provider-issued credit note / refund against a
+ * customer's invoice. Links to the local invoice row when the provider invoice
+ * id is known. Returns false if the event was already processed (replay).
+ */
+export async function applyCreditNoteEvent(ev: CreditNoteEvent): Promise<boolean> {
+  return db.transaction().execute(async (trx) => {
+    const marker = await trx.insertInto('billing_events').values({
+      provider_event_id: ev.provider_event_id, type: ev.type, provider: ev.provider, payload: ev.raw_payload as any,
+    }).onConflict((oc) => oc.column('provider_event_id').doNothing()).returning('provider_event_id').executeTakeFirst();
+    if (!marker) return false;
+    const customer = await trx.selectFrom('customers').select('id')
+      .where('stripe_customer_id', '=', ev.provider_customer_id).where('billing_provider', '=', ev.provider as any).executeTakeFirst();
+    if (!customer) return true;
+    const invoice = ev.provider_invoice_id ? await trx.selectFrom('invoices').select('id')
+      .where('provider_invoice_id', '=', ev.provider_invoice_id).where('customer_id', '=', customer.id).executeTakeFirst() : undefined;
+    const status = ev.type === 'credit_note.voided' ? 'void' : 'issued';
+    await trx.insertInto('credit_notes').values({
+      customer_id: customer.id, invoice_id: invoice?.id ?? null, provider: ev.provider,
+      provider_credit_note_id: ev.provider_credit_note_id, provider_invoice_id: ev.provider_invoice_id ?? null,
+      number: ev.number ?? null, amount_cents: ev.amount_cents, currency: ev.currency.toLowerCase(),
+      reason: ev.reason ?? null, memo: ev.memo ?? null, status,
+    }).onConflict((oc) => oc.column('provider_credit_note_id').doUpdateSet({
+      invoice_id: invoice?.id ?? null, amount_cents: ev.amount_cents, currency: ev.currency.toLowerCase(),
+      reason: ev.reason ?? null, memo: ev.memo ?? null, status, updated_at: new Date(),
+    })).execute();
+    return true;
+  });
+}
+
+export async function listCustomerCreditNotes(customerId: string, options: { limit?: number; before?: string } = {}) {
+  const limit = Math.max(1, Math.min(options.limit ?? 50, 100));
+  let query = db.selectFrom('credit_notes')
+    .select(['id', 'invoice_id', 'provider_credit_note_id', 'provider_invoice_id', 'number', 'amount_cents', 'currency', 'reason', 'memo', 'status', 'created_at'])
+    .where('customer_id', '=', customerId).orderBy('created_at', 'desc').limit(limit + 1);
+  if (options.before) query = query.where('created_at', '<', options.before as any);
+  const rows = await query.execute();
+  const hasMore = rows.length > limit;
+  const credit_notes = hasMore ? rows.slice(0, limit) : rows;
+  return { credit_notes, next_cursor: hasMore ? credit_notes.at(-1)!.created_at : null };
 }
 
 /**

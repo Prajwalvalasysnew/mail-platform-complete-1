@@ -93,6 +93,14 @@ groups:
           summary: "Over 10% of inbound DSNs failed to parse"
           description: "We may be missing bounce signals; investigate inbound MTA logs and dsn.ts."
 
+      - alert: BillingPlanChangeStuck
+        expr: mp_billing_stuck_requests{kind="plan_change_submitted"} > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} plan-change request(s) past the operator SLA"
+          description: "Requests were submitted to the billing provider but never applied or reconciled within the SLA window (BILLING_PLAN_CHANGE_SLA_MINUTES, default 60m). The provider may never have reflected the requested price, or the provider is unsupported for authenticated retrieval. Inspect billing_plan_change_requests in status='checkout_started'."
+
   - name: infrastructure
     rules:
       - alert: WorkerDown

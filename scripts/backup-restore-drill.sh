@@ -55,11 +55,13 @@ docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d postgres \
   -c "CREATE DATABASE \"$SCRATCH_DB\" OWNER \"$PG_USER\";"
 ok "scratch database created"
 
-# ── 4. Restore ────────────────────────────────────────────────────────────────
+# ── 4. Restore (measure RTO) ─────────────────────────────────────────────────
 info "restoring dump into $SCRATCH_DB"
+RESTORE_START=$SECONDS
 docker exec "$PG_CONTAINER" \
   pg_restore -U "$PG_USER" -d "$SCRATCH_DB" --no-owner --role="$PG_USER" "$DUMP_FILE"
-ok "restore complete"
+RESTORE_RTO=$((SECONDS - RESTORE_START))
+ok "restore complete — measured restore time (RTO proxy): ${RESTORE_RTO}s"
 
 # ── 5. Verify table count ─────────────────────────────────────────────────────
 info "verifying restored schema"
@@ -109,4 +111,6 @@ echo "[drill]  BACKUP / RESTORE DRILL PASSED"
 echo "[drill]  source DB : $PG_DB"
 echo "[drill]  tables    : $SRC_TABLES"
 echo "[drill]  migrations: $SRC_MIGS"
+echo "[drill]  restore RTO: ${RESTORE_RTO}s (local dump→restore; measure against"
+echo "[drill]              production-sized data + real object storage for the SLA)"
 echo "[drill] ════════════════════════════════════════════"

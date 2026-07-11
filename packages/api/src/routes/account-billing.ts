@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { startCheckout, startBillingPortal, getBillingOverview, getCustomerInvoice, listCustomerInvoices, previewPlanChange, confirmPlanChange, cancelPlanChange, recordAuditSafe, isCheckoutPriceAvailable } from '@platform/shared';
+import { startCheckout, startBillingPortal, getBillingOverview, getCustomerInvoice, listCustomerInvoices, listCustomerCreditNotes, previewPlanChange, confirmPlanChange, cancelPlanChange, recordAuditSafe, isCheckoutPriceAvailable } from '@platform/shared';
 import { requireCapability } from '../plugins/session-auth.js';
 
 // Customer-facing billing under /v1/account/billing. All routes require the
@@ -61,6 +61,12 @@ export const accountBillingRoutes: FastifyPluginAsync = async (app) => {
     return listCustomerInvoices(req.user!.current_customer_id!, parsed.data);
   });
 
+  app.get('/account/billing/credit-notes', { preHandler: requireCapability('billing:manage') }, async (req, reply) => {
+    const parsed = InvoiceListQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    return listCustomerCreditNotes(req.user!.current_customer_id!, parsed.data);
+  });
+
   app.get<{ Params: { id: string } }>('/account/billing/invoices/:id', { preHandler: requireCapability('billing:manage') }, async (req, reply) => {
     if (!z.string().uuid().safeParse(req.params.id).success) return reply.code(400).send({ error: 'validation_failed' });
     const invoice = await getCustomerInvoice(req.user!.current_customer_id!, req.params.id);
@@ -87,6 +93,13 @@ export const accountBillingRoutes: FastifyPluginAsync = async (app) => {
     if (!z.string().uuid().safeParse(req.params.id).success) return reply.code(400).send({ error: 'validation_failed' });
     const result = await confirmPlanChange(req.user!.current_customer_id!, req.params.id);
     if (result.status === 'not_found') return reply.code(404).send({ error: 'not_found' });
+    // A downgrade is scheduled at period end rather than submitted immediately;
+    // that is a successful outcome, not a conflict.
+    if (result.status === 'scheduled') {
+      recordAuditSafe({ customerId: req.user!.current_customer_id, actorType: 'user', actorId: req.user!.user_id,
+        action: 'billing.plan_change_scheduled', resource: req.params.id, metadata: { effective_at: result.effective_at }, ip: req.ip });
+      return reply.code(202).send(result);
+    }
     if (result.status !== 'pending_provider_confirmation') return reply.code(409).send({ error: result.status });
     recordAuditSafe({ customerId: req.user!.current_customer_id, actorType: 'user', actorId: req.user!.user_id,
       action: 'billing.plan_change_submitted', resource: req.params.id, metadata: { provider_status: result.provider_status }, ip: req.ip });

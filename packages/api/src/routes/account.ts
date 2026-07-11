@@ -25,8 +25,15 @@ import {
   IdentityError,
   sendEmailVerificationEmail,
   sendPasswordResetEmail,
+  isSsoEnforcedForUser,
+  getOrgSsoEnforcement,
+  setOrgSsoEnforcement,
+  issueWebauthnChallenge,
+  registerPasskey,
+  listPasskeys,
+  deletePasskey,
 } from '@platform/shared';
-import { requireUser, requireFullUser } from '../plugins/session-auth.js';
+import { requireUser, requireFullUser, requireCapability } from '../plugins/session-auth.js';
 
 const bearer = (req: { headers: Record<string, any> }): string =>
   (req.headers.authorization as string | undefined)?.slice(7).trim() ?? '';
@@ -123,6 +130,14 @@ export const accountRoutes: FastifyPluginAsync = async (app) => {
       throw err;
     }
     if (!user) return reply.code(401).send({ error: 'invalid_credentials' });
+
+    // SSO enforcement: if any of the user's orgs mandate SSO, password login is
+    // refused even with correct credentials — they must use the identity
+    // provider. Checked only after the password is verified so it can't be used
+    // to probe which accounts exist / are SSO-enforced.
+    if (await isSsoEnforcedForUser(user.id)) {
+      return reply.code(403).send({ error: 'password_login_disabled', message: 'Your organization requires SSO. Sign in through your identity provider.' });
+    }
 
     await recordLogin(user.id);
     recordAuditSafe({ customerId: await primaryOrgId(user.id), actorType: 'user', actorId: user.id, actorLabel: user.email, action: 'user.login', ip: req.ip });
@@ -240,6 +255,61 @@ export const accountRoutes: FastifyPluginAsync = async (app) => {
     await disableMfa(req.user!.user_id);
     recordAuditSafe({ customerId: req.user!.current_customer_id, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email, action: 'user.mfa_disabled', ip: req.ip });
     return { ok: true };
+  });
+
+  // ---- Organization SSO enforcement (enterprise identity policy) ----
+  app.get('/account/settings/sso', { preHandler: requireCapability('settings:manage') }, async (req) => {
+    return { sso_enforced: await getOrgSsoEnforcement(req.user!.current_customer_id!) };
+  });
+
+  const SsoSchema = z.object({ enforced: z.boolean() });
+  app.patch('/account/settings/sso', { preHandler: requireCapability('settings:manage') }, async (req, reply) => {
+    const parsed = SsoSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed' });
+    await setOrgSsoEnforcement(req.user!.current_customer_id!, parsed.data.enforced);
+    recordAuditSafe({ customerId: req.user!.current_customer_id, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email,
+      action: parsed.data.enforced ? 'org.sso_enforcement_enabled' : 'org.sso_enforcement_disabled', ip: req.ip });
+    return { sso_enforced: parsed.data.enforced };
+  });
+
+  // ---- WebAuthn / passkeys (phishing-resistant MFA) ----
+  const WEBAUTHN_RP_ID = process.env.WEBAUTHN_RP_ID ?? 'localhost';
+  const WEBAUTHN_ORIGINS = (process.env.WEBAUTHN_ORIGINS ?? 'http://localhost:3000').split(',').map((o) => o.trim());
+
+  app.post('/account/webauthn/register/options', { preHandler: requireUser }, async (req) => {
+    const challenge = await issueWebauthnChallenge(req.user!.user_id, 'register');
+    return { challenge, rp: { id: WEBAUTHN_RP_ID }, user: { id: req.user!.user_id, name: req.user!.email }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -8 }] };
+  });
+
+  const RegisterPasskeySchema = z.object({
+    client_data_json: z.string().min(1), // base64url
+    attestation_object: z.string().min(1), // base64url
+    name: z.string().max(100).optional(),
+  });
+  app.post('/account/webauthn/register', { preHandler: requireUser }, async (req, reply) => {
+    const parsed = RegisterPasskeySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    const result = await registerPasskey({
+      userId: req.user!.user_id, rpId: WEBAUTHN_RP_ID, origins: WEBAUTHN_ORIGINS,
+      clientDataJSON: Buffer.from(parsed.data.client_data_json, 'base64url'),
+      attestationObject: Buffer.from(parsed.data.attestation_object, 'base64url'),
+      name: parsed.data.name,
+    });
+    if (!result.ok) return reply.code(400).send({ error: 'validation_failed', message: result.error });
+    recordAuditSafe({ customerId: req.user!.current_customer_id, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email, action: 'user.passkey_registered', resource: result.credentialId, ip: req.ip });
+    return reply.code(201).send({ credential_id: result.credentialId });
+  });
+
+  app.get('/account/webauthn/credentials', { preHandler: requireUser }, async (req) => {
+    return { credentials: await listPasskeys(req.user!.user_id) };
+  });
+
+  app.delete<{ Params: { id: string } }>('/account/webauthn/credentials/:id', { preHandler: requireUser }, async (req, reply) => {
+    if (!z.string().uuid().safeParse(req.params.id).success) return reply.code(400).send({ error: 'validation_failed' });
+    const ok = await deletePasskey(req.user!.user_id, req.params.id);
+    if (!ok) return reply.code(404).send({ error: 'not_found' });
+    recordAuditSafe({ customerId: req.user!.current_customer_id, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email, action: 'user.passkey_deleted', resource: req.params.id, ip: req.ip });
+    return reply.code(204).send();
   });
 
   // ---- Password reset ----

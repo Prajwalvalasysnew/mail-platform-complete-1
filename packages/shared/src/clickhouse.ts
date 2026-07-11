@@ -15,6 +15,15 @@
 import { db } from './db.js';
 
 export interface ClickhouseEvent {
+  /**
+   * The Postgres `events.id` — a globally-unique, monotonic idempotency key.
+   * Both the hot-path dual-write and the reconciler emit the SAME event_id for
+   * a given event, so ClickHouse (ReplacingMergeTree ordered by event_id, and a
+   * uniqExact daily rollup) collapses the two inserts into one — no duplicate
+   * analytics rows and no double-counting. Defaults to 0 only for legacy callers
+   * that don't have the id yet.
+   */
+  event_id?: number;
   message_id: string;
   customer_id: string;
   event_type: string;
@@ -106,6 +115,7 @@ function circuitIsOpen(): boolean {
 // ---------------------------------------------------------------------------
 
 interface Row {
+  event_id: number; // Postgres events.id — the ClickHouse dedup key
   message_id: string;
   customer_id: string;
   event_type: string;
@@ -172,6 +182,7 @@ process.on('beforeExit', () => {
 export async function writeClickhouseEvent(ev: ClickhouseEvent): Promise<void> {
   if (!URL_BASE) return;
   const [eligible] = await filterNonErasedClickhouseRows([{
+    event_id: ev.event_id ?? 0,
     message_id: ev.message_id,
     customer_id: ev.customer_id,
     event_type: ev.event_type,

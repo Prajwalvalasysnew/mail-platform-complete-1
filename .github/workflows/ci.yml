@@ -2,8 +2,18 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
+
+permissions:
+  contents: read
+  actions: read
+
+# A new push to the same PR supersedes the previous result. Cancel the old run
+# immediately so broken integration tests cannot consume runner time forever.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
@@ -25,8 +35,14 @@ jobs:
     env:
       DATABASE_URL: postgres://postgres:ci@localhost:5432/mail_platform
       REDIS_URL: redis://localhost:6379
+      REDIS_HOST: localhost
+      REDIS_PORT: '6379'
       JWT_SECRET: ci-jwt-secret-padding-padding-padding-padding-padding
-      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      # Quoted so YAML does not coerce an all-digit value to an integer (an
+      # unquoted 64-zero scalar parses as int 0 -> env "0" -> decodeKey fails
+      # "master key must decode to 32 bytes"). A non-zero 64-hex key is used so
+      # the value is unmistakably a 32-byte hex string.
+      ENCRYPTION_KEY: '1111111111111111111111111111111111111111111111111111111111111111'
       API_KEY_PEPPER: ci-pepper-padding-padding-padding-padding
       VERP_SECRET: ci-verp-secret-padding-padding-padding-padding
       NODE_ENV: test
@@ -43,6 +59,10 @@ jobs:
           npm run build --workspace=@platform/api
           npm run build --workspace=@platform/worker
           npm run build --workspace=@platform/tracker
+          # The SDK must be built too: e2e/sdk.e2e.test.ts imports @platform/sdk,
+          # whose package.json main/exports point at dist/, so an unbuilt sdk
+          # fails module resolution ("Failed to resolve entry for @platform/sdk").
+          npm run build --workspace=@platform/sdk
       - name: Validate production deployment contract
         run: npm run prod:check
       - name: Apply migrations
@@ -112,7 +132,7 @@ jobs:
             .
 
       - name: Scan ${{ matrix.service.name }} image with Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: mail-platform-${{ matrix.service.name }}:ci
           format: sarif
@@ -126,9 +146,10 @@ jobs:
           vuln-type: os,library
 
       # Upload SARIF so findings appear in GitHub Security → Code scanning.
-      - name: Upload Trivy SARIF to GitHub Security
-        if: always()   # upload even if the scan step failed
-        uses: github/codeql-action/upload-sarif@v3
+      - name: Upload Trivy SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          sarif_file: trivy-${{ matrix.service.name }}.sarif
-          category: trivy-${{ matrix.service.name }}
+          name: trivy-${{ matrix.service.name }}
+          path: trivy-${{ matrix.service.name }}.sarif
+          if-no-files-found: error

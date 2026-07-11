@@ -25,6 +25,7 @@ export interface CustomersTable {
   email_verify_token_hash: string | null;
   email_verify_token_expires_at: Timestamp | null;
   physical_address: string | null;
+  sso_enforced: Generated<boolean>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -205,6 +206,7 @@ export interface Database {
   audit_log: AuditLogTable;
   audit_log_hashes: AuditLogHashesTable;
   audit_log_archive: AuditLogArchiveTable;
+  audit_checkpoints: AuditCheckpointsTable;
   legal_holds: LegalHoldsTable;
   clickhouse_sync_state: ClickhouseSyncStateTable;
   review_queue: ReviewQueueTable;
@@ -226,11 +228,15 @@ export interface Database {
   billing_dunning_notifications: BillingDunningNotificationsTable;
   billing_plan_change_requests: BillingPlanChangeRequestsTable;
   invoices: InvoicesTable;
+  credit_notes: CreditNotesTable;
   invoice_line_items: InvoiceLineItemsTable;
   billing_events: BillingEventsTable;
   quota_notifications: QuotaNotificationsTable;
   admin_users: AdminUsersTable;
   admin_sessions: AdminSessionsTable;
+  admin_elevations: AdminElevationsTable;
+  webauthn_credentials: WebauthnCredentialsTable;
+  webauthn_challenges: WebauthnChallengesTable;
   volume_baselines: VolumeBaselinesTable;
   users: UsersTable;
   scim_tokens: ScimTokensTable;
@@ -508,6 +514,16 @@ export interface AuditLogArchiveTable {
   archived_at: Generated<Timestamp>;
 }
 
+export interface AuditCheckpointsTable {
+  id: Generated<string>;
+  chain_key: string;
+  seq: number;
+  row_hash: string;
+  key_id: string;
+  signature: string;
+  checkpoint_at: Generated<Timestamp>;
+}
+
 export interface LegalHoldsTable {
   id: Generated<string>;
   customer_id: string;
@@ -723,7 +739,7 @@ export interface BillingPlanChangeRequestsTable {
   provider: string;
   provider_price_id: string;
   direction: 'upgrade' | 'downgrade' | 'lateral';
-  status: Generated<'previewed' | 'checkout_started' | 'applied' | 'canceled' | 'expired'>;
+  status: Generated<'previewed' | 'checkout_started' | 'scheduled' | 'applied' | 'canceled' | 'expired'>;
   quota_delta: Generated<Record<string, unknown>>;
   feature_delta: Generated<Record<string, unknown>>;
   warnings: Generated<unknown[]>;
@@ -733,6 +749,7 @@ export interface BillingPlanChangeRequestsTable {
   preview_currency: string | null;
   applied_at: Timestamp | null;
   canceled_at: Timestamp | null;
+  scheduled_effective_at: Timestamp | null;
   expires_at: Generated<Timestamp>;
   created_at: Generated<Timestamp>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
@@ -747,6 +764,7 @@ export interface InvoicesTable {
   billed_quantity: Generated<number>;
   metered_quantity: Generated<number>;
   amount_cents: Generated<number>;
+  tax_cents: Generated<number>;
   currency: Generated<string>;
   status: Generated<'draft' | 'open' | 'paid' | 'void' | 'uncollectible'>;
   drift: Generated<number>;
@@ -771,6 +789,23 @@ export interface InvoiceLineItemsTable {
   metadata: Generated<Record<string, unknown>>;
 }
 
+export interface CreditNotesTable {
+  id: Generated<string>;
+  customer_id: string;
+  invoice_id: string | null;
+  provider: string;
+  provider_credit_note_id: string;
+  provider_invoice_id: string | null;
+  number: string | null;
+  amount_cents: Generated<number>;
+  currency: Generated<string>;
+  reason: string | null;
+  memo: string | null;
+  status: Generated<'issued' | 'void'>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface BillingEventsTable {
   provider_event_id: string;
   type: string;
@@ -788,6 +823,43 @@ export interface QuotaNotificationsTable {
   period: string;
   threshold: number;
   notified_at: Generated<Timestamp>;
+}
+
+export interface WebauthnCredentialsTable {
+  id: Generated<string>;
+  user_id: string;
+  credential_id: string;
+  public_key: string;
+  alg: number;
+  sign_count: Generated<number>;
+  aaguid: string | null;
+  transports: string | null;
+  name: string | null;
+  created_at: Generated<Timestamp>;
+  last_used_at: Timestamp | null;
+}
+
+export interface WebauthnChallengesTable {
+  id: Generated<string>;
+  user_id: string | null;
+  purpose: 'register' | 'authenticate';
+  challenge: string;
+  expires_at: Timestamp;
+  created_at: Generated<Timestamp>;
+}
+
+export interface AdminElevationsTable {
+  id: Generated<string>;
+  admin_user_id: string;
+  role: 'support' | 'operator' | 'admin' | 'superadmin';
+  reason: string;
+  granted_by: string | null;
+  break_glass: Generated<boolean>;
+  status: Generated<'active' | 'expired' | 'revoked'>;
+  expires_at: Timestamp;
+  revoked_at: Timestamp | null;
+  revoked_by: string | null;
+  created_at: Generated<Timestamp>;
 }
 
 export interface AdminUsersTable {
