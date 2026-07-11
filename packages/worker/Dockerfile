@@ -1,17 +1,19 @@
 FROM node:20-alpine AS base
 WORKDIR /app
 
-COPY package.json tsconfig.base.json ./
+COPY package.json package-lock.json tsconfig.base.json ./
 COPY infra/migrations ./infra/migrations
-COPY packages/shared ./packages/shared
-COPY packages/worker ./packages/worker
+COPY packages ./packages
 
-RUN npm install --workspaces --include-workspace-root
+RUN npm ci --workspaces --include-workspace-root
 RUN npm run build --workspace=@platform/shared
 RUN npm run build --workspace=@platform/worker
+RUN npm prune --omit=dev --workspaces --include-workspace-root
 
 FROM node:20-alpine
 WORKDIR /app
+RUN apk upgrade --no-cache \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=base /app /app
 RUN chown -R node:node /app
 USER node
