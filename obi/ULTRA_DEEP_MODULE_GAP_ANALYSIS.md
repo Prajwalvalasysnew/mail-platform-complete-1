@@ -9186,3 +9186,45 @@ analytics rows and double-counted daily totals.
 Pending (live-infra evidence): insert the same event via both paths against a
 real ClickHouse, force a merge, and assert one stored row and one counted event
 — tracked with the Phase 4 operational drills (backup/restore, failover).
+
+# 67. Remediation Execution Log — Operational Drills And Load Tooling
+
+Date: 2026-07-11
+
+Built the tooling side of the "HA/DR and failure evidence" and "operational
+certification" gaps so the evidence is reproducible on demand, and produced the
+evidence that is achievable in a code sandbox.
+
+## Changes made
+
+- `scripts/helm-render-check.sh` (new): lints the chart, renders it with default
+  AND production-like overlays, and parses every document to confirm valid
+  Kubernetes YAML with the required workload kinds. **Executed: PASSED** — helm
+  3.16 installed, chart lints (0 failures), 27 valid manifests per overlay. This
+  closes the long-standing "Helm rendering not executed (Helm unavailable)"
+  certification item.
+- `scripts/redis-failover-drill.sh` (new): primary + AOF replica, kills the
+  primary, promotes the replica, and asserts durability (marker + queued jobs
+  survive) and availability (promoted node accepts writes). **Executed: PASSED.**
+- `scripts/backup-restore-drill.sh`: added a measured restore time (RTO proxy)
+  to the existing dump/restore integrity drill.
+- `infra/loadtest/tracker.js` (new): k6 open/click throughput scenario with
+  latency/answer-rate SLO thresholds, complementing the existing `send.js`.
+- `docs/OPERATIONAL_DRILLS.md` (new): operator runbook indexing every drill,
+  what it proves, and what still requires live infrastructure.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| `helm lint` + render (default + production overlays) | PASSED — 27 valid manifests each |
+| `redis-failover-drill.sh` (durability + availability) | PASSED (executed) |
+| Shell scripts `bash -n` | all valid |
+| k6 scenarios syntax (`node --check`, ESM) | valid |
+| `migration-topology` infra test | 10/10 passed |
+
+Remaining Phase 4 items require live infrastructure rather than code: k6 soak
+against staging with a capacity report; automatic Redis/Postgres failover with
+measured RPO/RTO on production-sized data; the live-ClickHouse dedup drill; real
+Haraka TLS/PTR/HELO; and worker chaos (crash/partition/SMTP-outage) injection.
+These are enumerated in `docs/OPERATIONAL_DRILLS.md`.
