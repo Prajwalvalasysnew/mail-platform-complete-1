@@ -29,6 +29,8 @@ jobs:
     env:
       DATABASE_URL: postgres://postgres:ci@localhost:5432/mail_platform
       REDIS_URL: redis://localhost:6379
+      REDIS_HOST: localhost
+      REDIS_PORT: '6379'
       JWT_SECRET: ci-jwt-secret-padding-padding-padding-padding-padding
       ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
       API_KEY_PEPPER: ci-pepper-padding-padding-padding-padding
