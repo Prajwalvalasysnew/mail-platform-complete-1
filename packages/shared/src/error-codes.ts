@@ -117,6 +117,8 @@ export const ERROR_CODES = {
   not_replayable: { description: 'This billing event predates payload storage and cannot be replayed.', httpStatus: 422 },
   unparseable_payload: { description: 'The stored payload did not parse into an event.', httpStatus: 422 },
   unsupported_source_queue: { description: 'The specified source queue is not supported.', httpStatus: 400 },
+  unknown_price: { description: 'The requested plan/price is not available in the governed catalog.', httpStatus: 422 },
+  not_cancelable: { description: 'The plan-change request is not in a cancelable state (already submitted or applied).', httpStatus: 409 },
 
   // ── Privacy / legal hold ───────────────────────────────────────────────────
   legal_hold_active: { description: 'Erasure is blocked because the recipient is under an active legal hold.', httpStatus: 409 },

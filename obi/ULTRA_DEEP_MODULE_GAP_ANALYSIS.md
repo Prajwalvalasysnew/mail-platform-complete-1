@@ -8940,3 +8940,41 @@ Remaining work: add an operator alert/SLA for long-lived pending or unsupported
 requests, provider retrieval for PayPal/Cashfree or explicitly disable plan
 changes there, implement Stripe period-end downgrade scheduling/rollback, and
 prove the workflow with Test Clocks, SCA, network failure, and webhook delay.
+
+# 61. Remediation Execution Log — Full-Suite Certification Baseline
+
+Date: 2026-07-11
+
+Re-established a clean, trustworthy build/test/audit baseline from a fresh
+clone before continuing the 7.4→10 remediation programme. The prior full-suite
+run surfaced exactly one regression: the recent governed plan-change route
+(`packages/api/src/routes/account-billing.ts`) began returning two
+machine-readable error codes — `unknown_price` (422) and `not_cancelable`
+(409) — that were never added to the stable error-code registry, so the
+`error-registry` completeness guard failed.
+
+## Changes made
+
+- Registered `unknown_price` (422) and `not_cancelable` (409) in
+  `packages/shared/src/error-codes.ts` with descriptions and HTTP statuses,
+  restoring the emitted-vs-registered contract. Both are additive (new codes),
+  so the backward-compatibility baseline is unaffected.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (shared, api, worker, tracker, sdk) | passed |
+| `error-registry` guard (previously failing) | 3/3 passed |
+| Full test suite | 106 files / 685 tests passed, exit 0 |
+| Production dependency audit (`npm audit --omit=dev`) | 0 vulnerabilities |
+
+The suite runs green in ~131s against dockerized Postgres/Redis/Mailpit test
+infrastructure with clean process shutdown (no open-handle timeout).
+
+Remaining work (forward plan): billing completeness — Stripe period-end
+downgrade scheduling and rollback, refunds/credit notes, invoice tax fields,
+and an operator SLA alert for stuck plan-change/dunning requests; a durable
+analytics outbox; and the operational-evidence items (Helm render, k6 soak,
+Redis/Postgres failover and restore drills, Haraka TLS/PTR/HELO) that require a
+live environment rather than the code sandbox.
