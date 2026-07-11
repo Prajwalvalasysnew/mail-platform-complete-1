@@ -234,6 +234,7 @@ export interface Database {
   quota_notifications: QuotaNotificationsTable;
   admin_users: AdminUsersTable;
   admin_sessions: AdminSessionsTable;
+  admin_elevations: AdminElevationsTable;
   volume_baselines: VolumeBaselinesTable;
   users: UsersTable;
   scim_tokens: ScimTokensTable;
@@ -820,6 +821,20 @@ export interface QuotaNotificationsTable {
   period: string;
   threshold: number;
   notified_at: Generated<Timestamp>;
+}
+
+export interface AdminElevationsTable {
+  id: Generated<string>;
+  admin_user_id: string;
+  role: 'support' | 'operator' | 'admin' | 'superadmin';
+  reason: string;
+  granted_by: string | null;
+  break_glass: Generated<boolean>;
+  status: Generated<'active' | 'expired' | 'revoked'>;
+  expires_at: Timestamp;
+  revoked_at: Timestamp | null;
+  revoked_by: string | null;
+  created_at: Generated<Timestamp>;
 }
 
 export interface AdminUsersTable {

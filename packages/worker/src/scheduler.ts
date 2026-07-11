@@ -34,6 +34,7 @@ import {
   countStuckPlanChanges,
   billingStuckRequests,
   checkpointAllAuditChains,
+  expireElevations,
 } from '@platform/shared';
 
 interface Job {
@@ -254,6 +255,16 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         const stuck = await countStuckPlanChanges(slaMinutes);
         billingStuckRequests.set({ kind: 'plan_change_submitted' }, stuck);
         if (stuck) logger.error({ stuck, slaMinutes }, 'billing plan-change requests breached operator SLA');
+      },
+    },
+    {
+      // Expire elapsed JIT admin elevations (defence in depth — the effective
+      // role lookup already filters on expires_at, this closes out the rows).
+      name: 'admin_elevation_expiry',
+      everyMs: 5 * MIN,
+      run: async () => {
+        const expired = await expireElevations();
+        if (expired) logger.info({ expired }, 'expired admin elevations');
       },
     },
     {

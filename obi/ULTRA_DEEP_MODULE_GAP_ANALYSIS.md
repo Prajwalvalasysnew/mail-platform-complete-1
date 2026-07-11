@@ -9328,3 +9328,54 @@ The tamper-detection test proves the core property: after a self-consistent
 rewrite of the head link, the signature stays valid but `matchesChain` is false
 (`row_hash_diverged`). Pending live-infra evidence: an actual immutable object
 store (S3 Object Lock) as the production sink and periodic external verification.
+
+# 70. Remediation Execution Log — JIT Admin Elevation And Break-Glass
+
+Date: 2026-07-11
+
+Continued Phase 5 with the "JIT administration and break-glass approvals" item.
+Admins previously carried a fixed standing role with no way to run least-
+privilege day-to-day and elevate only when needed. Now elevation is just-in-time,
+time-boxed, reason-bound, and audited, with a flagged emergency path.
+
+## Design
+
+- **Effective role = max(standing, active elevation).** `resolveAdminSession`
+  now computes this, so every existing `requireAdmin`/`roleAtLeast` guard honours
+  an elevation automatically. `AdminContext` gains `standing_role` and `elevated`
+  for transparency.
+- **Normal JIT grant** (`grantElevation`, breakGlass=false): four-eyes — the
+  grantor cannot elevate themselves and cannot grant above their own STANDING
+  role (checked from admin_users, so an already-elevated session can't launder
+  further privilege).
+- **Break-glass** (breakGlass=true): self-service emergency elevation, allowed to
+  exceed the actor's own role but gated by a standing floor (operator+), a
+  shorter TTL cap, and a mandatory reason; the row is flagged `break_glass`.
+- TTL caps (`ADMIN_ELEVATION_MAX_MINUTES` / `ADMIN_BREAK_GLASS_MAX_MINUTES`),
+  `activeElevatedRole` filters on `expires_at` so a lapsed elevation stops
+  counting even before the sweep, `revokeElevation` for early cutoff, and an
+  `admin_elevation_expiry` scheduler job. Every grant/revoke is audited (and now
+  covered by the signed audit checkpoints from §69).
+
+## Changes made
+
+- `infra/migrations/060_admin_elevations.sql`; `schema.ts`
+  `AdminElevationsTable`.
+- `packages/shared/src/admin-jit.ts` (new): grant/revoke/expire/active/list.
+- `packages/shared/src/admin.ts`: effective-role computation in
+  `resolveAdminSession`; `AdminContext` extended.
+- `packages/api/src/routes/admin.ts`: `GET/POST /admin/elevations`,
+  `POST /admin/elevations/break-glass`, `DELETE /admin/elevations/:id`.
+- `packages/worker/src/scheduler.ts`: `admin_elevation_expiry` job.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| JIT elevation tests (four-eyes, ceiling, effective-role, break-glass floor, TTL, expiry, revoke) | 6/6 passed |
+| Full test suite (admin plane regression) | 111 files / 712 tests passed, exit 0 |
+
+Remaining enterprise items need real external parties: SCIM interoperability
+certification with real IdPs, phishing-resistant MFA / passkeys (WebAuthn),
+external penetration test, and SOC 2 evidence.

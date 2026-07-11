@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { db } from './db.js';
 import { decryptSecret, encryptSecret } from './encryption.js';
 import { generateTotpSecret, otpauthUri, verifyTotp, verifyTotpStep } from './totp.js';
+import { activeElevatedRole } from './admin-jit.js';
 
 export type AdminRole = 'support' | 'operator' | 'admin' | 'superadmin';
 const ROLE_RANK: Record<AdminRole, number> = { support: 1, operator: 2, admin: 3, superadmin: 4 };
@@ -75,7 +76,12 @@ export async function createAdminSession(
 
 export interface AdminContext {
   admin_user_id: string;
+  /** Effective role = max(standing role, active JIT elevation). Guards use this. */
   role: AdminRole;
+  /** The admin's day-to-day (unelevated) role, for display/audit. */
+  standing_role: AdminRole;
+  /** True when the effective role is currently raised by a JIT elevation. */
+  elevated: boolean;
   email: string;
 }
 
@@ -90,7 +96,13 @@ export async function resolveAdminSession(token: string): Promise<AdminContext |
     .executeTakeFirst();
   if (!row || row.disabled) return null;
   if (new Date(row.expires_at) < new Date()) return null;
-  return { admin_user_id: row.admin_user_id, role: row.role as AdminRole, email: row.email };
+  const standing = row.role as AdminRole;
+  // Effective role is the higher of the standing role and any active,
+  // unexpired JIT elevation. Existing route guards read `role`, so elevation
+  // takes effect everywhere without touching each guard.
+  const elevated = await activeElevatedRole(row.admin_user_id);
+  const role = elevated && ROLE_RANK[elevated] > ROLE_RANK[standing] ? elevated : standing;
+  return { admin_user_id: row.admin_user_id, role, standing_role: standing, elevated: role !== standing, email: row.email };
 }
 
 /** Write a privileged admin action to the audit log. */
