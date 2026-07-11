@@ -25,8 +25,11 @@ import {
   IdentityError,
   sendEmailVerificationEmail,
   sendPasswordResetEmail,
+  isSsoEnforcedForUser,
+  getOrgSsoEnforcement,
+  setOrgSsoEnforcement,
 } from '@platform/shared';
-import { requireUser, requireFullUser } from '../plugins/session-auth.js';
+import { requireUser, requireFullUser, requireCapability } from '../plugins/session-auth.js';
 
 const bearer = (req: { headers: Record<string, any> }): string =>
   (req.headers.authorization as string | undefined)?.slice(7).trim() ?? '';
@@ -123,6 +126,14 @@ export const accountRoutes: FastifyPluginAsync = async (app) => {
       throw err;
     }
     if (!user) return reply.code(401).send({ error: 'invalid_credentials' });
+
+    // SSO enforcement: if any of the user's orgs mandate SSO, password login is
+    // refused even with correct credentials — they must use the identity
+    // provider. Checked only after the password is verified so it can't be used
+    // to probe which accounts exist / are SSO-enforced.
+    if (await isSsoEnforcedForUser(user.id)) {
+      return reply.code(403).send({ error: 'password_login_disabled', message: 'Your organization requires SSO. Sign in through your identity provider.' });
+    }
 
     await recordLogin(user.id);
     recordAuditSafe({ customerId: await primaryOrgId(user.id), actorType: 'user', actorId: user.id, actorLabel: user.email, action: 'user.login', ip: req.ip });
@@ -240,6 +251,21 @@ export const accountRoutes: FastifyPluginAsync = async (app) => {
     await disableMfa(req.user!.user_id);
     recordAuditSafe({ customerId: req.user!.current_customer_id, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email, action: 'user.mfa_disabled', ip: req.ip });
     return { ok: true };
+  });
+
+  // ---- Organization SSO enforcement (enterprise identity policy) ----
+  app.get('/account/settings/sso', { preHandler: requireCapability('settings:manage') }, async (req) => {
+    return { sso_enforced: await getOrgSsoEnforcement(req.user!.current_customer_id!) };
+  });
+
+  const SsoSchema = z.object({ enforced: z.boolean() });
+  app.patch('/account/settings/sso', { preHandler: requireCapability('settings:manage') }, async (req, reply) => {
+    const parsed = SsoSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed' });
+    await setOrgSsoEnforcement(req.user!.current_customer_id!, parsed.data.enforced);
+    recordAuditSafe({ customerId: req.user!.current_customer_id, actorType: 'user', actorId: req.user!.user_id, actorLabel: req.user!.email,
+      action: parsed.data.enforced ? 'org.sso_enforcement_enabled' : 'org.sso_enforcement_disabled', ip: req.ip });
+    return { sso_enforced: parsed.data.enforced };
   });
 
   // ---- Password reset ----

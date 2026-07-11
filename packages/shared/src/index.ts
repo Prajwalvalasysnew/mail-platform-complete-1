@@ -39,6 +39,7 @@ export * from './totp.js';
 export * from './tokens.js';
 export * from './users.js';
 export * from './memberships.js';
+export * from './sso.js';
 export * from './user-sessions.js';
 export * from './mfa.js';
 export * from './invites.js';

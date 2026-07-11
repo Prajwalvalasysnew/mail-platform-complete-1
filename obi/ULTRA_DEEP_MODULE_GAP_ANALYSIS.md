@@ -9228,3 +9228,52 @@ against staging with a capacity report; automatic Redis/Postgres failover with
 measured RPO/RTO on production-sized data; the live-ClickHouse dedup drill; real
 Haraka TLS/PTR/HELO; and worker chaos (crash/partition/SMTP-outage) injection.
 These are enumerated in `docs/OPERATIONAL_DRILLS.md`.
+
+# 68. Remediation Execution Log — Customer SSO Enforcement
+
+Date: 2026-07-11
+
+Began Phase 5 (enterprise identity) with the "complete customer SSO enforcement"
+item. The platform already had SCIM provisioning and an admin-plane
+password-login-disabled posture, but a customer organization had no way to
+mandate SSO for its own members — a password login always worked. Now an org can
+enforce SSO, and password authentication is refused for its members.
+
+## Behaviour
+
+- `customers.sso_enforced` (per-tenant flag). When set, any member of that org is
+  blocked from password login with `password_login_disabled` (403) — checked
+  only AFTER the password is verified, so it cannot be used to probe which
+  accounts exist or are SSO-enforced.
+- The check fails strict (`isSsoEnforcedForUser`): if ANY of the user's active
+  orgs enforces SSO, password login is refused, so an enterprise mandate can't be
+  bypassed via a second, non-enforcing org. SSO login does not use the password
+  path and is unaffected.
+- Owners/admins toggle the policy from the dashboard; an existing session can
+  disable it (not password-gated), so enabling it can never hard-lock the org.
+
+## Changes made
+
+- `infra/migrations/058_sso_enforcement.sql`: `customers.sso_enforced` (default
+  false).
+- `packages/shared/src/schema.ts`: `sso_enforced` on `CustomersTable`.
+- `packages/shared/src/sso.ts` (new): `isSsoEnforcedForUser`,
+  `getOrgSsoEnforcement`, `setOrgSsoEnforcement`; exported from the index.
+- `packages/api/src/routes/account.ts`: login gate after `authenticate`, plus
+  `GET`/`PATCH /account/settings/sso` (settings:manage) with audit events.
+- `packages/tests/openapi-route-parity.test.ts`: allowlisted the two dashboard
+  routes with rationale.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (all five workspaces) | passed |
+| SSO enforcement e2e (enable→block→disable→restore, validation, auth) | 2/2 passed |
+| OpenAPI route-parity ratchet | passed |
+| Full test suite | 109 files / 702 tests passed, exit 0 |
+
+Remaining enterprise items need real IdPs / external auditors: SCIM
+interoperability certification, phishing-resistant MFA / passkeys (WebAuthn),
+JIT administration + break-glass approvals, an external WORM audit sink with
+signed roots, data-residency enforcement, and an external penetration test / SOC 2.

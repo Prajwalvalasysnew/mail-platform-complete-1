@@ -191,6 +191,8 @@ describe('OpenAPI route parity', () => {
       'DELETE /account/webhooks/{id}', 'POST /account/webhooks/{id}/rotate-secret',
       // Account billing (dashboard).
       'GET /account/billing', 'POST /account/billing/checkout', 'POST /account/billing/portal',
+      // Organization SSO enforcement policy (dashboard, settings:manage gated).
+      'GET /account/settings/sso', 'PATCH /account/settings/sso',
       // Audit & support (dashboard).
       'GET /audit', 'GET /account/audit', 'GET /account/audit/verify', 'GET /support/tickets', 'POST /support/tickets',
       'GET /support/tickets/{id}', 'POST /support/tickets/{id}/messages',
