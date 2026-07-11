@@ -30,6 +30,8 @@ import {
   runDunningSweep,
   expirePlanChangeRequests,
   reconcileSubmittedPlanChanges,
+  countStuckPlanChanges,
+  billingStuckRequests,
 } from '@platform/shared';
 
 interface Job {
@@ -224,6 +226,20 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         const result = await reconcileSubmittedPlanChanges();
         if (result.applied) logger.info({ result }, 'reconciled provider-confirmed plan changes');
         if (result.failed || result.unsupported) logger.warn({ result }, 'plan-change reconciliation needs attention');
+      },
+    },
+    {
+      // Operator SLA: surface plan-change requests that were submitted to the
+      // provider but have not been applied/reconciled within the SLA window.
+      // Publishes a gauge for Prometheus (BillingPlanChangeStuck alert) so a
+      // human is paged instead of the request silently lingering forever.
+      name: 'billing_plan_change_sla',
+      everyMs: 5 * MIN,
+      run: async () => {
+        const slaMinutes = Number(process.env.BILLING_PLAN_CHANGE_SLA_MINUTES ?? 60);
+        const stuck = await countStuckPlanChanges(slaMinutes);
+        billingStuckRequests.set({ kind: 'plan_change_submitted' }, stuck);
+        if (stuck) logger.error({ stuck, slaMinutes }, 'billing plan-change requests breached operator SLA');
       },
     },
     {

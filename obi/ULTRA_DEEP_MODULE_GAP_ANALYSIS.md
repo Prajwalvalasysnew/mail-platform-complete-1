@@ -8978,3 +8978,37 @@ and an operator SLA alert for stuck plan-change/dunning requests; a durable
 analytics outbox; and the operational-evidence items (Helm render, k6 soak,
 Redis/Postgres failover and restore drills, Haraka TLS/PTR/HELO) that require a
 live environment rather than the code sandbox.
+
+# 62. Remediation Execution Log — Operator SLA Alert For Stuck Plan Changes
+
+Date: 2026-07-11
+
+Closed the §60 remaining-work item "add an operator alert/SLA for long-lived
+pending or unsupported requests." A plan-change request submitted to the
+provider (`status='checkout_started'`) is normally applied by a webhook or by
+`reconcileSubmittedPlanChanges()`. If the provider never reflects the requested
+price, or the provider is unsupported for authenticated retrieval, the request
+could linger indefinitely with no operator signal. It is now observed and
+alertable.
+
+## Changes made
+
+- `packages/shared/src/billing.ts`: added `countStuckPlanChanges(slaMinutes=60)`
+  — counts `checkout_started` requests whose `updated_at` is older than the SLA
+  window.
+- `packages/shared/src/metrics.ts`: added gauge `mp_billing_stuck_requests`
+  (label `kind`) for the breach count.
+- `packages/worker/src/scheduler.ts`: added a 5-minute `billing_plan_change_sla`
+  job that publishes the gauge and logs an error on any breach. The window is
+  configurable via `BILLING_PLAN_CHANGE_SLA_MINUTES` (default 60).
+- `infra/prometheus/alerts.yml`: added the `BillingPlanChangeStuck` warning
+  alert (fires when the gauge > 0 for 15m) with operator remediation guidance.
+
+## Verification
+
+| Check | Result |
+| --- | ---: |
+| Build (shared, worker) | passed |
+| New `billing-plan-change-sla` test | 2/2 passed |
+| Full billing test group | 11 files / 50 tests passed |
+| `alerts.yml` YAML parse | valid (3 groups, 16 rules) |

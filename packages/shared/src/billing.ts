@@ -453,6 +453,22 @@ export async function expirePlanChangeRequests(now = new Date()): Promise<number
   return Number(result.numUpdatedRows ?? 0);
 }
 
+// Operator SLA observation. A plan-change request that has been submitted to
+// the provider (status='checkout_started') but never confirmed by a webhook or
+// picked up by reconcileSubmittedPlanChanges() should not linger indefinitely:
+// it means the provider never reflected the requested price, or the provider is
+// unsupported for authenticated retrieval. Anything past the SLA window is a
+// breach an operator must investigate. Returns the count of breaching requests.
+export async function countStuckPlanChanges(slaMinutes = 60): Promise<number> {
+  const cutoff = new Date(Date.now() - Math.max(0, slaMinutes) * 60_000);
+  const row = await db.selectFrom('billing_plan_change_requests')
+    .select(({ fn }) => fn.countAll<number>().as('count'))
+    .where('status', '=', 'checkout_started')
+    .where('updated_at', '<=', cutoff as any)
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
 export async function reconcileSubmittedPlanChanges(options: { staleMinutes?: number; limit?: number } = {}) {
   const cutoff = new Date(Date.now() - Math.max(0, options.staleMinutes ?? 10) * 60_000);
   const requests = await db.selectFrom('billing_plan_change_requests')
