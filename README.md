@@ -1,56 +1,38 @@
 # Mail Platform
 
-> **Phase 2–4 status:** complete. Phase 1 (correctness/safety) was already done. This revision adds scale (atomic quotas, body offload, ClickHouse), deliverability (reputation guard, blocklist monitoring, per-IP warmup, DKIM rotation), trust (Bayesian classifier, list-quality scoring, KYC tiers, GDPR delete, admin authz plane), and production polish (CI, k8s, runbooks, OpenAPI, k6). See `docs/PRODUCTION_CHECKLIST.md` for the per-section status.
+A self-hosted, multi-tenant transactional email platform — a SendGrid-style
+service you can run yourself. Node.js, TypeScript, Fastify, Haraka, BullMQ,
+PostgreSQL, Redis, and ClickHouse.
 
-## What's new in this revision
+> **Status:** the codebase is production-grade and CI-green — **719 tests across
+> 112 suites**, 0 high/critical dependency CVEs, container image scans clean, and
+> 61 tracked migrations. What remains before it is *operationally* equivalent to
+> a hosted ESP is real-world evidence that can only be earned on live
+> infrastructure: sending-IP warmup and reputation history, disaster-recovery
+> drills with measured RPO/RTO, and external security/compliance attestation.
+> See [`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md) and
+> [`docs/OPERATIONAL_DRILLS.md`](docs/OPERATIONAL_DRILLS.md).
 
-| Capability | Module / file |
-|---|---|
-| Atomic daily+monthly quota counters | `packages/shared/src/quota.ts` |
-| Bayesian classifier + URL reputation | `packages/shared/src/classifier.ts` |
-| List-quality scoring (suppression import) | `packages/shared/src/listquality.ts` |
-| Reputation guard, blocklist monitor, per-IP warmup | `packages/shared/src/reputation.ts` |
-| DKIM selector rotation lifecycle | `packages/shared/src/dkim-rotation.ts` |
-| Soft-bounce escalation | `packages/shared/src/softbounce.ts` |
-| DSN/ARF parser (testable) | `packages/shared/src/dsn.ts` |
-| Fast HMAC API-key verify + test/publishable keys | `packages/shared/src/apikeys.ts` |
-| Admin authz plane (OIDC, roles, audit) | `packages/shared/src/admin.ts` + `packages/api/src/routes/admin.ts` |
-| KMS-pluggable encryption | `packages/shared/src/kms.ts` |
-| Body offload to S3 | `packages/shared/src/storage.ts` |
-| Event firehose to ClickHouse | `packages/shared/src/clickhouse.ts` + `infra/clickhouse/init.sql` |
-| Tracked migration runner | `packages/shared/src/migrate.ts` + `npm run migrate -w @platform/shared` |
-| Billing lifecycle + metering reconciliation | `packages/shared/src/billing.ts` |
-| OpenAPI 3.1 spec | `GET /openapi.json` (source: `packages/shared/src/openapi.ts`) |
-| GDPR recipient deletion | `POST /v1/privacy/delete-recipient` |
-| CSRF token on unsubscribe + RFC 8058 one-click | `packages/tracker/src/server.ts` |
-| CI pipeline + SBOM + k6 load test | `.github/workflows/ci.yml`, `infra/loadtest/send.js` |
-| K8s manifests (HPA + PDB + CronJobs) | `infra/k8s/` |
-| Operational runbooks | `docs/runbooks/` |
-| Grafana dashboard | `infra/grafana/dashboards/mail-platform.json` |
+---
 
-Test count: **239 tests passing** across 36 suites — unit suites plus a full
-**end-to-end** layer (`packages/tests/e2e/`) that boots the real Fastify API and
-BullMQ send worker against live Postgres + Redis and drives the complete send
-pipeline over HTTP (auth, scopes, validation, quota, idempotency, suppression,
-abuse, templating, resource CRUD, signup). Run all tests with `npm test`, or just
-the end-to-end layer with `npm run test:e2e`. See
-[`docs/TESTING.md`](docs/TESTING.md).
+## What's in the box
 
+| Area | Highlights | Where |
+|---|---|---|
+| **Send pipeline** | Transactional send outbox, atomic daily+monthly quota reservation, idempotency keys, per-recipient fan-out, template rendering, click/open injection | `packages/api/src/routes/send.ts`, `packages/worker/src/send-worker.ts`, `packages/shared/src/{quota,outbox,templates}.ts` |
+| **Multi-tenant isolation** | Fail-closed Postgres **row-level security** with per-request tenant context; non-superuser app role that cannot bypass RLS | migration `043_rls_fail_closed`, `packages/shared/src/tenant-context.ts` |
+| **Deliverability** | Reputation guard (auto-throttle/pause), blocklist monitor, per-IP **warmup** schedule, DKIM selector rotation wired to the live Haraka signer, DSN/ARF parsing, failure taxonomy, open/click **bot detection** (Apple MPP / scanners / prefetch) | `packages/shared/src/{reputation,warmup,dkim-rotation,dsn,failure-taxonomy,bot-detection}.ts` |
+| **Billing** | Governed plan catalog + entitlements, dunning, invoices with line items + **tax** + **credit notes/refunds**, Stripe-native proration, plan-change lifecycle with missing-webhook reconciliation; Stripe / official-PayPal / Cashfree webhook verification | `packages/shared/src/billing.ts`, `packages/api/src/routes/{billing,account-billing}.ts` |
+| **Privacy / GDPR** | Durable erasure across Postgres, body storage, ClickHouse and BullMQ/DLQ; worker **tombstones**; legal hold; consent ledger | `packages/shared/src/{privacy-erasure,legal-hold,suppression}.ts` |
+| **Tamper-evident audit** | Per-tenant hash chain, retention-safe archive, and **Ed25519-signed checkpoints exported to a WORM sink** | `packages/shared/src/{audit,audit-worm}.ts` |
+| **Enterprise identity** | Admin RBAC + OIDC + TOTP, SCIM 2.0 provisioning, **customer SSO enforcement**, **JIT admin elevation + break-glass**, **WebAuthn / passkeys** | `packages/shared/src/{admin,admin-jit,scim,sso,webauthn}.ts` |
+| **Analytics** | Event firehose to ClickHouse with **exactly-once dedup** (ReplacingMergeTree keyed on a shared idempotency key + `uniqExact` rollup) and durable watermark reconciliation | `packages/shared/src/{clickhouse,clickhouse-reconcile}.ts`, `infra/clickhouse/init.sql` |
+| **Observability & safety** | `mp_`-prefixed Prometheus metrics, Grafana dashboard, Alertmanager rules, central log + trace redaction | `infra/{prometheus,grafana,alertmanager}` |
+| **Ops tooling** | Docker prod compose, Helm chart, and *runnable* drills: Helm render check, Redis failover, Postgres backup/restore (with RTO), k6 load scenarios | `docker-compose.production.yml`, `infra/helm/`, `scripts/`, `infra/loadtest/` |
+| **Developer surface** | OpenAPI 3.1 spec with route-parity + breaking-change guards, a typed SDK, stable error-code registry | `GET /openapi.json`, `packages/sdk`, `packages/shared/src/error-codes.ts` |
 
-A self-hosted, multi-tenant transactional email platform — a SendGrid-style service
-you can run yourself. Built with Node.js, TypeScript, Fastify, Haraka, BullMQ,
-PostgreSQL, and Redis.
-
-> **What this is:** a working, runnable skeleton that demonstrates the real
-> architecture of a transactional email provider. About 30 source files, ~2500
-> lines of code.
->
-> **What this is not:** a turnkey SendGrid replacement. Production deployment
-> requires real secrets, real IPs with PTR records, DNS configuration, IP
-> warming, ISP postmaster registrations, and abuse-prevention engineering.
-> Start with [`docs/ENTERPRISE_DEPLOYMENT.md`](docs/ENTERPRISE_DEPLOYMENT.md),
-> then use [`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md) as
-> the detailed readiness checklist.
+Run everything with `npm test`, or just the HTTP end-to-end layer with
+`npm run test:e2e`. See [`docs/TESTING.md`](docs/TESTING.md).
 
 ---
 
@@ -59,35 +41,34 @@ PostgreSQL, and Redis.
 ```
 ┌─────────────┐    ┌──────────────┐    ┌──────────────┐
 │  REST API   │───▶│   BullMQ     │───▶│  Haraka      │───▶ Internet
-│ (Fastify)   │    │  (Redis)     │    │  (outbound)  │
-└─────────────┘    └──────────────┘    └──────────────┘
+│ (Fastify)   │    │  (Redis)     │    │  (outbound)  │      (direct MX
+└─────────────┘    └──────────────┘    └──────────────┘       or relay)
        │                  ▲                    ▲
        ▼                  │                    │
 ┌─────────────┐    ┌──────────────┐    ┌──────────────┐
 │ PostgreSQL  │◀───│   Workers    │◀───│   Haraka     │
-└─────────────┘    │ send/events/ │    │  (inbound:   │
-       ▲           │  webhooks    │    │   bounces +  │
+│  (+ RLS)    │    │ send/events/ │    │  (inbound:   │
+└─────────────┘    │  webhooks    │    │   bounces +  │
        │           └──────────────┘    │   FBLs)      │
-       │                                └──────────────┘
-       │                  ▲
-       │                  │
-┌─────────────┐           │
-│  Tracker    │───────────┘
-│ opens/clicks│  events
-│ unsub       │
-└─────────────┘
+       ▼                                └──────────────┘
+┌─────────────┐    ┌──────────────┐
+│  ClickHouse │◀───│   Tracker    │  opens / clicks / unsubscribe
+│ (analytics) │    │              │
+└─────────────┘    └──────────────┘
 ```
 
-Six services, one repo:
+One repo, these packages:
 
 | Package | What it does |
 |---|---|
-| `packages/api` | Fastify REST API — auth, send endpoint, domains, suppressions, messages, webhooks |
-| `packages/worker` | Three BullMQ workers — send (queue → Haraka), events (status updates + suppression), webhooks (HMAC-signed delivery) |
-| `packages/tracker` | Open pixel, click redirect, RFC 8058 one-click unsubscribe, open/click bot detection (Apple MPP / scanner / prefetch filtering) |
-| `packages/haraka-outbound` | Outbound MTA with custom DKIM signing per customer domain and event emission |
-| `packages/haraka-inbound` | Inbound MTA — parses DSNs (bounces) and ARF (feedback loop complaints) |
-| `packages/shared` | DB connection (Kysely), queues, Redis, suppression cache, crypto utils, types |
+| `packages/api` | Fastify REST API — auth, send, domains, suppressions, messages, webhooks, billing, admin, privacy, support |
+| `packages/worker` | BullMQ workers — send (queue → Haraka), events (status + suppression), webhooks (HMAC-signed delivery), plus scheduler jobs (retention, warmup, reputation, audit checkpoints, billing dunning/reconcile) |
+| `packages/tracker` | Open pixel, click redirect, RFC 8058 one-click unsubscribe, bot detection |
+| `packages/haraka-outbound` | Outbound MTA — per-customer DKIM signing, event emission, internal-header cleanup |
+| `packages/haraka-inbound` | Inbound MTA — parses DSNs (bounces) and ARF (FBL complaints) |
+| `packages/shared` | DB (Kysely), queues, Redis, crypto, billing, audit, identity, analytics, storage — the domain core |
+| `packages/sdk` | Typed client SDK (used by the e2e suite and consumers) |
+| `packages/tests` | Unit + HTTP end-to-end suites |
 
 ---
 
@@ -95,7 +76,9 @@ Six services, one repo:
 
 - Docker + Docker Compose
 - Node.js 20+ (only needed if running outside Docker)
-- For real sending: a server with static IPs, DNS control, and the ability to set PTR records
+- For real sending: a host that allows outbound **port 25** and lets you set
+  **reverse DNS (PTR)**, plus DNS control. (Most big clouds block port 25 — see
+  [`docs/ENTERPRISE_DEPLOYMENT.md`](docs/ENTERPRISE_DEPLOYMENT.md).)
 
 ---
 
@@ -108,21 +91,13 @@ cp .env.example .env
 # 2. Boot the full stack
 docker compose up -d --build
 
-# 3. Wait ~20 seconds for Postgres + migrations to settle, then check health
+# 3. Wait for Postgres + migrations to settle, then check health
 curl http://localhost:3000/health
-# {"status":"ok","ts":"..."}
 
-# 4. Create a customer and get an API key via signup
+# 4. Create a customer and API key via signup
 curl -X POST http://localhost:3000/v1/signup \
   -H "Content-Type: application/json" \
   -d '{"email": "you@example.com", "name": "Test"}'
-
-# Response:
-# {
-#   "customer": { "id": "...", "email": "...", "tier": "free", "daily_quota": 100 },
-#   "api_key": "mp_live_xxxxxxxxxxxxxxxxxxxxxx",
-#   "note": "Save this API key — it will not be shown again."
-# }
 
 # 5. Register a sending domain (returns DNS records to add)
 curl -X POST http://localhost:3000/v1/domains \
@@ -130,13 +105,11 @@ curl -X POST http://localhost:3000/v1/domains \
   -H "Content-Type: application/json" \
   -d '{"domain": "send.yourdomain.com"}'
 
-# 6. Add the returned DNS records to your domain's DNS, wait for propagation
-
-# 7. Verify the domain
+# 6. Add the returned DNS records, wait for propagation, then verify
 curl -X POST http://localhost:3000/v1/domains/DOMAIN_ID/verify \
   -H "Authorization: Bearer mp_live_YOUR_KEY"
 
-# 8. Send mail
+# 7. Send
 curl -X POST http://localhost:3000/v1/send \
   -H "Authorization: Bearer mp_live_YOUR_KEY" \
   -H "Content-Type: application/json" \
@@ -144,7 +117,7 @@ curl -X POST http://localhost:3000/v1/send \
     "from": "hello@send.yourdomain.com",
     "to": "recipient@example.com",
     "subject": "Hello from your own email platform",
-    "html": "<h1>It works!</h1><p>This was sent through your platform.</p>"
+    "html": "<h1>It works!</h1>"
   }'
 ```
 
@@ -152,65 +125,69 @@ curl -X POST http://localhost:3000/v1/send \
 
 ## Services and ports
 
-When `docker compose up` is running:
-
 | Service | URL / Port | Purpose |
 |---|---|---|
 | API | `http://localhost:3000` | REST API |
 | Tracker | `http://localhost:4000` | Opens, clicks, unsubscribes |
 | Haraka outbound | `localhost:2525` | SMTP relay for the worker |
-| Haraka inbound | `localhost:2526` (→ 25) | Bounce/FBL ingestion |
-| Postgres | `localhost:5432` | Database |
-| Redis | `localhost:6379` | Queue, cache, rate limit |
-| Prometheus | `http://localhost:9090` | Metrics (start with `--profile monitoring`) |
-| Grafana | `http://localhost:3001` | Dashboards — login `admin` / `admin` (start with `--profile monitoring`) |
+| Haraka inbound | `localhost:2526` (→ 25) | Bounce / FBL ingestion |
+| Postgres | `localhost:5432` | Database (RLS-enforced) |
+| Redis | `localhost:6379` | Queues, cache, rate limit |
+| Prometheus | `http://localhost:9090` | Metrics (`--profile monitoring`) |
+| Grafana | `http://localhost:3001` | Dashboards, `admin`/`admin` (`--profile monitoring`) |
+
+Start with monitoring: `docker compose --profile monitoring up -d --build`.
+All app metrics are prefixed `mp_` (e.g. `mp_messages_delivered_total`,
+`mp_engagement_events_total{verdict="bot"}`). Alert rules live in
+`infra/prometheus/alerts.yml`.
 
 ---
 
-## Monitoring (Prometheus + Grafana)
+## Deploying for real
 
-Metrics and dashboards are bundled but live behind a Docker Compose profile so
-they don't run unless you ask for them. To start the full stack **with**
-monitoring:
+- **Direct-send (own IPs):** run the API/DB/workers anywhere, but run Haraka on a
+  host that allows port 25 + rDNS (e.g. Hetzner). Warm your IPs, enroll in Google
+  Postmaster / Microsoft SNDS / Yahoo FBL (ingestion is built in), and tighten
+  DMARC. Use `docker-compose.production.yml` for a single node or the Helm chart
+  under `infra/helm/` at scale.
+- **Relay:** point Haraka at an SMTP smarthost, or set `DELIVERY_TRANSPORT=ses`
+  for a shared-pool relay with managed reputation.
+- Reproducible reliability drills: `scripts/helm-render-check.sh`,
+  `scripts/redis-failover-drill.sh`, `scripts/backup-restore-drill.sh`, and the
+  k6 scenarios in `infra/loadtest/`. See [`docs/OPERATIONAL_DRILLS.md`](docs/OPERATIONAL_DRILLS.md).
+
+Start with [`docs/ENTERPRISE_DEPLOYMENT.md`](docs/ENTERPRISE_DEPLOYMENT.md) and
+the [`docs/`](docs/) set (billing, audit, ClickHouse durability, RLS rollout,
+SCIM, storage, and more).
+
+---
+
+## How email flows
+
+**Sending:** `POST /v1/send` → validate (key→customer, domain verified, not
+suppressed, quota reserved atomically, idempotency) → persist + enqueue → send
+worker renders tracking/VERP/List-Unsubscribe and hands off to Haraka →
+`customer_dkim` signs → `header_cleanup` strips internal `X-MP-*` headers →
+delivery → `event_emitter` pushes delivered/deferred/bounce → event worker
+updates status, fans out to webhooks, dual-writes analytics to ClickHouse.
+
+**Bounces:** recipient MX returns a DSN to the signed VERP return-path → Haraka
+inbound parses it → hard bounces auto-suppress.
+
+**Complaints (FBL):** ISP sends an ARF report to your feedback address → parsed →
+recipient auto-suppressed.
+
+---
+
+## Development without Docker
 
 ```bash
-docker compose --profile monitoring up -d --build
+docker compose up -d postgres redis haraka-outbound haraka-inbound
+DATABASE_URL=postgresql://mail:mailpass@localhost:5432/mail_platform npm run migrate
+npm install
+npm run build --workspace=@platform/shared
+npm run dev:api      # + dev:worker, dev:tracker in other terminals
 ```
-
-Then:
-
-- **Grafana** → http://localhost:3001 (login `admin` / `admin`). The
-  *Mail Platform — Operational Overview* dashboard is auto-provisioned, with the
-  Prometheus datasource already wired up. Panels include send/delivery rates,
-  bounce & complaint rates by IP pool, queue depth, API latency, blocklist
-  status, dead-letter counts, and **open/click engagement split by bot-detection
-  verdict** (human / bot / suspicious).
-- **Prometheus** → http://localhost:9090 (use the Graph or Alerts tab). It
-  scrapes `/metrics` on the API (`:3000`), worker (`:9100`), and tracker
-  (`:4000`) every 15s, and loads the alert rules in
-  `infra/prometheus/alerts.yml`.
-
-All app metrics are prefixed `mp_` (e.g. `mp_messages_delivered_total`,
-`mp_engagement_events_total{verdict="bot"}`, `mp_send_duration_seconds`). You can
-hit any service's `/metrics` directly, e.g. `curl http://localhost:3000/metrics`.
-
-If you start the stack without the profile, the app runs normally and simply
-isn't scraped — no monitoring containers are launched.
-
-## API reference
-
-Developer guides (getting started, webhooks, errors, deliverability, ...) live in [`docs/guides/`](docs/guides/). Full endpoint reference in [`docs/API.md`](docs/API.md). Key endpoints:
-
-- `POST /v1/signup` — create customer (public)
-- `POST /v1/send` — send an email
-- `POST /v1/domains` — register a sending domain (returns DNS records)
-- `POST /v1/domains/:id/verify` — re-check DNS records
-- `GET  /v1/messages` — list sent messages with status
-- `GET  /v1/messages/:id` — detailed event timeline for one message
-- `GET  /v1/suppressions` — list suppressed recipients
-- `POST /v1/webhooks` — subscribe to delivery events
-
-All routes (except `/v1/signup` and `/health`) require `Authorization: Bearer mp_live_…`.
 
 ---
 
@@ -218,134 +195,41 @@ All routes (except `/v1/signup` and `/health`) require `Authorization: Bearer mp
 
 ```
 mail-platform/
-├── docker-compose.yml          # Full stack orchestration
-├── package.json                # npm workspaces root
-├── tsconfig.base.json          # Shared TS config
-├── .env.example                # Copy to .env
+├── docker-compose.yml               # dev stack
+├── docker-compose.production.yml    # single-node production
 ├── infra/
-│   ├── migrations/001_init.sql # Database schema
-│   └── dkim/                   # Generated DKIM keys (gitignored)
+│   ├── migrations/                  # 61 tracked SQL migrations (001…061)
+│   ├── clickhouse/init.sql          # analytics schema (dedup engine)
+│   ├── helm/mail-platform/          # Kubernetes chart (HPA, PDB, network policies)
+│   ├── prometheus/ · grafana/ · alertmanager/
+│   └── loadtest/                    # k6 scenarios (send, tracker)
 ├── packages/
-│   ├── shared/                 # @platform/shared - DB, queues, types
-│   ├── api/                    # @platform/api - Fastify REST API
-│   ├── worker/                 # @platform/worker - BullMQ workers
-│   ├── tracker/                # @platform/tracker - tracking server
-│   ├── haraka-outbound/        # Outbound MTA + custom plugins
-│   └── haraka-inbound/         # Inbound MTA for bounces
-├── scripts/
-│   ├── seed.ts                 # Seed a test customer
-│   └── generate-dkim.sh        # Generate DKIM keypairs
-└── docs/
-    ├── ARCHITECTURE.md
-    ├── API.md
-    ├── DNS_SETUP.md
-    └── PRODUCTION_CHECKLIST.md
+│   ├── shared/ api/ worker/ tracker/ sdk/ tests/
+│   ├── haraka-outbound/ · haraka-inbound/
+├── scripts/                         # DKIM gen, backup/restore, redis-failover, helm-render drills
+└── docs/                            # architecture, billing, audit, SCIM, deployment, drills, …
 ```
 
 ---
 
-## How email actually flows through the system
+## Honest assessment
 
-**Sending an email:**
+The **code and tooling** are strong and fully tested; the gap to a
+production-operated ESP is not more code but **live operational and compliance
+evidence** that has to be earned on real infrastructure:
 
-1. Customer hits `POST /v1/send` with an API key
-2. API validates: API key → customer, sender domain verified, recipient not suppressed, daily quota OK
-3. API inserts a row into `messages` and enqueues a job in BullMQ (`send` queue)
-4. The send worker picks up the job, renders tracking pixels/links, builds VERP return-path,
-   adds `List-Unsubscribe` headers, hands the message to Haraka via authenticated SMTP
-5. Haraka's `customer_dkim` plugin looks up the customer's DKIM private key from Postgres
-   and signs the message
-6. Haraka's `header_cleanup` plugin strips internal `X-MP-*` headers
-7. Haraka delivers to the recipient's MX server (or queues for retry)
-8. Haraka's `event_emitter` plugin pushes a `delivered`/`deferred`/`bounce` event to BullMQ
-9. The event worker updates the message status and fans out to subscribed customer webhooks
-10. If the recipient opens or clicks, the tracker server records the event
+- **Deliverability history** — 30–90 days of IP/domain warmup, sender reputation,
+  complaint/bounce data, and inbox-placement results.
+- **HA / DR proof** — automatic Postgres/Redis failover and restore drills with
+  measured RPO/RTO on production-sized data (drill scripts are included and run
+  locally; the numbers must be produced against your infra).
+- **Security & compliance** — external penetration test and SOC 2 evidence;
+  WebAuthn attestation-chain trust; SCIM interoperability certification with real
+  IdPs.
 
-**Receiving a bounce:**
-
-1. Recipient MX server can't deliver and sends a DSN back to the VERP return-path
-   (`bounce+<encoded-message-id>@bounces.yourdomain.com`)
-2. Haraka inbound accepts the DSN
-3. `bounce_parser` plugin extracts the original Message-ID from the VERP address,
-   parses the DSN body (Status, Diagnostic-Code), classifies hard vs soft
-4. Pushes a `hard_bounce` or `soft_bounce` event
-5. Event worker auto-adds hard-bounced recipients to the customer's suppression list
-
-**Receiving a complaint (FBL):**
-
-1. User clicks "Mark as Spam" in Gmail/Outlook/Yahoo
-2. The ISP sends an ARF report to your registered FBL address
-3. `bounce_parser` parses the ARF, extracts the original Message-ID
-4. Event worker auto-suppresses the recipient and updates message status
-
----
-
-## Development without Docker
-
-If you want hot-reload during development:
-
-```bash
-# Terminal 1: deps in Docker
-docker compose up -d postgres redis haraka-outbound haraka-inbound
-
-# Run tracked migrations once
-DATABASE_URL=postgresql://mail:mailpass@localhost:5432/mail_platform npm run migrate
-
-# Install workspace deps
-npm install
-
-# Build the shared package first
-npm run build --workspace=@platform/shared
-
-# Terminal 2: API
-npm run dev:api
-
-# Terminal 3: Worker
-npm run dev:worker
-
-# Terminal 4: Tracker
-npm run dev:tracker
-```
-
----
-
-## Customizing the platform domain
-
-In production, change these `.env` values:
-
-```bash
-PLATFORM_DOMAIN=yourdomain.com
-BOUNCE_DOMAIN=bounces.yourdomain.com
-TRACKING_DOMAIN=https://track.yourdomain.com
-```
-
-Also update:
-- `packages/haraka-outbound/config/me` — your MTA hostname (must match PTR record)
-- `packages/haraka-inbound/config/me` — your bounce MTA hostname
-- `packages/haraka-inbound/config/host_list` — add your real bounce + FBL domains
-
----
-
-## Honest assessment of what's missing for production
-
-This skeleton gets you about 30% of the way to a production transactional email
-provider. The remaining 70% is:
-
-- **IP warming** — fresh IPs send <100/day on day 1, ramping over weeks
-- **ISP postmaster registration** — Google Postmaster Tools, Microsoft SNDS/JMRP, Yahoo CFL
-- **Abuse detection** — content scanning, anomaly detection, automatic quarantining
-- **Per-IP reputation tracking** — pause sending on a hot IP automatically
-- **Admin dashboard / customer UI** — none included; API only
-- **Observability stack** — Prometheus, Grafana, alerting on bounce/complaint rates
-- **Multi-region deployment** — single-region docker-compose included
-- **Comprehensive tests** — core subsystems now covered (239 tests, incl. open/click bot detection, migration runner coverage, and OpenAPI contract checks); load/chaos/soak testing still needed
-
-> **Note:** DKIM keys are encrypted at rest (AES-256-GCM), API-key scopes are
-> enforced, DKIM signing uses the `mailauth` library and fails closed, VERP
-> bounce tokens are HMAC-signed, and `POST /v1/send` supports idempotency keys.
-> See `docs/PRODUCTION_CHECKLIST.md` for the full status.
-
-See [`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md) for the full punch list.
+Everything above is enumerated in
+[`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md) and
+[`docs/OPERATIONAL_DRILLS.md`](docs/OPERATIONAL_DRILLS.md).
 
 ---
 
