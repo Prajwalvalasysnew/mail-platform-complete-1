@@ -55,6 +55,7 @@ export interface RetentionResult {
   messages_body_purged: number;
   messages_purged: number;
   events_purged: number;
+  event_keys_purged: number;
   tracked_links_purged: number;
   webhook_log_purged: number;
   blocklist_checks_purged: number;
@@ -285,6 +286,26 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     return Number(res.rows[0]?.count ?? 0);
   });
 
+  // --- 5b. Purge expired event dedup claims (batched) --------------------
+  // event_keys only needs to cover the retry horizon (hours); aging it with
+  // the event window is already generous. Not hold-gated: the claim row is
+  // an idempotency artifact, not tenant content.
+  const eventKeysPurged = await drainBatches(batchSize, async (limit) => {
+    const res = await sql<{ count: string }>`
+      WITH batch AS (
+        SELECT event_key FROM event_keys
+        WHERE created_at < ${eventCutoff}
+        ORDER BY created_at
+        LIMIT ${limit}
+      ), deleted AS (
+        DELETE FROM event_keys k USING batch WHERE k.event_key = batch.event_key
+        RETURNING k.event_key
+      )
+      SELECT COUNT(*)::text AS count FROM deleted
+    `.execute(db);
+    return Number(res.rows[0]?.count ?? 0);
+  });
+
   // --- 6. Purge webhook delivery log (batched, not hold-gated) -----------
   // Operational delivery telemetry (status codes, durations, endpoint
   // errors) — not tenant message content.
@@ -364,6 +385,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     messages_body_purged: messagesBodyPurged,
     messages_purged: messagesPurged,
     events_purged: eventsPurged,
+    event_keys_purged: eventKeysPurged,
     tracked_links_purged: trackedLinksPurged,
     webhook_log_purged: webhookLogPurged,
     blocklist_checks_purged: blocklistPurged,

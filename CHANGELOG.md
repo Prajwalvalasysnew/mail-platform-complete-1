@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.7.27 - Monthly partitioning of events (Database 10/10 Plan, Phase 1.1)
+
+### `events` is now RANGE-partitioned by month
+
+- Migration `063_events_partitioned.sql` rebuilds `events` as a
+  `PARTITION BY RANGE (occurred_at)` table (PK `(id, occurred_at)`), copying
+  existing rows under an exclusive lock inside the migration transaction and
+  keeping the old table as `events_legacy` for one release as a fallback.
+  Same indexes (cascaded to all partitions) and the same fail-closed RLS
+  tenant policy as migration 043. On very large live deployments run this in
+  a low-traffic window — the copy is proportional to table size.
+- New `partition_maintenance` scheduler job (6h): pre-creates partitions
+  `EVENT_PARTITION_MONTHS_AHEAD` months ahead (default 3), drops months fully
+  past `RETENTION_EVENT_DAYS` as O(1) metadata operations instead of millions
+  of row deletes, and skips (re-checks next run) any partition containing
+  rows under an active legal hold. Rows landing in the safety-net default
+  partition are surfaced via the new `mp_events_default_partition_rows` gauge.
+- The batched row-level event delete in `runRetention` remains as the
+  fine-grained cleaner inside live partitions (per-tenant windows in Phase 2,
+  legal-hold skips).
+
+### Event dedup moved to an `event_keys` claim table
+
+- A partitioned table cannot carry the global `UNIQUE(event_key)` index that
+  the worker's `ON CONFLICT (event_key)` retry-dedup relied on. Dedup claims
+  now live in the unpartitioned `event_keys` side table: the claim, the event
+  insert, and the usage bump commit in one transaction, so exactly-once
+  accounting semantics are unchanged (covered by the existing
+  `event-idempotency` e2e tests). Keys age out with the event retention
+  window (`event_keys_purged` in the retention result).
+- The advisory `webhook_delivery_log.event_id` FK is dropped (it cannot
+  reference a partitioned PK subset and would block partition drops);
+  `event_id` remains as a plain pointer column.
+
 ## v0.7.26 - Retention hardening (Database 10/10 Plan, Phase 0)
 
 ### Legal-hold-aware retention (compliance fix)

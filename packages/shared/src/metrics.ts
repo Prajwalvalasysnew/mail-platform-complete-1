@@ -154,6 +154,12 @@ export const retentionHeldSkipped = new Gauge({
   registers: [registry],
 });
 
+export const eventsDefaultPartitionRows = new Gauge({
+  name: 'mp_events_default_partition_rows',
+  help: 'Rows in the events default partition (should be 0; >0 means partition pre-creation fell behind)',
+  registers: [registry],
+});
+
 export const pgPoolConnections = new Gauge({
   name: 'mp_pg_pool_connections',
   help: 'Postgres pool connections by state (total/idle/waiting)',

@@ -5,6 +5,14 @@ database review (July 2026). It is scoped to the data layer: Postgres,
 ClickHouse, the retention/lifecycle machinery, and the deployment posture
 around them. Application-level items live in `PRODUCTION_READINESS_ROADMAP.md`.
 
+> **Status**
+> - **Phase 0 — DONE** (v0.7.26): hold-aware batched retention, unbounded-table
+>   purges, cutoff indexes (062), pool hardening + gauges.
+> - **Phase 1.1 — DONE** (v0.7.27): `events` partitioned by month (063),
+>   `event_keys` dedup side table, `partition_maintenance` scheduler job with
+>   hold-aware partition drops.
+> - Phase 1.2 (messages), Phase 2, 3, 4 — pending.
+
 ## Where we stand
 
 | Area | Today | Target |

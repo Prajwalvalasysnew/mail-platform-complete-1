@@ -23,6 +23,10 @@ import {
   meteringDrift,
   runRetention,
   retentionHeldSkipped,
+  ensureEventPartitions,
+  sweepExpiredEventPartitions,
+  countDefaultPartitionRows,
+  eventsDefaultPartitionRows,
   assertPublicHttpUrl,
   ingestPostmaster,
   updateVolumeBaseline,
@@ -276,6 +280,32 @@ export function startScheduler(logger: Logger): { stop: () => void } {
       run: async () => {
         const result = await checkpointAllAuditChains();
         if (result.signed) logger.info({ result }, 'signed audit chain checkpoints');
+      },
+    },
+    {
+      // Monthly-partitioned events table upkeep: pre-create partitions a few
+      // months ahead, drop months fully past retention (hold-aware; O(1)
+      // instead of row deletes), and alert if rows ever land in the default
+      // partition (means pre-creation fell behind).
+      name: 'partition_maintenance',
+      everyMs: 6 * HOUR,
+      run: async () => {
+        const created = await ensureEventPartitions(
+          Number(process.env.EVENT_PARTITION_MONTHS_AHEAD ?? 3),
+        );
+        if (created.length) logger.info({ created }, 'created future event partitions');
+
+        const sweep = await sweepExpiredEventPartitions();
+        if (sweep.dropped.length) logger.info({ dropped: sweep.dropped }, 'dropped expired event partitions');
+        if (sweep.held.length) {
+          logger.warn({ held: sweep.held }, 'expired event partitions kept: rows under active legal hold');
+        }
+
+        const defaultRows = await countDefaultPartitionRows();
+        eventsDefaultPartitionRows.set(defaultRows);
+        if (defaultRows > 0) {
+          logger.error({ defaultRows }, 'events default partition has rows — partition pre-creation fell behind');
+        }
       },
     },
     {

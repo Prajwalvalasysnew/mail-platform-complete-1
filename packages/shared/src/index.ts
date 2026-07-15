@@ -57,6 +57,7 @@ export * from './apikey-management.js';
 export * from './webhooks.js';
 export * from './domains.js';
 export * from './retention.js';
+export * from './partitions.js';
 export * from './scim.js';
 export * from './failure-taxonomy.js';
 export * from './error-codes.js';

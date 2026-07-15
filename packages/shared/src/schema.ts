@@ -138,6 +138,17 @@ export interface EventsTable {
   occurred_at: Generated<Timestamp>;
 }
 
+// Dedup claims for keyed events. Unpartitioned side table because the
+// partitioned events table cannot carry a global UNIQUE(event_key) index;
+// the event worker claims a key here (ON CONFLICT DO NOTHING) in the same
+// transaction as the event insert. Rows age out with the event retention
+// window.
+export interface EventKeysTable {
+  event_key: string;
+  event_id: number | null;
+  created_at: Generated<Timestamp>;
+}
+
 export interface SuppressionsTable {
   customer_id: string;
   email: string;
@@ -196,6 +207,7 @@ export interface Database {
   sending_domains: SendingDomainsTable;
   messages: MessagesTable;
   events: EventsTable;
+  event_keys: EventKeysTable;
   suppressions: SuppressionsTable;
   consent_events: ConsentEventsTable;
   tracked_links: TrackedLinksTable;
