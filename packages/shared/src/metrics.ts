@@ -160,6 +160,12 @@ export const eventsDefaultPartitionRows = new Gauge({
   registers: [registry],
 });
 
+export const messagesDefaultPartitionRows = new Gauge({
+  name: 'mp_messages_default_partition_rows',
+  help: 'Rows in the messages default partition (should be 0; >0 means partition pre-creation fell behind)',
+  registers: [registry],
+});
+
 export const pgPoolConnections = new Gauge({
   name: 'mp_pg_pool_connections',
   help: 'Postgres pool connections by state (total/idle/waiting)',

@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.7.28 - Monthly partitioning of messages + outbox retention (Database 10/10 Plan, Phase 1.2)
+
+### `messages` is now RANGE-partitioned by month
+
+- Migration `064_messages_partitioned.sql` rebuilds `messages` as
+  `PARTITION BY RANGE (queued_at)` (PK `(id, queued_at)`), using the same
+  copy + rename swap under an exclusive lock as 063; the old table stays as
+  `messages_legacy` for one release. All indexes, the `updated_at` trigger,
+  the fail-closed RLS tenant policy, and the customers/unsubscribe_groups
+  FKs are recreated on the partitioned parent.
+- `UNIQUE(message_id)` became `UNIQUE(message_id, queued_at)` (partitioned
+  unique indexes must include the partition key); ids are app-generated
+  UUID-based with no ON CONFLICT paths, and a plain `(message_id)` index
+  keeps single-message lookups fast.
+- The `send_outbox.message_id` FK is dropped (blocked partition drops). The
+  privacy-erasure route now deletes outbox rows explicitly where the CASCADE
+  used to, and the message + outbox rows were already written in a single
+  transaction on the insert side.
+- The `partition_maintenance` job now manages both tables: pre-creates
+  months ahead, drops months past `RETENTION_MESSAGE_DAYS` /
+  `RETENTION_EVENT_DAYS` as O(1) metadata ops (skipping any partition with
+  rows under an active legal hold), and reports default-partition strays via
+  `mp_messages_default_partition_rows` alongside the events gauge.
+
+### send_outbox rows now age out
+
+- Previously send_outbox rows accumulated forever. Processed rows
+  ('enqueued'/'failed') older than `RETENTION_OUTBOX_DAYS` (default 30) are
+  purged in batches; 'pending' rows are never touched. New
+  `send_outbox_purged` field in the retention result and an
+  `idx_send_outbox_created` cutoff index.
+
 ## v0.7.27 - Monthly partitioning of events (Database 10/10 Plan, Phase 1.1)
 
 ### `events` is now RANGE-partitioned by month

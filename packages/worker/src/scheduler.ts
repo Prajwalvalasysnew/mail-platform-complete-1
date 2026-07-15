@@ -27,6 +27,10 @@ import {
   sweepExpiredEventPartitions,
   countDefaultPartitionRows,
   eventsDefaultPartitionRows,
+  ensureMessagePartitions,
+  sweepExpiredMessagePartitions,
+  countMessageDefaultPartitionRows,
+  messagesDefaultPartitionRows,
   assertPublicHttpUrl,
   ingestPostmaster,
   updateVolumeBaseline,
@@ -290,21 +294,32 @@ export function startScheduler(logger: Logger): { stop: () => void } {
       name: 'partition_maintenance',
       everyMs: 6 * HOUR,
       run: async () => {
-        const created = await ensureEventPartitions(
-          Number(process.env.EVENT_PARTITION_MONTHS_AHEAD ?? 3),
-        );
-        if (created.length) logger.info({ created }, 'created future event partitions');
+        const monthsAhead = Number(process.env.EVENT_PARTITION_MONTHS_AHEAD ?? 3);
+        const created = [
+          ...(await ensureEventPartitions(monthsAhead)),
+          ...(await ensureMessagePartitions(monthsAhead)),
+        ];
+        if (created.length) logger.info({ created }, 'created future partitions');
 
-        const sweep = await sweepExpiredEventPartitions();
-        if (sweep.dropped.length) logger.info({ dropped: sweep.dropped }, 'dropped expired event partitions');
-        if (sweep.held.length) {
-          logger.warn({ held: sweep.held }, 'expired event partitions kept: rows under active legal hold');
+        for (const [table, sweep] of [
+          ['events', await sweepExpiredEventPartitions()],
+          ['messages', await sweepExpiredMessagePartitions()],
+        ] as const) {
+          if (sweep.dropped.length) logger.info({ table, dropped: sweep.dropped }, 'dropped expired partitions');
+          if (sweep.held.length) {
+            logger.warn({ table, held: sweep.held }, 'expired partitions kept: rows under active legal hold');
+          }
         }
 
-        const defaultRows = await countDefaultPartitionRows();
-        eventsDefaultPartitionRows.set(defaultRows);
-        if (defaultRows > 0) {
-          logger.error({ defaultRows }, 'events default partition has rows — partition pre-creation fell behind');
+        const eventDefaultRows = await countDefaultPartitionRows();
+        const messageDefaultRows = await countMessageDefaultPartitionRows();
+        eventsDefaultPartitionRows.set(eventDefaultRows);
+        messagesDefaultPartitionRows.set(messageDefaultRows);
+        if (eventDefaultRows > 0 || messageDefaultRows > 0) {
+          logger.error(
+            { eventDefaultRows, messageDefaultRows },
+            'default partition has rows — partition pre-creation fell behind',
+          );
         }
       },
     },

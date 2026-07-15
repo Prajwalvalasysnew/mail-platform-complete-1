@@ -11,7 +11,10 @@ around them. Application-level items live in `PRODUCTION_READINESS_ROADMAP.md`.
 > - **Phase 1.1 — DONE** (v0.7.27): `events` partitioned by month (063),
 >   `event_keys` dedup side table, `partition_maintenance` scheduler job with
 >   hold-aware partition drops.
-> - Phase 1.2 (messages), Phase 2, 3, 4 — pending.
+> - **Phase 1.2 — DONE** (v0.7.28): `messages` partitioned by month (064),
+>   send_outbox FK dropped + explicit erasure cleanup, send_outbox retention.
+> - Phase 2, 3, 4 — pending. Cleanup reminder: drop `events_legacy` and
+>   `messages_legacy` in a follow-up migration after one release of soak time.
 
 ## Where we stand
 

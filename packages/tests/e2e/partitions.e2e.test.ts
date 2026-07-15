@@ -11,10 +11,14 @@ import {
   sweepExpiredEventPartitions,
   listEventPartitions,
   countDefaultPartitionRows,
+  ensureMessagePartitions,
+  sweepExpiredMessagePartitions,
+  listMessagePartitions,
   partitionRange,
   placeLegalHold,
   releaseLegalHold,
   seedCustomer,
+  runRetention,
 } from '@platform/shared';
 
 async function tableExists(name: string): Promise<boolean> {
@@ -118,6 +122,96 @@ describe('event partition maintenance', () => {
     const currentName = `events_part_${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     expect(before).toContain(currentName);
     expect(after).toContain(currentName);
+  });
+
+  it('messages: ensure + expired-partition drop + hold skip', async () => {
+    const { customerId } = await seedCustomer();
+
+    // Pre-create current/future months and verify naming.
+    await ensureMessagePartitions(2);
+    const now = new Date();
+    const currentName = `messages_part_${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    expect(await listMessagePartitions()).toContain(currentName);
+
+    // Ancient partition with one message in it, inserted via the parent.
+    await sql`
+      CREATE TABLE IF NOT EXISTS messages_part_202003 PARTITION OF messages
+      FOR VALUES FROM ('2020-03-01') TO ('2020-04-01')
+    `.execute(db);
+    await db
+      .insertInto('messages')
+      .values({
+        message_id: `part-msg-${Date.now()}`,
+        customer_id: customerId,
+        from_address: 'sender@seed.example.com',
+        to_address: 'partition@example.com',
+        subject: 'ancient',
+        status: 'delivered' as any,
+        ip_pool: 'transactional',
+        attempts: 1,
+        queued_at: new Date('2020-03-10T00:00:00Z') as any,
+      } as any)
+      .execute();
+
+    // Held: the sweep must keep the partition.
+    const hold = await placeLegalHold({ customerId, scope: 'customer', reason: 'litigation' });
+    let sweep = await sweepExpiredMessagePartitions(395);
+    expect(sweep.held).toContain('messages_part_202003');
+    expect(await tableExists('messages_part_202003')).toBe(true);
+
+    // Released: the sweep drops it as a metadata op.
+    await releaseLegalHold(customerId, hold.id);
+    sweep = await sweepExpiredMessagePartitions(395);
+    expect(sweep.dropped).toContain('messages_part_202003');
+    expect(await tableExists('messages_part_202003')).toBe(false);
+
+    // Live months are untouched.
+    expect(await listMessagePartitions()).toContain(currentName);
+  });
+
+  it('processed send_outbox rows age out via retention', async () => {
+    const { customerId } = await seedCustomer();
+    const mkMsg = async (suffix: string) => {
+      const id = `outbox-ret-${suffix}-${Date.now()}`;
+      await db.insertInto('messages').values({
+        message_id: id,
+        customer_id: customerId,
+        from_address: 'sender@seed.example.com',
+        to_address: `${suffix}@example.com`,
+        subject: 'outbox retention',
+        status: 'delivered' as any,
+        ip_pool: 'transactional',
+        attempts: 1,
+      } as any).execute();
+      return id;
+    };
+    const oldMsg = await mkMsg('old');
+    const pendingMsg = await mkMsg('pending');
+    const old = new Date(Date.now() - 60 * 86_400_000);
+
+    await db.insertInto('send_outbox').values({
+      message_id: oldMsg, customer_id: customerId,
+      status: 'enqueued' as any, created_at: old as any, run_at: old as any,
+    } as any).execute();
+    await db.insertInto('send_outbox').values({
+      message_id: pendingMsg, customer_id: customerId,
+      status: 'pending' as any, created_at: old as any, run_at: old as any,
+    } as any).execute();
+
+    const result = await runRetention({ outboxRetentionDays: 30 });
+    expect(result.send_outbox_purged).toBeGreaterThanOrEqual(1);
+
+    const remaining = await db
+      .selectFrom('send_outbox')
+      .select(['message_id', 'status'])
+      .where('message_id', 'in', [oldMsg, pendingMsg])
+      .execute();
+    const byId = new Map(remaining.map((r) => [r.message_id, r.status]));
+    expect(byId.has(oldMsg)).toBe(false); // enqueued + old → purged
+    expect(byId.get(pendingMsg)).toBe('pending'); // pending is never purged
+
+    // Clean up so the leftover pending row is never drained by another test.
+    await db.deleteFrom('send_outbox').where('message_id', 'in', [oldMsg, pendingMsg]).execute();
   });
 
   it('countDefaultPartitionRows reports rows landing outside pre-created ranges', async () => {

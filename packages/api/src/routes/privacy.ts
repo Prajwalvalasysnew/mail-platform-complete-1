@@ -79,6 +79,14 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
         .where('message_id', 'in', subquery)
         .execute();
 
+      // Outbox rows were previously removed by the messages FK CASCADE; with
+      // messages partitioned (migration 064) the FK is gone, so delete them
+      // explicitly before the message rows.
+      await trx
+        .deleteFrom('send_outbox')
+        .where('message_id', 'in', subquery)
+        .execute();
+
       const msgDel = await trx
         .deleteFrom('messages')
         .where('customer_id', '=', auth.customer_id)

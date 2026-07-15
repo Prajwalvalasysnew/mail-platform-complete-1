@@ -47,6 +47,8 @@ export interface RetentionOptions {
   webhookLogRetentionDays?: number;
   /** Days to keep blocklist_checks rows. Default: RETENTION_BLOCKLIST_DAYS env or 180. */
   blocklistRetentionDays?: number;
+  /** Days to keep processed send_outbox rows. Default: RETENTION_OUTBOX_DAYS env or 30. */
+  outboxRetentionDays?: number;
   /** Max rows per delete/update batch. Default: RETENTION_BATCH_SIZE env or 10_000. */
   batchSize?: number;
 }
@@ -59,6 +61,7 @@ export interface RetentionResult {
   tracked_links_purged: number;
   webhook_log_purged: number;
   blocklist_checks_purged: number;
+  send_outbox_purged: number;
   audit_purged: number;
   review_queue_purged: number;
   /** Rows matching a retention cutoff but preserved by an active legal hold. */
@@ -104,6 +107,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     reviewQueueRetentionDays = Number(process.env.RETENTION_REVIEW_QUEUE_DAYS ?? 30),
     webhookLogRetentionDays = Number(process.env.RETENTION_WEBHOOK_LOG_DAYS ?? 30),
     blocklistRetentionDays = Number(process.env.RETENTION_BLOCKLIST_DAYS ?? 180),
+    outboxRetentionDays = Number(process.env.RETENTION_OUTBOX_DAYS ?? 30),
     batchSize = Number(process.env.RETENTION_BATCH_SIZE ?? 10_000),
   } = opts;
 
@@ -114,6 +118,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   const reviewCutoff = new Date(Date.now() - reviewQueueRetentionDays * 86_400_000);
   const webhookLogCutoff = new Date(Date.now() - webhookLogRetentionDays * 86_400_000);
   const blocklistCutoff = new Date(Date.now() - blocklistRetentionDays * 86_400_000);
+  const outboxCutoff = new Date(Date.now() - outboxRetentionDays * 86_400_000);
 
   let heldSkipped = 0;
 
@@ -325,6 +330,28 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     return Number(res.rows[0]?.count ?? 0);
   });
 
+  // --- 6b. Purge processed send_outbox rows (batched) ---------------------
+  // 'enqueued' rows are history once handed to the queue (a genuinely stuck
+  // one is reclaimed back to 'pending' within minutes by the drain job);
+  // 'failed' rows are kept for the same window for debugging. 'pending' rows
+  // are never purged — they are still work to do.
+  const sendOutboxPurged = await drainBatches(batchSize, async (limit) => {
+    const res = await sql<{ count: string }>`
+      WITH batch AS (
+        SELECT id FROM send_outbox
+        WHERE status IN ('enqueued', 'failed')
+          AND created_at < ${outboxCutoff}
+        ORDER BY created_at
+        LIMIT ${limit}
+      ), deleted AS (
+        DELETE FROM send_outbox s USING batch WHERE s.id = batch.id
+        RETURNING s.id
+      )
+      SELECT COUNT(*)::text AS count FROM deleted
+    `.execute(db);
+    return Number(res.rows[0]?.count ?? 0);
+  });
+
   // --- 7. Purge blocklist checks (batched, platform-level data) -----------
   const blocklistPurged = await drainBatches(batchSize, async (limit) => {
     const res = await sql<{ count: string }>`
@@ -389,6 +416,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     tracked_links_purged: trackedLinksPurged,
     webhook_log_purged: webhookLogPurged,
     blocklist_checks_purged: blocklistPurged,
+    send_outbox_purged: sendOutboxPurged,
     audit_purged: auditPurged,
     review_queue_purged: reviewQueuePurged,
     held_rows_skipped: heldSkipped,
