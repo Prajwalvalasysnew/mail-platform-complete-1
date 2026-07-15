@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { sql } from 'kysely';
-import { db } from '@platform/shared';
+import { db, retentionVisibilityCutoff } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -33,12 +33,17 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       const { period } = z.object({ period: PeriodParam }).parse(req.query);
       const interval = periodToInterval(period);
 
+      // Plan-tiered history window (Phase 2.1): analytics never look past the
+      // tenant's configured retention window.
+      const cutoff = await retentionVisibilityCutoff(auth.customer_id);
+
       const eventRows = await tenantScoped(req, (trx) =>
         trx
           .selectFrom('events')
           .select(['event_type', db.fn.countAll<number>().as('count')])
           .where('customer_id', '=', auth.customer_id)
           .where(sql<boolean>`occurred_at >= now() - ${interval}`)
+          .$if(cutoff !== null, (qb) => qb.where('occurred_at', '>=', cutoff as any))
           .groupBy('event_type')
           .execute()
       );
@@ -82,6 +87,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       const interval = periodToInterval(period);
       const trunc = truncUnit(granularity);
 
+      const cutoff = await retentionVisibilityCutoff(auth.customer_id);
       const rows = await tenantScoped(req, (trx) =>
         trx
           .selectFrom('events')
@@ -92,6 +98,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
           ])
           .where('customer_id', '=', auth.customer_id)
           .where(sql<boolean>`occurred_at >= now() - ${interval}`)
+          .$if(cutoff !== null, (qb) => qb.where('occurred_at', '>=', cutoff as any))
           .groupBy([sql`date_trunc(${trunc}, occurred_at)`, 'event_type'])
           .orderBy(sql`date_trunc(${trunc}, occurred_at)`, 'asc')
           .execute()
@@ -128,6 +135,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         .object({ by: ByParam, period: PeriodParam })
         .parse(req.query);
       const interval = periodToInterval(period);
+      const cutoff = await retentionVisibilityCutoff(auth.customer_id);
 
       const rows = await tenantScoped(req, async (trx) => {
         if (by === 'tag') {
@@ -141,6 +149,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
             ])
             .where('events.customer_id', '=', auth.customer_id)
             .where(sql<boolean>`events.occurred_at >= now() - ${interval}`)
+            .$if(cutoff !== null, (qb) => qb.where('events.occurred_at', '>=', cutoff as any))
             .groupBy([sql`unnest(messages.tags)`, 'events.event_type'])
             .execute();
           return rawRows.map((r) => ({ key: r.key, event_type: r.event_type, count: Number(r.count) }));
@@ -155,6 +164,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
             ])
             .where('events.customer_id', '=', auth.customer_id)
             .where(sql<boolean>`events.occurred_at >= now() - ${interval}`)
+            .$if(cutoff !== null, (qb) => qb.where('events.occurred_at', '>=', cutoff as any))
             .groupBy([sql`split_part(messages.from_address, '@', 2)`, 'events.event_type'])
             .execute();
           return rawRows.map((r) => ({ key: r.key, event_type: r.event_type, count: Number(r.count) }));
@@ -170,6 +180,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
             ])
             .where('events.customer_id', '=', auth.customer_id)
             .where(sql<boolean>`events.occurred_at >= now() - ${interval}`)
+            .$if(cutoff !== null, (qb) => qb.where('events.occurred_at', '>=', cutoff as any))
             .groupBy([sql`coalesce(messages.template_id::text, 'none')`, 'events.event_type'])
             .execute();
           return rawRows.map((r) => ({ key: r.key, event_type: r.event_type, count: Number(r.count) }));

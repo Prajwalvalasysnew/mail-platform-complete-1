@@ -26,6 +26,8 @@ export interface CustomersTable {
   email_verify_token_expires_at: Timestamp | null;
   physical_address: string | null;
   sso_enforced: Generated<boolean>;
+  events_retention_days: number | null;
+  body_retention_days: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -705,6 +707,8 @@ export interface BillingPlansTable {
   monthly_quota: number;
   features: Generated<Record<string, unknown>>;
   active: Generated<boolean>;
+  events_retention_days: number | null;
+  body_retention_days: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }

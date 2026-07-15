@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.7.29 - Per-plan retention windows (Database 10/10 Plan, Phase 2.1)
+
+### Retention is now a plan feature (SendGrid/Mailgun/Postmark parity)
+
+- Migration `065_per_plan_retention.sql` adds `events_retention_days` /
+  `body_retention_days` to `billing_plans` (seeded: free 7/7, starter 30/30,
+  pro 90/90, enterprise 365/90 — only where not already customized) and
+  per-customer override columns on `customers` for enterprise deals
+  (settable via `PATCH /admin/customers/:id`).
+- **Model: logical retention on reads, physical purge at the platform
+  ceiling.** A tenant's effective window = customer override → plan value →
+  platform default (`retention-policy.ts`, one SQL definition shared by the
+  sweep and the API). Events windows can only tighten (the partition ceiling
+  is physical); body windows may extend up to the message-row lifetime.
+- The retention sweep now purges bodies and events per-tenant: a free-plan
+  tenant's bodies/events go at 7 days while the platform default stays 90.
+- Logical read visibility: tenants with an explicit window see only that
+  window on `GET /messages`, `GET /messages/:id`, `/messages/activity`, and
+  all `/analytics/*` endpoints. **Tenants with no plan value and no override
+  keep exactly the previous behavior** — filtering activates only for
+  explicit windows, so existing API consumers lose no history.
+- ClickHouse TTL documented as lockstep with `RETENTION_EVENT_DAYS` (the
+  ceiling) for deployments selling longer windows.
+
 ## v0.7.28 - Monthly partitioning of messages + outbox retention (Database 10/10 Plan, Phase 1.2)
 
 ### `messages` is now RANGE-partitioned by month

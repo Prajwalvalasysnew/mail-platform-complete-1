@@ -13,7 +13,10 @@ around them. Application-level items live in `PRODUCTION_READINESS_ROADMAP.md`.
 >   hold-aware partition drops.
 > - **Phase 1.2 — DONE** (v0.7.28): `messages` partitioned by month (064),
 >   send_outbox FK dropped + explicit erasure cleanup, send_outbox retention.
-> - Phase 2, 3, 4 — pending. Cleanup reminder: drop `events_legacy` and
+> - **Phase 2.1 — DONE** (v0.7.29): per-plan/per-customer retention windows
+>   (065), logical read visibility, per-tenant sweep enforcement.
+> - Phase 2.2 (self-serve exports), 2.3 partially (CH TTL documented), Phase
+>   3, 4 — pending. Cleanup reminder: drop `events_legacy` and
 >   `messages_legacy` in a follow-up migration after one release of soak time.
 
 ## Where we stand

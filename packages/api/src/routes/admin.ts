@@ -60,6 +60,7 @@ import {
   purgeDeadLetter,
   purgeAllDeadLetters,
   runRetention,
+  clearRetentionPolicyCache,
   reconcileMetering,
   type AdminContext,
   type AdminRole,
@@ -976,6 +977,10 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     tier: z.enum(['free', 'paid', 'enterprise']).optional(),
     daily_quota: z.number().int().min(0).max(100_000_000).optional(),
     monthly_quota: z.number().int().min(0).max(1_000_000_000).optional(),
+    // Per-tenant retention overrides (enterprise deals). null clears the
+    // override back to the plan/platform default.
+    events_retention_days: z.number().int().min(1).max(3650).nullable().optional(),
+    body_retention_days: z.number().int().min(1).max(3650).nullable().optional(),
   });
   app.patch('/customers/:id', { preHandler: requireAdmin('operator') }, async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -985,10 +990,15 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     if (parsed.data.tier !== undefined) set.tier = parsed.data.tier;
     if (parsed.data.daily_quota !== undefined) set.daily_quota = parsed.data.daily_quota;
     if (parsed.data.monthly_quota !== undefined) set.monthly_quota = parsed.data.monthly_quota;
+    if (parsed.data.events_retention_days !== undefined) set.events_retention_days = parsed.data.events_retention_days;
+    if (parsed.data.body_retention_days !== undefined) set.body_retention_days = parsed.data.body_retention_days;
     if (Object.keys(set).length === 0) return reply.code(400).send({ error: 'no_fields' });
     set.updated_at = new Date();
     const res = await db.updateTable('customers').set(set).where('id', '=', id).executeTakeFirst();
     if (Number(res.numUpdatedRows ?? 0) === 0) return reply.code(404).send({ error: 'not_found' });
+    if (parsed.data.events_retention_days !== undefined || parsed.data.body_retention_days !== undefined) {
+      clearRetentionPolicyCache();
+    }
     await auditAdminAction(req.admin!, 'update_customer', 'customer', { ...parsed.data }, id);
     return { updated: id, ...parsed.data };
   });

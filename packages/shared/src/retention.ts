@@ -31,6 +31,7 @@
 import { sql } from 'kysely';
 import { db } from './db.js';
 import { getBodyStore } from './storage.js';
+import { tenantRetentionWindowsSql } from './retention-policy.js';
 
 export interface RetentionOptions {
   /** Days to keep message bodies. Default: RETENTION_BODY_DAYS env or 90. */
@@ -113,6 +114,17 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
 
   const bodyCutoff = new Date(Date.now() - messageBodyRetentionDays * 86_400_000);
   const eventCutoff = new Date(Date.now() - eventRetentionDays * 86_400_000);
+  // Per-tenant windows (Phase 2.1): customer override → plan value → the
+  // defaults above. Events windows only tighten (physical partition ceiling);
+  // body windows may extend up to the message-row lifetime. The fixed cutoffs
+  // above remain for tables without tenant windows (tracked_links keys off
+  // the platform body window; message ROWS always drop at the platform
+  // message window).
+  const windows = tenantRetentionWindowsSql({
+    eventsDays: eventRetentionDays,
+    bodyDays: messageBodyRetentionDays,
+    messageDays: messageRetentionDays,
+  });
   const messageCutoff = new Date(Date.now() - messageRetentionDays * 86_400_000);
   const auditCutoff = new Date(Date.now() - auditRetentionDays * 86_400_000);
   const reviewCutoff = new Date(Date.now() - reviewQueueRetentionDays * 86_400_000);
@@ -125,11 +137,12 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   // --- 1. Purge inline bodies (batched, hold-aware) ----------------------
   const messagesBodyPurgedInline = await drainBatches(batchSize, async (limit) => {
     const res = await sql<{ count: string }>`
-      WITH batch AS (
-        SELECT id FROM messages
+      WITH windows AS (${windows}), batch AS (
+        SELECT messages.id FROM messages
+        LEFT JOIN windows w ON w.customer_id = messages.customer_id
         WHERE body_storage = 'inline'
           AND status IN (${sql.join([...TERMINAL_STATUSES])})
-          AND queued_at < ${bodyCutoff}
+          AND queued_at < now() - make_interval(days => COALESCE(w.body_days, ${messageBodyRetentionDays})::int)
           AND (html_body IS NOT NULL OR text_body IS NOT NULL)
           AND ${noHoldOnMessage}
         ORDER BY queued_at
@@ -147,10 +160,12 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
 
   // Count inline bodies preserved solely because of a hold (visibility).
   const heldInline = await sql<{ count: string }>`
+    WITH windows AS (${windows})
     SELECT COUNT(*)::text AS count FROM messages
+    LEFT JOIN windows w ON w.customer_id = messages.customer_id
     WHERE body_storage = 'inline'
       AND status IN (${sql.join([...TERMINAL_STATUSES])})
-      AND queued_at < ${bodyCutoff}
+      AND queued_at < now() - make_interval(days => COALESCE(w.body_days, ${messageBodyRetentionDays})::int)
       AND (html_body IS NOT NULL OR text_body IS NOT NULL)
       AND ${holdOnMessage}
   `.execute(db);
@@ -161,31 +176,31 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   // retention AND none of them is under an active legal hold. First collect
   // keys still live (referenced by a non-expired, non-terminal, or held
   // message), then delete the rest.
-  const liveKeyRows = await db
-    .selectFrom('messages')
-    .select('body_object_key')
-    .where('body_storage', '!=', 'inline')
-    .where('body_object_key', 'is not', null)
-    .where((eb) =>
-      eb.or([
-        eb('status', 'not in', TERMINAL_STATUSES),
-        eb('queued_at', '>=', bodyCutoff as any),
-        holdOnMessage,
-      ]),
-    )
-    .groupBy('body_object_key')
-    .execute();
-  const liveKeys = new Set(liveKeyRows.map((r) => r.body_object_key).filter(Boolean));
+  const liveKeyRows = await sql<{ body_object_key: string }>`
+    WITH windows AS (${windows})
+    SELECT body_object_key FROM messages
+    LEFT JOIN windows w ON w.customer_id = messages.customer_id
+    WHERE body_storage != 'inline'
+      AND body_object_key IS NOT NULL
+      AND (
+        status NOT IN (${sql.join([...TERMINAL_STATUSES])})
+        OR queued_at >= now() - make_interval(days => COALESCE(w.body_days, ${messageBodyRetentionDays})::int)
+        OR ${holdOnMessage}
+      )
+    GROUP BY body_object_key
+  `.execute(db);
+  const liveKeys = new Set(liveKeyRows.rows.map((r) => r.body_object_key).filter(Boolean));
 
-  const expiredObjectRows = await db
-    .selectFrom('messages')
-    .select('body_object_key')
-    .where('body_storage', '!=', 'inline')
-    .where('body_object_key', 'is not', null)
-    .where('status', 'in', TERMINAL_STATUSES)
-    .where('queued_at', '<', bodyCutoff as any)
-    .groupBy('body_object_key')
-    .execute();
+  const expiredObjectRows = (await sql<{ body_object_key: string }>`
+    WITH windows AS (${windows})
+    SELECT body_object_key FROM messages
+    LEFT JOIN windows w ON w.customer_id = messages.customer_id
+    WHERE body_storage != 'inline'
+      AND body_object_key IS NOT NULL
+      AND status IN (${sql.join([...TERMINAL_STATUSES])})
+      AND queued_at < now() - make_interval(days => COALESCE(w.body_days, ${messageBodyRetentionDays})::int)
+    GROUP BY body_object_key
+  `.execute(db)).rows;
 
   const store = getBodyStore();
   for (const row of expiredObjectRows) {
@@ -230,10 +245,11 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   // message is already purged are still protected by tenant-wide holds.
   const eventsPurged = await drainBatches(batchSize, async (limit) => {
     const res = await sql<{ count: string }>`
-      WITH batch AS (
+      WITH windows AS (${windows}), batch AS (
         SELECT e.id FROM events e
         LEFT JOIN messages ON messages.message_id = e.message_id
-        WHERE e.occurred_at < ${eventCutoff}
+        LEFT JOIN windows w ON w.customer_id = e.customer_id
+        WHERE e.occurred_at < now() - make_interval(days => LEAST(COALESCE(w.events_days, ${eventRetentionDays}), ${eventRetentionDays})::int)
           AND NOT EXISTS (
             SELECT 1 FROM legal_holds h
             WHERE h.released_at IS NULL
@@ -254,9 +270,11 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   });
 
   const heldEvents = await sql<{ count: string }>`
+    WITH windows AS (${windows})
     SELECT COUNT(*)::text AS count FROM events e
     LEFT JOIN messages ON messages.message_id = e.message_id
-    WHERE e.occurred_at < ${eventCutoff}
+    LEFT JOIN windows w ON w.customer_id = e.customer_id
+    WHERE e.occurred_at < now() - make_interval(days => LEAST(COALESCE(w.events_days, ${eventRetentionDays}), ${eventRetentionDays})::int)
       AND EXISTS (
         SELECT 1 FROM legal_holds h
         WHERE h.released_at IS NULL
