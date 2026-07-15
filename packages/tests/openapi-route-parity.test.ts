@@ -213,6 +213,8 @@ describe('OpenAPI route parity', () => {
       // Messages sub-routes pending docs.
       'GET /messages/scheduled',
       'DELETE /messages/{messageId}/cancel',
+      // Self-serve data exports (Phase 2.2) — pending public spec docs.
+      'POST /exports', 'GET /exports', 'GET /exports/{id}', 'GET /exports/{id}/download',
       // analytics/summary|timeseries|breakdown, usage/quota, stats now documented.
       'POST /privacy/delete-recipient', 'GET /privacy/deletions', 'GET /privacy/export-recipient',
       // Legal holds (gap analysis #19) — block erasure for held recipients.

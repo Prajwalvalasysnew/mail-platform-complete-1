@@ -61,6 +61,7 @@ import { auditRoutes } from '@platform/api/routes/audit.js';
 import { supportRoutes } from '@platform/api/routes/support.js';
 import { accountBillingRoutes } from '@platform/api/routes/account-billing.js';
 import { billingRoutes } from '@platform/api/routes/billing.js';
+import { exportRoutes } from '@platform/api/routes/exports.js';
 
 export interface Harness {
   app: FastifyInstance;
@@ -145,6 +146,7 @@ export async function buildTestApp(): Promise<FastifyInstance> {
     await instance.register(usageRoutes, { prefix: '/v1' });
     await instance.register(privacyRoutes, { prefix: '/v1' });
     await instance.register(webhookRoutes, { prefix: '/v1' });
+    await instance.register(exportRoutes, { prefix: '/v1' });
   });
 
   await app.ready();

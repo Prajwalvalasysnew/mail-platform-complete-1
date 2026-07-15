@@ -15,9 +15,12 @@ around them. Application-level items live in `PRODUCTION_READINESS_ROADMAP.md`.
 >   send_outbox FK dropped + explicit erasure cleanup, send_outbox retention.
 > - **Phase 2.1 — DONE** (v0.7.29): per-plan/per-customer retention windows
 >   (065), logical read visibility, per-tenant sweep enforcement.
-> - Phase 2.2 (self-serve exports), 2.3 partially (CH TTL documented), Phase
->   3, 4 — pending. Cleanup reminder: drop `events_legacy` and
->   `messages_legacy` in a follow-up migration after one release of soak time.
+> - **Phase 2.2 — DONE** (v0.7.30): self-serve NDJSON exports (066,
+>   /v1/exports API + exports worker), window-clamped, retention-expired.
+> - Phase 2.3 partially done (CH TTL documented as ceiling-lockstep). Phase
+>   3 (HA/DR posture) and Phase 4 (CH-served analytics + load validation) —
+>   pending. Cleanup reminder: drop `events_legacy` and `messages_legacy` in
+>   a follow-up migration after one release of soak time.
 
 ## Where we stand
 

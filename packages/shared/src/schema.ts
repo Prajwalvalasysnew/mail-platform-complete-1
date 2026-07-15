@@ -140,6 +140,26 @@ export interface EventsTable {
   occurred_at: Generated<Timestamp>;
 }
 
+// Self-serve data exports (Phase 2.2): async NDJSON exports of a tenant's
+// events/message metadata for a date range.
+export interface DataExportsTable {
+  id: Generated<string>;
+  customer_id: string;
+  kind: 'events' | 'messages';
+  range_from: Timestamp;
+  range_to: Timestamp;
+  status: Generated<'pending' | 'running' | 'completed' | 'failed'>;
+  row_count: number | null;
+  size_bytes: number | null;
+  truncated: Generated<boolean>;
+  object_key: string | null;
+  payload: string | null;
+  error: string | null;
+  created_at: Generated<Timestamp>;
+  started_at: Timestamp | null;
+  completed_at: Timestamp | null;
+}
+
 // Dedup claims for keyed events. Unpartitioned side table because the
 // partitioned events table cannot carry a global UNIQUE(event_key) index;
 // the event worker claims a key here (ON CONFLICT DO NOTHING) in the same
@@ -210,6 +230,7 @@ export interface Database {
   messages: MessagesTable;
   events: EventsTable;
   event_keys: EventKeysTable;
+  data_exports: DataExportsTable;
   suppressions: SuppressionsTable;
   consent_events: ConsentEventsTable;
   tracked_links: TrackedLinksTable;

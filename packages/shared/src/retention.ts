@@ -32,6 +32,7 @@ import { sql } from 'kysely';
 import { db } from './db.js';
 import { getBodyStore } from './storage.js';
 import { tenantRetentionWindowsSql } from './retention-policy.js';
+import { purgeExpiredExports } from './data-exports.js';
 
 export interface RetentionOptions {
   /** Days to keep message bodies. Default: RETENTION_BODY_DAYS env or 90. */
@@ -50,6 +51,8 @@ export interface RetentionOptions {
   blocklistRetentionDays?: number;
   /** Days to keep processed send_outbox rows. Default: RETENTION_OUTBOX_DAYS env or 30. */
   outboxRetentionDays?: number;
+  /** Days to keep export artifacts. Default: RETENTION_EXPORT_DAYS env or 7. */
+  exportRetentionDays?: number;
   /** Max rows per delete/update batch. Default: RETENTION_BATCH_SIZE env or 10_000. */
   batchSize?: number;
 }
@@ -63,6 +66,7 @@ export interface RetentionResult {
   webhook_log_purged: number;
   blocklist_checks_purged: number;
   send_outbox_purged: number;
+  exports_purged: number;
   audit_purged: number;
   review_queue_purged: number;
   /** Rows matching a retention cutoff but preserved by an active legal hold. */
@@ -109,6 +113,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     webhookLogRetentionDays = Number(process.env.RETENTION_WEBHOOK_LOG_DAYS ?? 30),
     blocklistRetentionDays = Number(process.env.RETENTION_BLOCKLIST_DAYS ?? 180),
     outboxRetentionDays = Number(process.env.RETENTION_OUTBOX_DAYS ?? 30),
+    exportRetentionDays = Number(process.env.RETENTION_EXPORT_DAYS ?? 7),
     batchSize = Number(process.env.RETENTION_BATCH_SIZE ?? 10_000),
   } = opts;
 
@@ -418,6 +423,9 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   `.execute(db);
   const auditPurged = Number(auditResult.rows[0]?.count ?? 0);
 
+  // --- 8b. Purge expired export artifacts ---------------------------------
+  const exportsPurged = await purgeExpiredExports(exportRetentionDays);
+
   // --- 9. Purge resolved/rejected review queue entries ------------------
   const reviewResult = await db
     .deleteFrom('review_queue')
@@ -435,6 +443,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     webhook_log_purged: webhookLogPurged,
     blocklist_checks_purged: blocklistPurged,
     send_outbox_purged: sendOutboxPurged,
+    exports_purged: exportsPurged,
     audit_purged: auditPurged,
     review_queue_purged: reviewQueuePurged,
     held_rows_skipped: heldSkipped,

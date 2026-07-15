@@ -18,6 +18,7 @@ import {
 import { startSendWorker } from './send-worker.js';
 import { startEventWorker } from './event-worker.js';
 import { startWebhookWorker } from './webhook-worker.js';
+import { startExportsWorker } from './exports-worker.js';
 import { startScheduler } from './scheduler.js';
 
 const logger = pino(privacyLoggerOptions());
@@ -40,9 +41,10 @@ startTracing('mail-worker');
 const sendWorker = startSendWorker(logger);
 const eventWorker = startEventWorker(logger);
 const webhookWorker = startWebhookWorker(logger);
+const exportsWorker = startExportsWorker(logger);
 const scheduler = startScheduler(logger);
 
-logger.info('Workers started: send, events, webhooks (+ scheduler)');
+logger.info('Workers started: send, events, webhooks, exports (+ scheduler)');
 
 let isShuttingDown = false;
 
@@ -117,6 +119,7 @@ const shutdown = async (signal: string) => {
     sendWorker.pause(),
     eventWorker.pause(),
     webhookWorker.pause(),
+    exportsWorker.pause(),
   ]);
 
   const drainStart = Date.now();
@@ -132,7 +135,7 @@ const shutdown = async (signal: string) => {
 
   try {
     await Promise.race([
-      Promise.all([sendWorker.close(), eventWorker.close(), webhookWorker.close()]),
+      Promise.all([sendWorker.close(), eventWorker.close(), webhookWorker.close(), exportsWorker.close()]),
       forceExit,
     ]);
     if (forceExitTimer) clearTimeout(forceExitTimer);

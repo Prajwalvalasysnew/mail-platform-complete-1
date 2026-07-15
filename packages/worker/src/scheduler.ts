@@ -14,6 +14,7 @@ import {
   reconcileMetering,
   drainSendOutbox,
   reclaimStaleSendOutbox,
+  drainStalePendingExports,
   clearExpiredWebhookRotationSecrets,
   withSchedulerLock,
   poolPaused,
@@ -78,6 +79,15 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         if (reclaimed) logger.warn({ reclaimed }, 'reclaimed stale enqueued send-outbox rows');
         const n = await drainSendOutbox({ limit: Number(process.env.SEND_OUTBOX_DRAIN_LIMIT ?? 2000) });
         if (n) logger.info({ enqueued: n }, 'drained send outbox');
+      },
+    },
+    {
+      // Rescue export rows whose enqueue never reached Redis (blip/crash).
+      name: 'export_drain',
+      everyMs: 5 * MIN,
+      run: async () => {
+        const n = await drainStalePendingExports();
+        if (n) logger.info({ enqueued: n }, 're-enqueued stale pending exports');
       },
     },
     {

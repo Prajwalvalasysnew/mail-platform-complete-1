@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.7.30 - Self-serve data exports (Database 10/10 Plan, Phase 2.2)
+
+### Async NDJSON exports of events and message metadata
+
+- New `data_exports` table (066, fail-closed tenant RLS) and `/v1/exports`
+  API: `POST /exports {kind: events|messages, from, to}` queues a job (202),
+  `GET /exports` / `GET /exports/{id}` report status, and
+  `GET /exports/{id}/download` streams the NDJSON artifact. This closes the
+  "contact support for old data" gap the incumbents monetize — SendGrid
+  points you at the Event Webhook, Mailgun sells log forwarding.
+- A dedicated exports BullMQ worker streams the tenant's rows in keyset
+  batches (caps: `EXPORT_MAX_RANGE_DAYS` 92, `EXPORT_MAX_ROWS` 100k with a
+  `truncated` flag) into the body object store (fs/s3), or inline into the
+  row on `BODY_STORAGE=inline` dev/test setups. Message exports carry
+  metadata only — never bodies.
+- Export ranges are clamped to the tenant's plan retention window (Phase
+  2.1), so an export can never return history the API itself would hide.
+- Artifacts expire via `RETENTION_EXPORT_DAYS` (default 7) in the retention
+  sweep, with content-addressed-object reference counting so a shared key is
+  never deleted out from under a live message body or another export. A
+  5-minute scheduler sweep re-enqueues exports whose enqueue was lost to a
+  Redis blip.
+
 ## v0.7.29 - Per-plan retention windows (Database 10/10 Plan, Phase 2.1)
 
 ### Retention is now a plan feature (SendGrid/Mailgun/Postmark parity)
