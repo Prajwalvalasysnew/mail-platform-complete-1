@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.7.26 - Retention hardening (Database 10/10 Plan, Phase 0)
+
+### Legal-hold-aware retention (compliance fix)
+
+- **`runRetention` now respects active legal holds.** Previously the daily
+  sweep nulled bodies, deleted body objects, and deleted events with no hold
+  check, so a tenant under litigation hold still had data destroyed — defeating
+  the hold that the erasure endpoint (`assertNoActiveHold`) correctly enforces.
+  Every destructive step now skips rows covered by an active `customer` or
+  `recipient:<email>` hold; skipped rows are reported as `held_rows_skipped`
+  (exposed as the `mp_retention_held_rows_skipped` gauge) and purged by a later
+  sweep once the hold is released. Archival steps (audit log → archive) and
+  non-tenant data (blocklist checks) are intentionally not hold-gated.
+
+### Batched, indexed sweeps
+
+- The event purge was a single unbatched `DELETE` whose predicate no index
+  could serve (a sequential scan holding one long transaction). All cutoff
+  deletes/updates now run in bounded batches (`RETENTION_BATCH_SIZE`, default
+  10k rows), and migration `062_retention_hardening.sql` adds cutoff indexes
+  on `events(occurred_at)`, `messages(queued_at)`, `tracked_links(created_at)`,
+  `webhook_delivery_log(delivered_at)`, and `blocklist_checks(checked_at)`.
+
+### Previously unbounded tables now age out
+
+- **`messages` metadata rows**: purged after `RETENTION_MESSAGE_DAYS`
+  (default 395) — terminal statuses only, hold-aware. Bodies still expire at
+  `RETENTION_BODY_DAYS`; long-term stats live in `usage_daily` + ClickHouse
+  rollups.
+- **`tracked_links`**: purged with the body window, hold-aware via the parent
+  message.
+- **`webhook_delivery_log`**: purged after `RETENTION_WEBHOOK_LOG_DAYS`
+  (default 30).
+- **`blocklist_checks`**: purged after `RETENTION_BLOCKLIST_DAYS` (default 180).
+- `POST /admin/retention/run` accepts the new windows
+  (`message_retention_days`, `webhook_log_retention_days`,
+  `blocklist_retention_days`).
+
+### Connection-layer hardening
+
+- Pool tunables are env-driven per service: `PGPOOL_MAX`,
+  `PGPOOL_IDLE_TIMEOUT_MS`, `PGPOOL_CONNECT_TIMEOUT_MS`,
+  `PG_STATEMENT_TIMEOUT_MS` (default 30 s), `PG_IDLE_TX_TIMEOUT_MS`
+  (default 60 s), `PG_APPLICATION_NAME`. The migration runner keeps its own
+  untimed pool, so long DDL is unaffected.
+- New `mp_pg_pool_connections{state}` gauge (total/idle/waiting), sampled at
+  `/metrics` scrape time in every service.
+
 ## v0.7.25 - Readiness probes, graceful drain, backup drill, billing alerts, webhook secret rotation
 
 ### T5 — Readiness checks + graceful worker drain

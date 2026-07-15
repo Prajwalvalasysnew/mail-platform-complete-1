@@ -347,6 +347,7 @@ export async function seedOldMessage(
     textBody?: string;
     bodyStorage?: string;
     bodyObjectKey?: string;
+    toAddress?: string;
   } = {},
 ): Promise<string> {
   const daysAgo = opts.daysAgo ?? 100;
@@ -358,7 +359,7 @@ export async function seedOldMessage(
       message_id: messageId,
       customer_id: customerId,
       from_address: 'sender@seed.example.com',
-      to_address: `old-${Math.random().toString(36).slice(2, 8)}@example.com`,
+      to_address: opts.toAddress ?? `old-${Math.random().toString(36).slice(2, 8)}@example.com`,
       subject: 'old message seed',
       html_body: opts.htmlBody ?? null,
       text_body: opts.textBody ?? null,
@@ -389,6 +390,69 @@ export async function seedOldEvent(
       event_type: eventType as any,
       payload: {},
       occurred_at: occurredAt as any,
+    } as any)
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  return Number(row.id);
+}
+
+// Insert a tracked link backdated by the given number of days. Used by
+// retention tests.
+export async function seedOldTrackedLink(messageId: string, daysAgo = 100): Promise<string> {
+  const createdAt = new Date(Date.now() - daysAgo * 86_400_000);
+  const row = await db
+    .insertInto('tracked_links')
+    .values({
+      message_id: messageId,
+      original_url: 'https://example.com/seeded',
+      created_at: createdAt as any,
+    } as any)
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  return String(row.id);
+}
+
+// Insert a webhook + one backdated delivery-log row. Returns both ids.
+export async function seedOldWebhookDelivery(
+  customerId: string,
+  daysAgo = 100,
+): Promise<{ webhookId: string; logId: number }> {
+  const webhook = await db
+    .insertInto('webhooks')
+    .values({
+      customer_id: customerId,
+      url: 'https://example.com/hook',
+      events: ['delivered'] as any,
+    } as any)
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  const deliveredAt = new Date(Date.now() - daysAgo * 86_400_000);
+  const log = await db
+    .insertInto('webhook_delivery_log')
+    .values({
+      webhook_id: webhook.id,
+      event_type: 'delivered',
+      attempt: 1,
+      status_code: 200,
+      outcome: 'success',
+      duration_ms: 12,
+      delivered_at: deliveredAt as any,
+    } as any)
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  return { webhookId: String(webhook.id), logId: Number(log.id) };
+}
+
+// Insert a blocklist check row backdated by the given number of days.
+export async function seedOldBlocklistCheck(daysAgo = 200): Promise<number> {
+  const checkedAt = new Date(Date.now() - daysAgo * 86_400_000);
+  const row = await db
+    .insertInto('blocklist_checks')
+    .values({
+      ip: '192.0.2.55',
+      provider: 'spamhaus_zen',
+      listed: false,
+      checked_at: checkedAt as any,
     } as any)
     .returning('id')
     .executeTakeFirstOrThrow();

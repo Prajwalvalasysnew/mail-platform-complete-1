@@ -22,6 +22,7 @@ import {
   blocklistListings,
   meteringDrift,
   runRetention,
+  retentionHeldSkipped,
   assertPublicHttpUrl,
   ingestPostmaster,
   updateVolumeBaseline,
@@ -282,6 +283,10 @@ export function startScheduler(logger: Logger): { stop: () => void } {
       everyMs: 24 * HOUR,
       run: async () => {
         const result = await runRetention();
+        retentionHeldSkipped.set(result.held_rows_skipped);
+        if (result.held_rows_skipped > 0) {
+          logger.warn({ held_rows_skipped: result.held_rows_skipped }, 'retention preserved rows under active legal hold');
+        }
         logger.info({ result }, 'daily retention sweep complete');
       },
     },

@@ -641,8 +641,11 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   const RetentionTriggerSchema = z.object({
     message_body_retention_days: z.number().int().min(0).max(3650).optional(),
     event_retention_days: z.number().int().min(0).max(3650).optional(),
+    message_retention_days: z.number().int().min(0).max(3650).optional(),
     audit_retention_days: z.number().int().min(0).max(3650).optional(),
     review_queue_retention_days: z.number().int().min(0).max(3650).optional(),
+    webhook_log_retention_days: z.number().int().min(0).max(3650).optional(),
+    blocklist_retention_days: z.number().int().min(0).max(3650).optional(),
   });
 
   app.post('/retention/run', { preHandler: requireAdmin('operator') }, async (req, reply) => {
@@ -651,8 +654,11 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     const result = await runRetention({
       messageBodyRetentionDays: parsed.data.message_body_retention_days,
       eventRetentionDays: parsed.data.event_retention_days,
+      messageRetentionDays: parsed.data.message_retention_days,
       auditRetentionDays: parsed.data.audit_retention_days,
       reviewQueueRetentionDays: parsed.data.review_queue_retention_days,
+      webhookLogRetentionDays: parsed.data.webhook_log_retention_days,
+      blocklistRetentionDays: parsed.data.blocklist_retention_days,
     });
     await auditAdminAction(req.admin!, 'retention_run', 'platform', result as unknown as Record<string, unknown>);
     return reply.code(200).send({ ok: true, result });
