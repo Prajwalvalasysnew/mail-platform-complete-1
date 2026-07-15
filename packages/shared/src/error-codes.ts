@@ -90,6 +90,7 @@ export const ERROR_CODES = {
   pool_paused: { description: 'The IP pool is paused.', httpStatus: 503 },
   cancelled_by_user: { description: 'Message was cancelled by the user.', httpStatus: 409 },
   not_cancellable: { description: 'Message is not in a cancellable state.', httpStatus: 409 },
+  not_ready: { description: 'The export has not completed yet; retry once its status is completed.', httpStatus: 409 },
   already_dispatched: { description: 'Message was already dispatched and cannot be cancelled.', httpStatus: 409 },
 
   // ── Domains ────────────────────────────────────────────────────────────────
