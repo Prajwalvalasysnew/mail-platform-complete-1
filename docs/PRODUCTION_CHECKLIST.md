@@ -132,6 +132,19 @@ are deliberately out of scope (covered by external services or future work).
 - ⚠ Slack webhook — replace `REPLACE/REPLACE/REPLACE` in alertmanager.yml
 - ⚠ Status page provider — create a heartbeat monitor and set `STATUS_HEARTBEAT_URL` in k8s secrets
 
+## 16. Data-layer HA/DR (see docs/HA_DR.md)
+- ✅ CloudNativePG example manifest with sync replica + WAL archiving + nightly backups (`infra/k8s/postgres-cnpg.yaml`); prefer managed Postgres where available
+- ✅ PITR drill script measuring RPO/RTO evidence (`scripts/pitr-drill.sh`)
+- ✅ Read-replica seam (`DATABASE_REPLICA_URL` → `getReadDb()`)
+- ✅ PgBouncer transaction-pooling compatibility (tenant RLS uses `SET LOCAL` inside explicit transactions)
+- ✅ Data-layer Prometheus alerts (default-partition strays, pool saturation, legal-hold backlog)
+- ⚠ **Published targets — fill in after each quarterly drill:**
+  - RPO ≤ 5 min / RTO ≤ 30 min (PITR at production size); failover RTO ≤ 2 min
+  - Last PITR drill: `____-__-__`, measured restore: `____s`
+  - Last backup-restore drill: `____-__-__`; last Redis failover drill: `____-__-__`
+- ⚠ ClickHouse replication (ReplicatedMergeTree + Keeper or ClickHouse Cloud) + nightly `clickhouse-backup`
+- ⚠ Provider-side alerts: replication lag > 60s, WAL-archive failure, backup age > 24h
+
 ## Things deferred by design
 - Real Stripe SDK integration (only the webhook side ships)
 - Managed Postgres backup policy (handled by RDS / Cloud SQL better than cron)

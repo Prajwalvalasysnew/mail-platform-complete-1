@@ -1,5 +1,216 @@
 # Changelog
 
+## v0.7.32 - ClickHouse-served analytics + scale validation (Database 10/10 Plan, Phase 4)
+
+### Dashboards read the rollup, not the hot table
+
+- `/v1/analytics/summary` (7d/30d) and `/v1/analytics/timeseries`
+  (granularity=day) are now served from the ClickHouse `events_daily`
+  rollup via `uniqExactMerge` — exact counts, immune to the dual-write
+  duplication, O(rollup) regardless of raw event volume. 24h/hourly stay on
+  Postgres (sub-day precision); breakdown stays on Postgres (joins message
+  attributes). **Any ClickHouse failure falls back to the Postgres path**,
+  and tenant retention windows clamp the rollup's day floor.
+- New `analytics-clickhouse.e2e.test.ts` proves the rollup query shape, the
+  hourly/daily routing, window clamping, and the fallback — via an
+  in-process ClickHouse stub (same pattern as the reconciler tests).
+- The test harness now registers `analyticsRoutes` (they were previously
+  untested at the HTTP layer).
+
+### Measured scale evidence
+
+- `scripts/db-scale-bench.ts`: seeds 200k messages + 2M events server-side
+  and measures the lifecycle ops. On this dev container: analytics GROUP BY
+  over a 30d window 0.15s; batched hold-aware retention ~9,900 rows/s;
+  **DETACH+DROP of a 500k-row partition 0.07s** — the Phase 1 rationale in
+  numbers (~3 orders of magnitude over row deletes, no bloat, no long
+  transaction). Results recorded in `LOAD_TEST_FINDINGS.md`.
+
+## v0.7.31 - HA/DR posture (Database 10/10 Plan, Phase 3)
+
+- **`docs/HA_DR.md`**: the data-layer deployment story with published
+  targets — RPO ≤ 5 min (0 on failover via sync replica), failover RTO ≤ 2
+  min, full-PITR RTO ≤ 30 min — each mapped to the component and drill that
+  verifies it.
+- **`infra/k8s/postgres-cnpg.yaml`**: reviewed CloudNativePG example — 3
+  instances, 1 synchronous replica, continuous WAL archiving to S3, nightly
+  base backups (30d retention), PodMonitor. Managed Postgres remains the
+  preferred option and is documented as such.
+- **`scripts/pitr-drill.sh`**: point-in-time-recovery drill. Writes a
+  marker, PITR-bootstraps a fresh cluster from the object store to a
+  timestamp, asserts marker present / post-target writes absent, measures
+  restore RTO. Quarterly cadence, results recorded in the checklist.
+- **Read-replica seam**: `DATABASE_REPLICA_URL` + `getReadDb()` — a
+  replica-backed Kysely pool for lag-tolerant reads; identical to the
+  primary when unset. PgBouncer transaction-mode compatibility documented
+  (tenant RLS already uses `SET LOCAL` inside explicit transactions).
+- **Data-layer alerts** (`infra/prometheus/alerts.yml`): default-partition
+  strays for events/messages, PG pool saturation, legal-hold retention
+  backlog.
+- `docs/PRODUCTION_CHECKLIST.md` §16 tracks drill dates and measured
+  numbers; `docs/OPERATIONAL_DRILLS.md` indexes the new drill.
+
+## v0.7.30 - Self-serve data exports (Database 10/10 Plan, Phase 2.2)
+
+### Async NDJSON exports of events and message metadata
+
+- New `data_exports` table (066, fail-closed tenant RLS) and `/v1/exports`
+  API: `POST /exports {kind: events|messages, from, to}` queues a job (202),
+  `GET /exports` / `GET /exports/{id}` report status, and
+  `GET /exports/{id}/download` streams the NDJSON artifact. This closes the
+  "contact support for old data" gap the incumbents monetize — SendGrid
+  points you at the Event Webhook, Mailgun sells log forwarding.
+- A dedicated exports BullMQ worker streams the tenant's rows in keyset
+  batches (caps: `EXPORT_MAX_RANGE_DAYS` 92, `EXPORT_MAX_ROWS` 100k with a
+  `truncated` flag) into the body object store (fs/s3), or inline into the
+  row on `BODY_STORAGE=inline` dev/test setups. Message exports carry
+  metadata only — never bodies.
+- Export ranges are clamped to the tenant's plan retention window (Phase
+  2.1), so an export can never return history the API itself would hide.
+- Artifacts expire via `RETENTION_EXPORT_DAYS` (default 7) in the retention
+  sweep, with content-addressed-object reference counting so a shared key is
+  never deleted out from under a live message body or another export. A
+  5-minute scheduler sweep re-enqueues exports whose enqueue was lost to a
+  Redis blip.
+
+## v0.7.29 - Per-plan retention windows (Database 10/10 Plan, Phase 2.1)
+
+### Retention is now a plan feature (SendGrid/Mailgun/Postmark parity)
+
+- Migration `065_per_plan_retention.sql` adds `events_retention_days` /
+  `body_retention_days` to `billing_plans` (seeded: free 7/7, starter 30/30,
+  pro 90/90, enterprise 365/90 — only where not already customized) and
+  per-customer override columns on `customers` for enterprise deals
+  (settable via `PATCH /admin/customers/:id`).
+- **Model: logical retention on reads, physical purge at the platform
+  ceiling.** A tenant's effective window = customer override → plan value →
+  platform default (`retention-policy.ts`, one SQL definition shared by the
+  sweep and the API). Events windows can only tighten (the partition ceiling
+  is physical); body windows may extend up to the message-row lifetime.
+- The retention sweep now purges bodies and events per-tenant: a free-plan
+  tenant's bodies/events go at 7 days while the platform default stays 90.
+- Logical read visibility: tenants with an explicit window see only that
+  window on `GET /messages`, `GET /messages/:id`, `/messages/activity`, and
+  all `/analytics/*` endpoints. **Tenants with no plan value and no override
+  keep exactly the previous behavior** — filtering activates only for
+  explicit windows, so existing API consumers lose no history.
+- ClickHouse TTL documented as lockstep with `RETENTION_EVENT_DAYS` (the
+  ceiling) for deployments selling longer windows.
+
+## v0.7.28 - Monthly partitioning of messages + outbox retention (Database 10/10 Plan, Phase 1.2)
+
+### `messages` is now RANGE-partitioned by month
+
+- Migration `064_messages_partitioned.sql` rebuilds `messages` as
+  `PARTITION BY RANGE (queued_at)` (PK `(id, queued_at)`), using the same
+  copy + rename swap under an exclusive lock as 063; the old table stays as
+  `messages_legacy` for one release. All indexes, the `updated_at` trigger,
+  the fail-closed RLS tenant policy, and the customers/unsubscribe_groups
+  FKs are recreated on the partitioned parent.
+- `UNIQUE(message_id)` became `UNIQUE(message_id, queued_at)` (partitioned
+  unique indexes must include the partition key); ids are app-generated
+  UUID-based with no ON CONFLICT paths, and a plain `(message_id)` index
+  keeps single-message lookups fast.
+- The `send_outbox.message_id` FK is dropped (blocked partition drops). The
+  privacy-erasure route now deletes outbox rows explicitly where the CASCADE
+  used to, and the message + outbox rows were already written in a single
+  transaction on the insert side.
+- The `partition_maintenance` job now manages both tables: pre-creates
+  months ahead, drops months past `RETENTION_MESSAGE_DAYS` /
+  `RETENTION_EVENT_DAYS` as O(1) metadata ops (skipping any partition with
+  rows under an active legal hold), and reports default-partition strays via
+  `mp_messages_default_partition_rows` alongside the events gauge.
+
+### send_outbox rows now age out
+
+- Previously send_outbox rows accumulated forever. Processed rows
+  ('enqueued'/'failed') older than `RETENTION_OUTBOX_DAYS` (default 30) are
+  purged in batches; 'pending' rows are never touched. New
+  `send_outbox_purged` field in the retention result and an
+  `idx_send_outbox_created` cutoff index.
+
+## v0.7.27 - Monthly partitioning of events (Database 10/10 Plan, Phase 1.1)
+
+### `events` is now RANGE-partitioned by month
+
+- Migration `063_events_partitioned.sql` rebuilds `events` as a
+  `PARTITION BY RANGE (occurred_at)` table (PK `(id, occurred_at)`), copying
+  existing rows under an exclusive lock inside the migration transaction and
+  keeping the old table as `events_legacy` for one release as a fallback.
+  Same indexes (cascaded to all partitions) and the same fail-closed RLS
+  tenant policy as migration 043. On very large live deployments run this in
+  a low-traffic window — the copy is proportional to table size.
+- New `partition_maintenance` scheduler job (6h): pre-creates partitions
+  `EVENT_PARTITION_MONTHS_AHEAD` months ahead (default 3), drops months fully
+  past `RETENTION_EVENT_DAYS` as O(1) metadata operations instead of millions
+  of row deletes, and skips (re-checks next run) any partition containing
+  rows under an active legal hold. Rows landing in the safety-net default
+  partition are surfaced via the new `mp_events_default_partition_rows` gauge.
+- The batched row-level event delete in `runRetention` remains as the
+  fine-grained cleaner inside live partitions (per-tenant windows in Phase 2,
+  legal-hold skips).
+
+### Event dedup moved to an `event_keys` claim table
+
+- A partitioned table cannot carry the global `UNIQUE(event_key)` index that
+  the worker's `ON CONFLICT (event_key)` retry-dedup relied on. Dedup claims
+  now live in the unpartitioned `event_keys` side table: the claim, the event
+  insert, and the usage bump commit in one transaction, so exactly-once
+  accounting semantics are unchanged (covered by the existing
+  `event-idempotency` e2e tests). Keys age out with the event retention
+  window (`event_keys_purged` in the retention result).
+- The advisory `webhook_delivery_log.event_id` FK is dropped (it cannot
+  reference a partitioned PK subset and would block partition drops);
+  `event_id` remains as a plain pointer column.
+
+## v0.7.26 - Retention hardening (Database 10/10 Plan, Phase 0)
+
+### Legal-hold-aware retention (compliance fix)
+
+- **`runRetention` now respects active legal holds.** Previously the daily
+  sweep nulled bodies, deleted body objects, and deleted events with no hold
+  check, so a tenant under litigation hold still had data destroyed — defeating
+  the hold that the erasure endpoint (`assertNoActiveHold`) correctly enforces.
+  Every destructive step now skips rows covered by an active `customer` or
+  `recipient:<email>` hold; skipped rows are reported as `held_rows_skipped`
+  (exposed as the `mp_retention_held_rows_skipped` gauge) and purged by a later
+  sweep once the hold is released. Archival steps (audit log → archive) and
+  non-tenant data (blocklist checks) are intentionally not hold-gated.
+
+### Batched, indexed sweeps
+
+- The event purge was a single unbatched `DELETE` whose predicate no index
+  could serve (a sequential scan holding one long transaction). All cutoff
+  deletes/updates now run in bounded batches (`RETENTION_BATCH_SIZE`, default
+  10k rows), and migration `062_retention_hardening.sql` adds cutoff indexes
+  on `events(occurred_at)`, `messages(queued_at)`, `tracked_links(created_at)`,
+  `webhook_delivery_log(delivered_at)`, and `blocklist_checks(checked_at)`.
+
+### Previously unbounded tables now age out
+
+- **`messages` metadata rows**: purged after `RETENTION_MESSAGE_DAYS`
+  (default 395) — terminal statuses only, hold-aware. Bodies still expire at
+  `RETENTION_BODY_DAYS`; long-term stats live in `usage_daily` + ClickHouse
+  rollups.
+- **`tracked_links`**: purged with the body window, hold-aware via the parent
+  message.
+- **`webhook_delivery_log`**: purged after `RETENTION_WEBHOOK_LOG_DAYS`
+  (default 30).
+- **`blocklist_checks`**: purged after `RETENTION_BLOCKLIST_DAYS` (default 180).
+- `POST /admin/retention/run` accepts the new windows
+  (`message_retention_days`, `webhook_log_retention_days`,
+  `blocklist_retention_days`).
+
+### Connection-layer hardening
+
+- Pool tunables are env-driven per service: `PGPOOL_MAX`,
+  `PGPOOL_IDLE_TIMEOUT_MS`, `PGPOOL_CONNECT_TIMEOUT_MS`,
+  `PG_STATEMENT_TIMEOUT_MS` (default 30 s), `PG_IDLE_TX_TIMEOUT_MS`
+  (default 60 s), `PG_APPLICATION_NAME`. The migration runner keeps its own
+  untimed pool, so long DDL is unaffected.
+- New `mp_pg_pool_connections{state}` gauge (total/idle/waiting), sampled at
+  `/metrics` scrape time in every service.
+
 ## v0.7.25 - Readiness probes, graceful drain, backup drill, billing alerts, webhook secret rotation
 
 ### T5 — Readiness checks + graceful worker drain

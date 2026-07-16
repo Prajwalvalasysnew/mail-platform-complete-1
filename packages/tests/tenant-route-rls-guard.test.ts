@@ -17,6 +17,7 @@ const routeDir = path.resolve(__dirname, '..', 'api', 'src', 'routes');
 const RLS_TABLES = [
   'messages', 'events', 'suppressions', 'templates', 'sending_domains',
   'webhooks', 'usage_daily', 'review_queue', 'consent_events', 'legal_holds',
+  'data_exports',
 ].join('|');
 
 // Admin routes are an explicit cross-tenant service-role plane and are audited

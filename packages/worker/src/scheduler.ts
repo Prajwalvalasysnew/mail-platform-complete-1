@@ -14,6 +14,7 @@ import {
   reconcileMetering,
   drainSendOutbox,
   reclaimStaleSendOutbox,
+  drainStalePendingExports,
   clearExpiredWebhookRotationSecrets,
   withSchedulerLock,
   poolPaused,
@@ -22,6 +23,15 @@ import {
   blocklistListings,
   meteringDrift,
   runRetention,
+  retentionHeldSkipped,
+  ensureEventPartitions,
+  sweepExpiredEventPartitions,
+  countDefaultPartitionRows,
+  eventsDefaultPartitionRows,
+  ensureMessagePartitions,
+  sweepExpiredMessagePartitions,
+  countMessageDefaultPartitionRows,
+  messagesDefaultPartitionRows,
   assertPublicHttpUrl,
   ingestPostmaster,
   updateVolumeBaseline,
@@ -69,6 +79,15 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         if (reclaimed) logger.warn({ reclaimed }, 'reclaimed stale enqueued send-outbox rows');
         const n = await drainSendOutbox({ limit: Number(process.env.SEND_OUTBOX_DRAIN_LIMIT ?? 2000) });
         if (n) logger.info({ enqueued: n }, 'drained send outbox');
+      },
+    },
+    {
+      // Rescue export rows whose enqueue never reached Redis (blip/crash).
+      name: 'export_drain',
+      everyMs: 5 * MIN,
+      run: async () => {
+        const n = await drainStalePendingExports();
+        if (n) logger.info({ enqueued: n }, 're-enqueued stale pending exports');
       },
     },
     {
@@ -278,10 +297,51 @@ export function startScheduler(logger: Logger): { stop: () => void } {
       },
     },
     {
+      // Monthly-partitioned events table upkeep: pre-create partitions a few
+      // months ahead, drop months fully past retention (hold-aware; O(1)
+      // instead of row deletes), and alert if rows ever land in the default
+      // partition (means pre-creation fell behind).
+      name: 'partition_maintenance',
+      everyMs: 6 * HOUR,
+      run: async () => {
+        const monthsAhead = Number(process.env.EVENT_PARTITION_MONTHS_AHEAD ?? 3);
+        const created = [
+          ...(await ensureEventPartitions(monthsAhead)),
+          ...(await ensureMessagePartitions(monthsAhead)),
+        ];
+        if (created.length) logger.info({ created }, 'created future partitions');
+
+        for (const [table, sweep] of [
+          ['events', await sweepExpiredEventPartitions()],
+          ['messages', await sweepExpiredMessagePartitions()],
+        ] as const) {
+          if (sweep.dropped.length) logger.info({ table, dropped: sweep.dropped }, 'dropped expired partitions');
+          if (sweep.held.length) {
+            logger.warn({ table, held: sweep.held }, 'expired partitions kept: rows under active legal hold');
+          }
+        }
+
+        const eventDefaultRows = await countDefaultPartitionRows();
+        const messageDefaultRows = await countMessageDefaultPartitionRows();
+        eventsDefaultPartitionRows.set(eventDefaultRows);
+        messagesDefaultPartitionRows.set(messageDefaultRows);
+        if (eventDefaultRows > 0 || messageDefaultRows > 0) {
+          logger.error(
+            { eventDefaultRows, messageDefaultRows },
+            'default partition has rows — partition pre-creation fell behind',
+          );
+        }
+      },
+    },
+    {
       name: 'daily_retention',
       everyMs: 24 * HOUR,
       run: async () => {
         const result = await runRetention();
+        retentionHeldSkipped.set(result.held_rows_skipped);
+        if (result.held_rows_skipped > 0) {
+          logger.warn({ held_rows_skipped: result.held_rows_skipped }, 'retention preserved rows under active legal hold');
+        }
         logger.info({ result }, 'daily retention sweep complete');
       },
     },

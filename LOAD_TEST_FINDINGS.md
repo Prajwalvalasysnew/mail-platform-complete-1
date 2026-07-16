@@ -85,3 +85,32 @@ the worker fleet under sustained load. That is Phase 2 infrastructure work.
 4. Add the `waitForStatus` test timeout headroom or serialize worker-bound e2e
    tests — they get tight under full-suite parallelism (transient, not a product
    bug, but worth hardening for CI stability).
+
+## Data-layer scale validation (Database 10/10 Plan, Phase 4.2)
+
+`scripts/db-scale-bench.ts` seeds a throwaway tenant server-side and measures
+the lifecycle operations the plan re-architected. Numbers below from a single
+local Postgres 16 (this container — a floor, not a ceiling; rerun against
+production hardware with `npx tsx scripts/db-scale-bench.ts <events> <messages>`).
+
+Dataset: 200,000 messages + 2,000,000 events spread over 55 days, plus a
+500,000-event ancient month.
+
+| Operation | Result |
+|---|---|
+| Seed 200k messages (generate_series) | 4.9s |
+| Seed 2M events (generate_series) | 51.2s |
+| Analytics summary GROUP BY, 30d window (PG fallback path) | **0.15s** |
+| Batched hold-aware retention delete (909,142 events) | 91.9s (~9,900 rows/s, bounded 10k batches) |
+| **DETACH + DROP partition holding 500k events** | **0.07s** |
+
+The last two rows are the Phase 1 argument in numbers: removing ~½M rows by
+partition drop is ~3 orders of magnitude faster than row-level deletion, holds
+no long transaction, and creates zero bloat/vacuum debt. Row-level batched
+deletes remain for fine-grained work (per-tenant windows, legal-hold skips)
+and sustain ~10k rows/s without saturating the instance; month-scale bulk
+expiry is partition drops.
+
+The 0.15s analytics GROUP BY is the Postgres *fallback* path; the primary
+path for 7d/30d dashboards is the ClickHouse `events_daily` rollup (Phase
+4.1), which is O(rollup size) regardless of raw event volume.

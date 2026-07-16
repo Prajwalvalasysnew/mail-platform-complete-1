@@ -1,7 +1,14 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { sql } from 'kysely';
-import { db } from '@platform/shared';
+import {
+  db,
+  retentionVisibilityCutoff,
+  clickhouseEnabled,
+  chSummaryCounts,
+  chDailySeries,
+  chSinceDay,
+} from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -33,18 +40,34 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       const { period } = z.object({ period: PeriodParam }).parse(req.query);
       const interval = periodToInterval(period);
 
-      const eventRows = await tenantScoped(req, (trx) =>
-        trx
-          .selectFrom('events')
-          .select(['event_type', db.fn.countAll<number>().as('count')])
-          .where('customer_id', '=', auth.customer_id)
-          .where(sql<boolean>`occurred_at >= now() - ${interval}`)
-          .groupBy('event_type')
-          .execute()
-      );
+      // Plan-tiered history window (Phase 2.1): analytics never look past the
+      // tenant's configured retention window.
+      const cutoff = await retentionVisibilityCutoff(auth.customer_id);
 
-      const counts: Record<string, number> = {};
-      for (const r of eventRows) counts[r.event_type] = Number(r.count);
+      // Phase 4.1: day-granular windows are served from the ClickHouse daily
+      // rollup (exact uniq counts) so dashboards stop scanning the hot
+      // Postgres events table. 24h stays on Postgres (needs sub-day
+      // precision); any ClickHouse failure falls back to Postgres.
+      let counts: Record<string, number> | null = null;
+      if (period !== '24h' && clickhouseEnabled()) {
+        const days = period === '7d' ? 7 : 30;
+        counts = await chSummaryCounts(auth.customer_id, chSinceDay(days, cutoff));
+      }
+
+      if (!counts) {
+        const eventRows = await tenantScoped(req, (trx) =>
+          trx
+            .selectFrom('events')
+            .select(['event_type', db.fn.countAll<number>().as('count')])
+            .where('customer_id', '=', auth.customer_id)
+            .where(sql<boolean>`occurred_at >= now() - ${interval}`)
+            .$if(cutoff !== null, (qb) => qb.where('occurred_at', '>=', cutoff as any))
+            .groupBy('event_type')
+            .execute()
+        );
+        counts = {};
+        for (const r of eventRows) counts[r.event_type] = Number(r.count);
+      }
 
       const sent = counts['queued'] ?? 0;
       const delivered = counts['delivered'] ?? 0;
@@ -82,27 +105,46 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       const interval = periodToInterval(period);
       const trunc = truncUnit(granularity);
 
-      const rows = await tenantScoped(req, (trx) =>
-        trx
-          .selectFrom('events')
-          .select([
-            sql<string>`date_trunc(${trunc}, occurred_at)`.as('bucket'),
-            'event_type',
-            db.fn.countAll<number>().as('count'),
-          ])
-          .where('customer_id', '=', auth.customer_id)
-          .where(sql<boolean>`occurred_at >= now() - ${interval}`)
-          .groupBy([sql`date_trunc(${trunc}, occurred_at)`, 'event_type'])
-          .orderBy(sql`date_trunc(${trunc}, occurred_at)`, 'asc')
-          .execute()
-      );
+      const cutoff = await retentionVisibilityCutoff(auth.customer_id);
 
-      // Pivot into per-bucket objects
+      // Phase 4.1: daily series come from the ClickHouse rollup when
+      // available; hourly granularity needs sub-day precision and stays on
+      // Postgres. Any ClickHouse failure falls back to Postgres.
       const buckets = new Map<string, Record<string, number>>();
-      for (const r of rows) {
-        const key = String(r.bucket);
-        if (!buckets.has(key)) buckets.set(key, {});
-        buckets.get(key)![r.event_type] = Number(r.count);
+      let served = false;
+      if (granularity === 'day' && clickhouseEnabled()) {
+        const days = period === '7d' ? 7 : 30;
+        const chRows = await chDailySeries(auth.customer_id, chSinceDay(days, cutoff));
+        if (chRows) {
+          for (const r of chRows) {
+            if (!buckets.has(r.day)) buckets.set(r.day, {});
+            buckets.get(r.day)![r.event_type] = r.count;
+          }
+          served = true;
+        }
+      }
+
+      if (!served) {
+        const rows = await tenantScoped(req, (trx) =>
+          trx
+            .selectFrom('events')
+            .select([
+              sql<string>`date_trunc(${trunc}, occurred_at)`.as('bucket'),
+              'event_type',
+              db.fn.countAll<number>().as('count'),
+            ])
+            .where('customer_id', '=', auth.customer_id)
+            .where(sql<boolean>`occurred_at >= now() - ${interval}`)
+            .$if(cutoff !== null, (qb) => qb.where('occurred_at', '>=', cutoff as any))
+            .groupBy([sql`date_trunc(${trunc}, occurred_at)`, 'event_type'])
+            .orderBy(sql`date_trunc(${trunc}, occurred_at)`, 'asc')
+            .execute()
+        );
+        for (const r of rows) {
+          const key = String(r.bucket);
+          if (!buckets.has(key)) buckets.set(key, {});
+          buckets.get(key)![r.event_type] = Number(r.count);
+        }
       }
 
       const series = Array.from(buckets.entries()).map(([date, ev]) => ({
@@ -118,7 +160,9 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     }
   );
 
-  // Breakdown by tag, from-domain, or template.
+  // Breakdown by tag, from-domain, or template. Stays on Postgres: it joins
+  // message attributes (tags/from/template) that the ClickHouse firehose
+  // deliberately doesn't carry.
   app.get(
     '/analytics/breakdown',
     { preHandler: requireScope('messages') },
@@ -128,6 +172,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         .object({ by: ByParam, period: PeriodParam })
         .parse(req.query);
       const interval = periodToInterval(period);
+      const cutoff = await retentionVisibilityCutoff(auth.customer_id);
 
       const rows = await tenantScoped(req, async (trx) => {
         if (by === 'tag') {
@@ -141,6 +186,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
             ])
             .where('events.customer_id', '=', auth.customer_id)
             .where(sql<boolean>`events.occurred_at >= now() - ${interval}`)
+            .$if(cutoff !== null, (qb) => qb.where('events.occurred_at', '>=', cutoff as any))
             .groupBy([sql`unnest(messages.tags)`, 'events.event_type'])
             .execute();
           return rawRows.map((r) => ({ key: r.key, event_type: r.event_type, count: Number(r.count) }));
@@ -155,6 +201,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
             ])
             .where('events.customer_id', '=', auth.customer_id)
             .where(sql<boolean>`events.occurred_at >= now() - ${interval}`)
+            .$if(cutoff !== null, (qb) => qb.where('events.occurred_at', '>=', cutoff as any))
             .groupBy([sql`split_part(messages.from_address, '@', 2)`, 'events.event_type'])
             .execute();
           return rawRows.map((r) => ({ key: r.key, event_type: r.event_type, count: Number(r.count) }));
@@ -170,6 +217,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
             ])
             .where('events.customer_id', '=', auth.customer_id)
             .where(sql<boolean>`events.occurred_at >= now() - ${interval}`)
+            .$if(cutoff !== null, (qb) => qb.where('events.occurred_at', '>=', cutoff as any))
             .groupBy([sql`coalesce(messages.template_id::text, 'none')`, 'events.event_type'])
             .execute();
           return rawRows.map((r) => ({ key: r.key, event_type: r.event_type, count: Number(r.count) }));

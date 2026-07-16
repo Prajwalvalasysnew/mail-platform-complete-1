@@ -1,6 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { sql } from 'kysely';
-import { db, listMessageActivity, normalizeMessageActivityQuery } from '@platform/shared';
+import {
+  db,
+  listMessageActivity,
+  normalizeMessageActivityQuery,
+  resolveTenantRetention,
+  retentionVisibilityCutoff,
+} from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -43,6 +49,11 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    // Plan-tiered history window (Phase 2.1): tenants with an explicit
+    // retention plan/override see only that window; others keep the full
+    // physically-retained history.
+    const visibilityCutoff = await retentionVisibilityCutoff(auth.customer_id);
+
     const rows = await tenantScoped(req, (trx) => {
       let q = trx
         .selectFrom('messages')
@@ -53,6 +64,10 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           'human_opened_at', 'human_clicked_at',
         ])
         .where('customer_id', '=', auth.customer_id);
+
+      if (visibilityCutoff) {
+        q = q.where('queued_at', '>=', visibilityCutoff as any);
+      }
 
       if (status) q = q.where('status', '=', status as any);
       if (to) q = q.where('to_address', '=', to);
@@ -91,6 +106,11 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
   app.get('/messages/activity', { preHandler: requireScope('messages') }, async (req) => {
     const auth = req.auth!;
     const query = normalizeMessageActivityQuery(req.query as Record<string, string>);
+    // Clamp the lookback to the tenant's plan window when one is configured.
+    const windows = await resolveTenantRetention(auth.customer_id);
+    if (windows.explicit) {
+      query.sinceDays = Math.min(query.sinceDays, windows.eventsDays);
+    }
     return tenantScoped(req, (trx) => listMessageActivity(auth.customer_id, query, trx));
   });
 
@@ -197,13 +217,17 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     const auth = req.auth!;
     const { messageId } = req.params as { messageId: string };
 
+    const visibilityCutoff = await retentionVisibilityCutoff(auth.customer_id);
     const result = await tenantScoped(req, async (trx) => {
-      const msg = await trx
+      let msgQuery = trx
         .selectFrom('messages')
         .selectAll()
         .where('message_id', '=', messageId)
-        .where('customer_id', '=', auth.customer_id)
-        .executeTakeFirst();
+        .where('customer_id', '=', auth.customer_id);
+      if (visibilityCutoff) {
+        msgQuery = msgQuery.where('queued_at', '>=', visibilityCutoff as any);
+      }
+      const msg = await msgQuery.executeTakeFirst();
       if (!msg) return null;
 
       const events = await trx

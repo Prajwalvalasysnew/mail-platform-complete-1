@@ -29,6 +29,10 @@ PARTITION BY toYYYYMM(occurred_at)
 -- event_id last in the ORDER BY makes each distinct event its own key, so the
 -- hot-path and reconciler inserts of the same event_id deduplicate on merge.
 ORDER BY (customer_id, occurred_at, message_id, event_type, event_id)
+-- Keep this TTL in lockstep with RETENTION_EVENT_DAYS (the platform's
+-- physical event ceiling). If you raise the ceiling to sell longer windows
+-- (e.g. enterprise 365d), raise this too on existing deployments with:
+--   ALTER TABLE mail.events MODIFY TTL toDateTime(occurred_at) + INTERVAL 365 DAY DELETE
 TTL toDateTime(occurred_at) + INTERVAL 90 DAY DELETE
 SETTINGS index_granularity = 8192;
 

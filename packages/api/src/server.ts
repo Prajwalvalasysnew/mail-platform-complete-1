@@ -19,6 +19,7 @@ import { scimRoutes } from './routes/scim.js';
 import { templateRoutes } from './routes/templates.js';
 import { usageRoutes } from './routes/usage.js';
 import { analyticsRoutes } from './routes/analytics.js';
+import { exportRoutes } from './routes/exports.js';
 import { billingRoutes } from './routes/billing.js';
 import { privacyRoutes } from './routes/privacy.js';
 import { adminRoutes } from './routes/admin.js';
@@ -213,6 +214,7 @@ await app.register(async (instance) => {
   await instance.register(usageRoutes, { prefix: '/v1' });
   await instance.register(analyticsRoutes, { prefix: '/v1' });
   await instance.register(privacyRoutes, { prefix: '/v1' });
+  await instance.register(exportRoutes, { prefix: '/v1' });
 });
 
 const shutdown = async (signal: string) => {

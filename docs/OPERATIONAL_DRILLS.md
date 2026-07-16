@@ -13,6 +13,7 @@ against production-sized data or a live cluster, that is called out explicitly.
 | Kubernetes manifests render & are well-formed | `scripts/helm-render-check.sh` | ✅ yes (helm) |
 | Redis failover: durability + availability | `scripts/redis-failover-drill.sh` | ✅ yes (docker) |
 | Postgres backup → restore integrity + RTO | `scripts/backup-restore-drill.sh` | ✅ yes (docker) |
+| Postgres point-in-time recovery (PITR) + RPO/RTO evidence | `scripts/pitr-drill.sh` | ⚠️ needs a CNPG cluster with object-store backups (see docs/HA_DR.md) |
 | Send pipeline throughput/SLO | `infra/loadtest/send.js` (k6) | ⚠️ needs a running API |
 | Tracker (open/click) throughput/SLO | `infra/loadtest/tracker.js` (k6) | ⚠️ needs a running tracker |
 

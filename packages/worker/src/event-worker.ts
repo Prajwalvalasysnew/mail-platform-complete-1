@@ -113,6 +113,45 @@ export function startEventWorker(logger: Logger) {
         : null;
 
       const { eventRow, isFreshInsert } = await db.transaction().execute(async (trx) => {
+        // Dedup via the unpartitioned event_keys claim table (the partitioned
+        // events table cannot carry a global UNIQUE(event_key) index). The
+        // claim, the event insert, and the usage bump commit atomically, so
+        // the exactly-once semantics are identical to the old ON CONFLICT
+        // (event_key) on the events table itself.
+        if (eventKey) {
+          const claimed = await trx
+            .insertInto('event_keys')
+            .values({ event_key: eventKey })
+            .onConflict((oc) => oc.column('event_key').doNothing())
+            .returning('event_key')
+            .executeTakeFirst();
+
+          if (!claimed) {
+            // An earlier attempt already claimed this event_key. We must NOT
+            // double-count usage, but we must NOT stop here either — status
+            // update / suppression / webhook fanout are all safe to re-run
+            // (status update is precedence-guarded, addSuppression is an
+            // upsert, and webhook delivery uses a deterministic jobId keyed
+            // off the event row id), and skipping them on retry was the bug:
+            // if the worker crashed *after* the insert transaction committed
+            // on a prior attempt but *before* those steps ran, the event
+            // would be permanently stuck with no status update, no
+            // suppression, and no webhook.
+            const existing = await trx
+              .selectFrom('event_keys')
+              .select('event_id')
+              .where('event_key', '=', eventKey)
+              .executeTakeFirst();
+            if (!existing || existing.event_id == null) {
+              // Claim row without an event id can't be produced by a
+              // committed prior attempt (claim + insert are one transaction);
+              // treat as already handled and bail out safely.
+              return { eventRow: null, isFreshInsert: false };
+            }
+            return { eventRow: { id: existing.event_id }, isFreshInsert: false };
+          }
+        }
+
         const inserted = await trx
           .insertInto('events')
           .values({
@@ -129,39 +168,21 @@ export function startEventWorker(logger: Logger) {
             bot_score: typeof ev.bot_score === 'number' ? ev.bot_score : null,
             event_key: eventKey,
           } as any)
-          .onConflict((oc) => oc.column('event_key').doNothing())
           .returning('id')
-          .executeTakeFirst();
+          .executeTakeFirstOrThrow();
 
-        if (inserted) {
-          // Fresh row: exactly-once usage accounting happens here, inside the
-          // same transaction as the insert.
-          if (usageField) await bumpUsage(customerId, usageField, trx);
-          return { eventRow: inserted, isFreshInsert: true };
+        if (eventKey) {
+          await trx
+            .updateTable('event_keys')
+            .set({ event_id: Number(inserted.id) })
+            .where('event_key', '=', eventKey)
+            .execute();
         }
 
-        // Conflict: an earlier attempt already inserted this event_key. We
-        // must NOT double-count usage, but we must NOT stop here either —
-        // status update / suppression / webhook fanout are all safe to
-        // re-run (status update is precedence-guarded, addSuppression is an
-        // upsert, and webhook delivery uses a deterministic jobId keyed off
-        // the event row id), and skipping them on retry was the bug: if the
-        // worker crashed or threw *after* this transaction committed on a
-        // prior attempt but *before* those steps ran, the event would be
-        // permanently stuck with no status update, no suppression, and no
-        // webhook — because the old code treated "duplicate key" as "already
-        // fully processed" instead of "already counted".
-        const existing = eventKey
-          ? await trx.selectFrom('events').select('id').where('event_key', '=', eventKey).executeTakeFirst()
-          : undefined;
-        if (!existing) {
-          // NULL-key events are never deduped (NULL is distinct in the unique
-          // index), so a doNothing() conflict here can only happen for a
-          // keyed event whose row existed but vanished mid-transaction —
-          // treat as already handled and bail out safely.
-          return { eventRow: null, isFreshInsert: false };
-        }
-        return { eventRow: existing, isFreshInsert: false };
+        // Fresh row: exactly-once usage accounting happens here, inside the
+        // same transaction as the insert.
+        if (usageField) await bumpUsage(customerId, usageField, trx);
+        return { eventRow: inserted, isFreshInsert: true };
       });
 
       if (!eventRow) {

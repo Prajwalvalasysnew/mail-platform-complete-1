@@ -144,3 +144,37 @@ groups:
         annotations:
           summary: "Webhook delivery failure rate > 25%"
           description: "Check /admin/customers' webhook endpoints for errors."
+
+  - name: data-layer
+    rules:
+      - alert: EventsDefaultPartitionRows
+        expr: mp_events_default_partition_rows > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Events landing in the default partition"
+          description: "Partition pre-creation fell behind ({{ $value }} rows). Check the worker partition_maintenance job; rows in the default partition are not covered by partition-drop retention."
+
+      - alert: MessagesDefaultPartitionRows
+        expr: mp_messages_default_partition_rows > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Messages landing in the default partition"
+          description: "Partition pre-creation fell behind ({{ $value }} rows). Check the worker partition_maintenance job."
+
+      - alert: PgPoolSaturated
+        expr: mp_pg_pool_connections{state="waiting"} > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Postgres pool has waiting clients for 5m"
+          description: "Requests are queueing for a DB connection. Raise PGPOOL_MAX, add a pooler (PgBouncer), or investigate slow queries (see docs/HA_DR.md)."
+
+      - alert: RetentionHoldBacklogLarge
+        expr: mp_retention_held_rows_skipped > 1000000
+        for: 6h
+        labels: { severity: warning }
+        annotations:
+          summary: "Over 1M rows past retention are preserved by legal holds"
+          description: "Storage is accruing behind active legal holds. Review /v1/privacy/legal-holds for holds that can be released."

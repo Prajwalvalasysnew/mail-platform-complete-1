@@ -86,6 +86,7 @@ export async function rlsIsEnforced(): Promise<boolean> {
     const requiredTables = [
       'messages', 'events', 'suppressions', 'templates', 'sending_domains',
       'webhooks', 'usage_daily', 'review_queue', 'consent_events', 'legal_holds',
+      'data_exports',
     ];
     const posture = await sql<{
       table_name: string;

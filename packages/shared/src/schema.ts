@@ -26,6 +26,8 @@ export interface CustomersTable {
   email_verify_token_expires_at: Timestamp | null;
   physical_address: string | null;
   sso_enforced: Generated<boolean>;
+  events_retention_days: number | null;
+  body_retention_days: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -138,6 +140,37 @@ export interface EventsTable {
   occurred_at: Generated<Timestamp>;
 }
 
+// Self-serve data exports (Phase 2.2): async NDJSON exports of a tenant's
+// events/message metadata for a date range.
+export interface DataExportsTable {
+  id: Generated<string>;
+  customer_id: string;
+  kind: 'events' | 'messages';
+  range_from: Timestamp;
+  range_to: Timestamp;
+  status: Generated<'pending' | 'running' | 'completed' | 'failed'>;
+  row_count: number | null;
+  size_bytes: number | null;
+  truncated: Generated<boolean>;
+  object_key: string | null;
+  payload: string | null;
+  error: string | null;
+  created_at: Generated<Timestamp>;
+  started_at: Timestamp | null;
+  completed_at: Timestamp | null;
+}
+
+// Dedup claims for keyed events. Unpartitioned side table because the
+// partitioned events table cannot carry a global UNIQUE(event_key) index;
+// the event worker claims a key here (ON CONFLICT DO NOTHING) in the same
+// transaction as the event insert. Rows age out with the event retention
+// window.
+export interface EventKeysTable {
+  event_key: string;
+  event_id: number | null;
+  created_at: Generated<Timestamp>;
+}
+
 export interface SuppressionsTable {
   customer_id: string;
   email: string;
@@ -196,6 +229,8 @@ export interface Database {
   sending_domains: SendingDomainsTable;
   messages: MessagesTable;
   events: EventsTable;
+  event_keys: EventKeysTable;
+  data_exports: DataExportsTable;
   suppressions: SuppressionsTable;
   consent_events: ConsentEventsTable;
   tracked_links: TrackedLinksTable;
@@ -693,6 +728,8 @@ export interface BillingPlansTable {
   monthly_quota: number;
   features: Generated<Record<string, unknown>>;
   active: Generated<boolean>;
+  events_retention_days: number | null;
+  body_retention_days: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }

@@ -1,0 +1,100 @@
+# Self-hosted HA Postgres for mail-platform via CloudNativePG
+# (DATABASE_10_10_PLAN Phase 3.1). EXAMPLE manifest — review every value
+# before applying. If a managed Postgres (RDS/Aurora/Cloud SQL) is available,
+# prefer it: automated PITR, replicas, and failover with less operational
+# surface. This file is the self-hosted equivalent.
+#
+# Prerequisites:
+#   kubectl apply --server-side -f \
+#     https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.1.yaml
+#   kubectl create secret generic mail-pg-s3-creds \
+#     --from-literal=ACCESS_KEY_ID=... --from-literal=SECRET_ACCESS_KEY=...
+#
+# What this gives you (the Phase 3 targets):
+#   - 3 instances, 1 synchronous replica → RPO 0 for committed transactions
+#     on failover; automatic promotion → RTO in the ~30s–2min range.
+#   - Continuous WAL archiving to S3 + nightly base backups → PITR to any
+#     second within the retention window (RPO ≤ 5 min even if the whole
+#     cluster is lost).
+#   - The three app roles (migration owner / api / service) still come from
+#     scripts/setup-rls-roles.sql, run once against the cluster.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: mail-postgres
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+
+  primaryUpdateStrategy: unsupervised
+
+  # One synchronous replica: a commit is acknowledged only after a standby
+  # has it (RPO 0 on single-node loss), the second replica stays async so a
+  # slow node can't stall commits entirely.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+    parameters:
+      max_connections: "300"
+      shared_buffers: 2GB
+      effective_cache_size: 6GB
+      wal_compression: "on"
+      # The firehose tables are partitioned; autovacuum still matters for
+      # the hot current-month partitions and the OLTP tables.
+      autovacuum_vacuum_scale_factor: "0.05"
+      autovacuum_analyze_scale_factor: "0.02"
+
+  bootstrap:
+    initdb:
+      database: mail_platform
+      owner: mail
+
+  storage:
+    size: 200Gi
+    # storageClass: <your-fast-ssd-class>
+
+  # Continuous archiving + base backups → PITR.
+  backup:
+    retentionPolicy: 30d
+    barmanObjectStore:
+      destinationPath: s3://YOUR-BACKUP-BUCKET/mail-postgres
+      # endpointURL: https://<s3-compatible-endpoint>   # R2/B2/MinIO etc.
+      s3Credentials:
+        accessKeyId:
+          name: mail-pg-s3-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: mail-pg-s3-creds
+          key: SECRET_ACCESS_KEY
+      wal:
+        compression: gzip
+        # maxParallel: 4
+      data:
+        compression: gzip
+
+  monitoring:
+    enablePodMonitor: true
+---
+# Nightly base backup (WAL archiving is continuous regardless).
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: mail-postgres-nightly
+spec:
+  schedule: "0 0 3 * * *"   # 03:00 daily (6-field cron: seconds first)
+  backupOwnerReference: self
+  cluster:
+    name: mail-postgres
+---
+# Read-only service for the replica seam (DATABASE_REPLICA_URL): CNPG ships
+# `mail-postgres-ro` automatically; this alias documents the intended use.
+# Point DATABASE_REPLICA_URL at mail-postgres-ro:5432 to route heavy reads
+# (analytics fallback, exports) off the primary.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mail-postgres-read
+spec:
+  type: ExternalName
+  externalName: mail-postgres-ro.default.svc.cluster.local

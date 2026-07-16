@@ -94,6 +94,17 @@ export const webhooksQueue = new Queue<WebhookJobData>(`${QUEUE_PREFIX}webhooks`
 });
 
 // =====================================================
+// Exports queue — API enqueues export jobs, exports worker streams the
+// tenant's data to the object store (DATABASE_10_10_PLAN Phase 2.2).
+// =====================================================
+export interface ExportJobData {
+  export_id: string;
+  customer_id: string;
+}
+
+export const exportsQueue = new Queue<ExportJobData>(`${QUEUE_PREFIX}exports`, defaultQueueOpts);
+
+// =====================================================
 // Dead-letter queue — jobs that exhausted all retries land here for
 // inspection / manual replay instead of vanishing. Nothing consumes it
 // automatically; an operator (or a future reaper) drains it.
@@ -248,7 +259,7 @@ export async function purgeAllDeadLetters(): Promise<number> {
   }
 }
 
-export const allQueues = [sendQueue, eventsQueue, webhooksQueue, deadLetterQueue];
+export const allQueues = [sendQueue, eventsQueue, webhooksQueue, deadLetterQueue, exportsQueue];
 
 const PRIVACY_REMOVABLE_JOB_STATES = [
   'waiting', 'delayed', 'failed', 'paused', 'completed', 'prioritized', 'waiting-children',

@@ -148,7 +148,39 @@ export const billingStuckRequests = new Gauge({
   registers: [registry],
 });
 
+export const retentionHeldSkipped = new Gauge({
+  name: 'mp_retention_held_rows_skipped',
+  help: 'Rows past their retention cutoff preserved by an active legal hold (last sweep)',
+  registers: [registry],
+});
+
+export const eventsDefaultPartitionRows = new Gauge({
+  name: 'mp_events_default_partition_rows',
+  help: 'Rows in the events default partition (should be 0; >0 means partition pre-creation fell behind)',
+  registers: [registry],
+});
+
+export const messagesDefaultPartitionRows = new Gauge({
+  name: 'mp_messages_default_partition_rows',
+  help: 'Rows in the messages default partition (should be 0; >0 means partition pre-creation fell behind)',
+  registers: [registry],
+});
+
+export const pgPoolConnections = new Gauge({
+  name: 'mp_pg_pool_connections',
+  help: 'Postgres pool connections by state (total/idle/waiting)',
+  labelNames: ['state'],
+  registers: [registry],
+});
+
 export async function metricsText(): Promise<string> {
+  // Sample pool utilization at scrape time so every service reports its own
+  // pool without needing a background sampler.
+  const { poolStats } = await import('./db.js');
+  const stats = poolStats();
+  pgPoolConnections.set({ state: 'total' }, stats.total);
+  pgPoolConnections.set({ state: 'idle' }, stats.idle);
+  pgPoolConnections.set({ state: 'waiting' }, stats.waiting);
   return registry.metrics();
 }
 
