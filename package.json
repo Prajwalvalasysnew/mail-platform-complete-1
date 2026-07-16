@@ -9,6 +9,8 @@
   "scripts": {
     "build": "npm run build --workspace=@platform/shared && npm run build --workspace=@platform/api && npm run build --workspace=@platform/worker && npm run build --workspace=@platform/tracker && npm run build --workspace=@platform/sdk",
     "dev:api": "npm run dev --workspace=@platform/api",
+    "dev:admin": "npm run dev --workspace=@platform/admin-console",
+    "build:admin": "npm run build --workspace=@platform/admin-console",
     "dev:worker": "npm run dev --workspace=@platform/worker",
     "dev:tracker": "npm run dev --workspace=@platform/tracker",
     "migrate": "tsx packages/shared/src/bin/migrate.ts",
