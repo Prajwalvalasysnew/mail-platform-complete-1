@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.7.31 - HA/DR posture (Database 10/10 Plan, Phase 3)
+
+- **`docs/HA_DR.md`**: the data-layer deployment story with published
+  targets — RPO ≤ 5 min (0 on failover via sync replica), failover RTO ≤ 2
+  min, full-PITR RTO ≤ 30 min — each mapped to the component and drill that
+  verifies it.
+- **`infra/k8s/postgres-cnpg.yaml`**: reviewed CloudNativePG example — 3
+  instances, 1 synchronous replica, continuous WAL archiving to S3, nightly
+  base backups (30d retention), PodMonitor. Managed Postgres remains the
+  preferred option and is documented as such.
+- **`scripts/pitr-drill.sh`**: point-in-time-recovery drill. Writes a
+  marker, PITR-bootstraps a fresh cluster from the object store to a
+  timestamp, asserts marker present / post-target writes absent, measures
+  restore RTO. Quarterly cadence, results recorded in the checklist.
+- **Read-replica seam**: `DATABASE_REPLICA_URL` + `getReadDb()` — a
+  replica-backed Kysely pool for lag-tolerant reads; identical to the
+  primary when unset. PgBouncer transaction-mode compatibility documented
+  (tenant RLS already uses `SET LOCAL` inside explicit transactions).
+- **Data-layer alerts** (`infra/prometheus/alerts.yml`): default-partition
+  strays for events/messages, PG pool saturation, legal-hold retention
+  backlog.
+- `docs/PRODUCTION_CHECKLIST.md` §16 tracks drill dates and measured
+  numbers; `docs/OPERATIONAL_DRILLS.md` indexes the new drill.
+
 ## v0.7.30 - Self-serve data exports (Database 10/10 Plan, Phase 2.2)
 
 ### Async NDJSON exports of events and message metadata

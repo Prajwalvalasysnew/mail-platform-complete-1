@@ -85,8 +85,38 @@ export const db: Kysely<Database> = new Proxy({} as Kysely<Database>, {
   },
 });
 
+// ---------------------------------------------------------------------------
+// Read-replica seam (DATABASE_10_10_PLAN Phase 3.2). When DATABASE_REPLICA_URL
+// is set, `dbRead` is a second Kysely instance pooled against the replica for
+// heavy read paths (exports, analytics fallback, admin listings). When unset,
+// it IS the primary `db` — callers never need to care. Only route reads that
+// tolerate replication lag here; anything read-after-write stays on `db`.
+// ---------------------------------------------------------------------------
+let _replicaPool: Pool | null = null;
+let _dbRead: Kysely<Database> | null = null;
+
+export function getReadDb(): Kysely<Database> {
+  const url = process.env.DATABASE_REPLICA_URL;
+  if (!url) return db;
+  if (!_dbRead) {
+    _replicaPool = new Pool({
+      connectionString: url,
+      max: envInt('PGPOOL_REPLICA_MAX', 10),
+      idleTimeoutMillis: envInt('PGPOOL_IDLE_TIMEOUT_MS', 30_000),
+      connectionTimeoutMillis: envInt('PGPOOL_CONNECT_TIMEOUT_MS', 5_000),
+      statement_timeout: envInt('PG_STATEMENT_TIMEOUT_MS', 30_000),
+      application_name: `${process.env.PG_APPLICATION_NAME ?? process.env.SERVICE_NAME ?? 'mail-platform'}-read`,
+    });
+    _dbRead = new Kysely<Database>({ dialect: new PostgresDialect({ pool: _replicaPool }) });
+  }
+  return _dbRead;
+}
+
 export async function closeDb(): Promise<void> {
   if (_db) await _db.destroy(); // destroy() ends the pool internally
   _db = null;
   _pool = null;
+  if (_dbRead) await _dbRead.destroy();
+  _dbRead = null;
+  _replicaPool = null;
 }

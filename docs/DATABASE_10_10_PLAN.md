@@ -17,10 +17,15 @@ around them. Application-level items live in `PRODUCTION_READINESS_ROADMAP.md`.
 >   (065), logical read visibility, per-tenant sweep enforcement.
 > - **Phase 2.2 — DONE** (v0.7.30): self-serve NDJSON exports (066,
 >   /v1/exports API + exports worker), window-clamped, retention-expired.
+> - **Phase 3 — DONE** (v0.7.31): HA/DR posture — CNPG manifest with sync
+>   replica + WAL archiving, PITR drill script, read-replica seam
+>   (`DATABASE_REPLICA_URL`), pooling guidance, data-layer alerts, published
+>   RPO/RTO targets (docs/HA_DR.md). Quarterly drills remain an operating
+>   cadence, not a code artifact.
 > - Phase 2.3 partially done (CH TTL documented as ceiling-lockstep). Phase
->   3 (HA/DR posture) and Phase 4 (CH-served analytics + load validation) —
->   pending. Cleanup reminder: drop `events_legacy` and `messages_legacy` in
->   a follow-up migration after one release of soak time.
+>   4 (CH-served analytics + load validation) — pending. Cleanup reminder:
+>   drop `events_legacy` and `messages_legacy` in a follow-up migration
+>   after one release of soak time.
 
 ## Where we stand
 
