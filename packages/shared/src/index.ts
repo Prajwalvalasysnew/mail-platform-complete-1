@@ -24,6 +24,7 @@ export * from './softbounce.js';
 export * from './dkim-rotation.js';
 export * from './storage.js';
 export * from './clickhouse.js';
+export * from './analytics-clickhouse.js';
 export * from './openapi.js';
 export * from './migrate.js';
 export * from './tracing.js';

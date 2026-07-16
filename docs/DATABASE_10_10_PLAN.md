@@ -22,10 +22,15 @@ around them. Application-level items live in `PRODUCTION_READINESS_ROADMAP.md`.
 >   (`DATABASE_REPLICA_URL`), pooling guidance, data-layer alerts, published
 >   RPO/RTO targets (docs/HA_DR.md). Quarterly drills remain an operating
 >   cadence, not a code artifact.
-> - Phase 2.3 partially done (CH TTL documented as ceiling-lockstep). Phase
->   4 (CH-served analytics + load validation) — pending. Cleanup reminder:
->   drop `events_legacy` and `messages_legacy` in a follow-up migration
->   after one release of soak time.
+> - **Phase 4 — DONE** (v0.7.32): 7d/30d dashboards served from the
+>   ClickHouse rollup with Postgres fallback; measured scale evidence in
+>   LOAD_TEST_FINDINGS.md (2M-event bench: partition drop 0.07s vs ~9.9k
+>   rows/s batched deletes).
+> - Phase 2.3 partially done (CH TTL documented as ceiling-lockstep).
+> - Remaining operating items (not code): quarterly drills with recorded
+>   numbers (checklist §16), rerunning the bench at production size, and a
+>   follow-up migration dropping `events_legacy` / `messages_legacy` after
+>   one release of soak time.
 
 ## Where we stand
 

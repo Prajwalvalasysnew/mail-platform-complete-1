@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.7.32 - ClickHouse-served analytics + scale validation (Database 10/10 Plan, Phase 4)
+
+### Dashboards read the rollup, not the hot table
+
+- `/v1/analytics/summary` (7d/30d) and `/v1/analytics/timeseries`
+  (granularity=day) are now served from the ClickHouse `events_daily`
+  rollup via `uniqExactMerge` — exact counts, immune to the dual-write
+  duplication, O(rollup) regardless of raw event volume. 24h/hourly stay on
+  Postgres (sub-day precision); breakdown stays on Postgres (joins message
+  attributes). **Any ClickHouse failure falls back to the Postgres path**,
+  and tenant retention windows clamp the rollup's day floor.
+- New `analytics-clickhouse.e2e.test.ts` proves the rollup query shape, the
+  hourly/daily routing, window clamping, and the fallback — via an
+  in-process ClickHouse stub (same pattern as the reconciler tests).
+- The test harness now registers `analyticsRoutes` (they were previously
+  untested at the HTTP layer).
+
+### Measured scale evidence
+
+- `scripts/db-scale-bench.ts`: seeds 200k messages + 2M events server-side
+  and measures the lifecycle ops. On this dev container: analytics GROUP BY
+  over a 30d window 0.15s; batched hold-aware retention ~9,900 rows/s;
+  **DETACH+DROP of a 500k-row partition 0.07s** — the Phase 1 rationale in
+  numbers (~3 orders of magnitude over row deletes, no bloat, no long
+  transaction). Results recorded in `LOAD_TEST_FINDINGS.md`.
+
 ## v0.7.31 - HA/DR posture (Database 10/10 Plan, Phase 3)
 
 - **`docs/HA_DR.md`**: the data-layer deployment story with published
