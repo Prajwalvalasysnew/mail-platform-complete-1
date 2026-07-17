@@ -15,7 +15,7 @@ immutable version history, and durable, exactly-once execution.
 | Step log | `workflow_run_steps` | Per-run execution ledger (audit trail + idempotency). |
 | Step stats | `workflow_step_stats` | Per (version, step) entered/completed/failed counters for builder overlays. |
 
-All five tables carry fail-closed tenant RLS (migration 067), matching the
+All five tables carry fail-closed tenant RLS (migration 068), matching the
 platform posture from migration 043.
 
 ## Definition model

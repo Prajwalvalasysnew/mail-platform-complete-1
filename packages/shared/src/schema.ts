@@ -988,7 +988,7 @@ export interface UnsubscribeGroupMembersTable {
 }
 
 // =====================================================
-// Migration 067 tables (workflow automation engine)
+// Migration 068 tables (workflow automation engine)
 // =====================================================
 
 export type WorkflowStatus = 'draft' | 'active' | 'paused' | 'archived';
