@@ -329,6 +329,57 @@ export const openapiSpec = {
         responses: { '200': { description: 'Top 100 keys with per-key { sent, delivered, bounced, opened, clicked }' } },
       },
     },
+    '/workflows': {
+      get: { summary: 'List workflows with run counts', operationId: 'listWorkflows', parameters: [{ name: 'status', in: 'query', schema: { type: 'string', enum: ['draft', 'active', 'paused', 'archived'] } }], responses: { '200': { description: 'OK' } } },
+      post: { summary: 'Create a workflow (draft)', operationId: 'createWorkflow', responses: { '201': { description: 'Created' }, '409': { description: 'Name exists' } } },
+    },
+    '/workflows/validate': {
+      post: { summary: 'Validate a workflow definition without saving', operationId: 'validateWorkflow', responses: { '200': { description: '{ valid, errors, warnings }' } } },
+    },
+    '/workflows/signing-secret': {
+      get: { summary: 'Per-org HMAC secret for verifying workflow webhook-step deliveries', operationId: 'getWorkflowSigningSecret', responses: { '200': { description: 'secret + algorithm + header name' } } },
+    },
+    '/workflows/{id}': {
+      get: { summary: 'Get a workflow (draft + published definitions)', operationId: 'getWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' }, '404': { description: 'Not found' } } },
+      put: { summary: 'Update the draft (name/description/definition)', operationId: 'updateWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Updated' }, '404': { description: 'Not found' } } },
+      delete: { summary: 'Archive a workflow (stops new entries, cancels in-flight runs)', operationId: 'archiveWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Archived' }, '404': { description: 'Not found' } } },
+    },
+    '/workflows/{id}/publish': {
+      post: { summary: 'Strict-validate the draft, snapshot an immutable version, activate', operationId: 'publishWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: '{ published, version, warnings }' }, '400': { description: 'Definition failed strict validation' } } },
+    },
+    '/workflows/{id}/pause': {
+      post: { summary: 'Pause an active workflow (stops new entries; in-flight runs continue)', operationId: 'pauseWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Paused' }, '409': { description: 'Invalid state' } } },
+    },
+    '/workflows/{id}/resume': {
+      post: { summary: 'Resume a paused workflow', operationId: 'resumeWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Resumed' }, '409': { description: 'Invalid state' } } },
+    },
+    '/workflows/{id}/versions': {
+      get: { summary: 'Version history (append-only)', operationId: 'listWorkflowVersions', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' } } },
+    },
+    '/workflows/{id}/versions/{version}': {
+      get: { summary: 'Get a specific version snapshot', operationId: 'getWorkflowVersion', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'version', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'OK' }, '404': { description: 'Not found' } } },
+    },
+    '/workflows/{id}/versions/{version}/restore': {
+      post: { summary: 'Copy a historical version back into the draft', operationId: 'restoreWorkflowVersion', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'version', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'Restored' }, '404': { description: 'Not found' } } },
+    },
+    '/workflows/{id}/trigger': {
+      post: { summary: 'Start a run for a subject (external/API trigger)', operationId: 'triggerWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, run_id }' }, '409': { description: 'Not started (re-entry policy / already active / capacity)' } } },
+    },
+    '/workflows/{id}/simulate': {
+      post: { summary: 'Dry-run the definition for a hypothetical subject (no side effects)', operationId: 'simulateWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Step-by-step path with virtual timing' } } },
+    },
+    '/workflows/{id}/runs': {
+      get: { summary: 'List runs for a workflow', operationId: 'listWorkflowRuns', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'status', in: 'query', schema: { type: 'string' } }], responses: { '200': { description: 'OK' } } },
+    },
+    '/workflows/{id}/stats': {
+      get: { summary: 'Run counts, goal attainment, and per-step counters', operationId: 'getWorkflowStats', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' } } },
+    },
+    '/workflows/runs/{runId}': {
+      get: { summary: 'Get a run with its step execution history', operationId: 'getWorkflowRun', parameters: [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' }, '404': { description: 'Not found' } } },
+    },
+    '/workflows/runs/{runId}/cancel': {
+      post: { summary: 'Cancel an in-flight run', operationId: 'cancelWorkflowRun', parameters: [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Canceled' }, '409': { description: 'Not cancelable' } } },
+    },
     '/webhooks': {
       get: { summary: 'List webhooks', operationId: 'listWebhooks', responses: { '200': { description: 'OK' } } },
       post: { summary: 'Create a webhook', operationId: 'createWebhook', responses: { '201': { description: 'Created' } } },

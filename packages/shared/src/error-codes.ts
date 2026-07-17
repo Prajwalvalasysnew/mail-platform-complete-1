@@ -132,6 +132,16 @@ export const ERROR_CODES = {
   invalid_idempotency_key: { description: 'The idempotency key is malformed.', httpStatus: 400 },
   idempotency_key_reused: { description: 'The idempotency key was reused with a different request.', httpStatus: 409 },
   idempotency_in_progress: { description: 'A request with this idempotency key is still in progress.', httpStatus: 409 },
+
+  // ── Workflows ──────────────────────────────────────────────────────────────
+  invalid_definition: { description: 'The workflow definition failed validation (schema or graph integrity).', httpStatus: 400 },
+  invalid_version: { description: 'The workflow version number is malformed.', httpStatus: 400 },
+  not_published: { description: 'The workflow has no published version for this operation.', httpStatus: 409 },
+  not_started: { description: 'The workflow run was not started (re-entry policy, already active, capacity, or workflow inactive).', httpStatus: 409 },
+  archived: { description: 'The workflow is archived and cannot be modified or published.', httpStatus: 409 },
+  invalid_state: { description: 'The workflow is not in a state that allows this lifecycle transition.', httpStatus: 409 },
+  unknown_template: { description: 'A send_email step references a template that does not exist in this org.', httpStatus: 422 },
+  invalid_webhook_url: { description: 'The webhook URL is not a resolvable public HTTP(S) endpoint.', httpStatus: 422 },
 } as const satisfies Record<string, ErrorCodeSpec | { description: string; httpStatus: number }>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

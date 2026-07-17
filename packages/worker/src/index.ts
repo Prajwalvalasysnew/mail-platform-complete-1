@@ -19,6 +19,7 @@ import { startSendWorker } from './send-worker.js';
 import { startEventWorker } from './event-worker.js';
 import { startWebhookWorker } from './webhook-worker.js';
 import { startExportsWorker } from './exports-worker.js';
+import { startWorkflowWorker } from './workflow-worker.js';
 import { startScheduler } from './scheduler.js';
 
 const logger = pino(privacyLoggerOptions());
@@ -42,9 +43,10 @@ const sendWorker = startSendWorker(logger);
 const eventWorker = startEventWorker(logger);
 const webhookWorker = startWebhookWorker(logger);
 const exportsWorker = startExportsWorker(logger);
+const workflowWorker = startWorkflowWorker(logger);
 const scheduler = startScheduler(logger);
 
-logger.info('Workers started: send, events, webhooks, exports (+ scheduler)');
+logger.info('Workers started: send, events, webhooks, exports, workflow (+ scheduler)');
 
 let isShuttingDown = false;
 
@@ -120,6 +122,7 @@ const shutdown = async (signal: string) => {
     eventWorker.pause(),
     webhookWorker.pause(),
     exportsWorker.pause(),
+    workflowWorker.pause(),
   ]);
 
   const drainStart = Date.now();
@@ -135,7 +138,7 @@ const shutdown = async (signal: string) => {
 
   try {
     await Promise.race([
-      Promise.all([sendWorker.close(), eventWorker.close(), webhookWorker.close(), exportsWorker.close()]),
+      Promise.all([sendWorker.close(), eventWorker.close(), webhookWorker.close(), exportsWorker.close(), workflowWorker.close()]),
       forceExit,
     ]);
     if (forceExitTimer) clearTimeout(forceExitTimer);

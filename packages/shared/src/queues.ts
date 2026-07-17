@@ -105,6 +105,25 @@ export interface ExportJobData {
 export const exportsQueue = new Queue<ExportJobData>(`${QUEUE_PREFIX}exports`, defaultQueueOpts);
 
 // =====================================================
+// Workflow queue — drives workflow-run state machines. Jobs are the fast
+// path; workflow_runs rows are the durable source of truth (wake_at sweep in
+// the scheduler recovers timers whose Redis job was lost).
+// =====================================================
+export interface WorkflowJobData {
+  // advance: execute steps from the run's current position.
+  // wake:    a delay elapsed — transition waiting_delay -> running, advance.
+  // timeout: a wait_for_event timed out — take the on_timeout branch, advance.
+  kind: 'advance' | 'wake' | 'timeout';
+  run_id: string;
+  customer_id: string;
+  // Guard for wake/timeout: only fires if the run is still waiting on this
+  // step (an event may have resumed it first).
+  step_id?: string;
+}
+
+export const workflowQueue = new Queue<WorkflowJobData>(`${QUEUE_PREFIX}workflow`, defaultQueueOpts);
+
+// =====================================================
 // Dead-letter queue — jobs that exhausted all retries land here for
 // inspection / manual replay instead of vanishing. Nothing consumes it
 // automatically; an operator (or a future reaper) drains it.
@@ -190,6 +209,7 @@ function queueForReplay(sourceQueue: string) {
   if (sourceQueue === 'send') return { queue: sendQueue, name: 'send' };
   if (sourceQueue === 'events') return { queue: eventsQueue, name: 'event' };
   if (sourceQueue === 'webhooks') return { queue: webhooksQueue, name: 'deliver' };
+  if (sourceQueue === 'workflow') return { queue: workflowQueue, name: 'advance' };
   throw new Error(`unsupported_source_queue:${sourceQueue}`);
 }
 
@@ -259,7 +279,7 @@ export async function purgeAllDeadLetters(): Promise<number> {
   }
 }
 
-export const allQueues = [sendQueue, eventsQueue, webhooksQueue, deadLetterQueue, exportsQueue];
+export const allQueues = [sendQueue, eventsQueue, webhooksQueue, deadLetterQueue, exportsQueue, workflowQueue];
 
 const PRIVACY_REMOVABLE_JOB_STATES = [
   'waiting', 'delayed', 'failed', 'paused', 'completed', 'prioritized', 'waiting-children',

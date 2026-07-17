@@ -173,6 +173,34 @@ export const pgPoolConnections = new Gauge({
   registers: [registry],
 });
 
+export const workflowRunsStarted = new Counter({
+  name: 'mp_workflow_runs_started_total',
+  help: 'Workflow runs started',
+  labelNames: ['trigger_source'],
+  registers: [registry],
+});
+
+export const workflowRunsFinished = new Counter({
+  name: 'mp_workflow_runs_finished_total',
+  help: 'Workflow runs reaching a terminal state',
+  labelNames: ['status'], // completed | goal_met | exited | failed | canceled
+  registers: [registry],
+});
+
+export const workflowStepsExecuted = new Counter({
+  name: 'mp_workflow_steps_executed_total',
+  help: 'Workflow steps executed',
+  labelNames: ['step_type', 'outcome'],
+  registers: [registry],
+});
+
+export const workflowSweepRecovered = new Counter({
+  name: 'mp_workflow_sweep_recovered_total',
+  help: 'Workflow runs re-armed by durability sweeps (lost Redis jobs)',
+  labelNames: ['kind'], // overdue_wake | stuck_running
+  registers: [registry],
+});
+
 export async function metricsText(): Promise<string> {
   // Sample pool utilization at scrape time so every service reports its own
   // pool without needing a background sampler.

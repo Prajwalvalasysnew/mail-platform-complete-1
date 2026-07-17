@@ -296,6 +296,11 @@ export interface Database {
   webhook_delivery_log: WebhookDeliveryLogTable;
   unsubscribe_groups: UnsubscribeGroupsTable;
   unsubscribe_group_members: UnsubscribeGroupMembersTable;
+  workflows: WorkflowsTable;
+  workflow_versions: WorkflowVersionsTable;
+  workflow_runs: WorkflowRunsTable;
+  workflow_run_steps: WorkflowRunStepsTable;
+  workflow_step_stats: WorkflowStepStatsTable;
 }
 
 // =====================================================
@@ -980,4 +985,95 @@ export interface UnsubscribeGroupMembersTable {
   customer_id: string;
   email: string;
   unsubscribed_at: Generated<Timestamp>;
+}
+
+// =====================================================
+// Migration 068 tables (workflow automation engine)
+// =====================================================
+
+export type WorkflowStatus = 'draft' | 'active' | 'paused' | 'archived';
+export type WorkflowRunStatus =
+  | 'running'
+  | 'waiting_delay'
+  | 'waiting_event'
+  | 'completed'
+  | 'goal_met'
+  | 'exited'
+  | 'failed'
+  | 'canceled';
+export type WorkflowTriggerSource = 'event' | 'api' | 'manual' | 'test';
+
+export interface WorkflowsTable {
+  id: Generated<string>;
+  customer_id: string;
+  name: string;
+  description: string | null;
+  status: Generated<WorkflowStatus>;
+  draft_definition: Generated<Record<string, unknown>>;
+  published_version_id: string | null;
+  published_version: number | null;
+  trigger_type: string | null;
+  trigger_event_type: string | null;
+  allow_reentry: Generated<boolean>;
+  reentry_cooldown_seconds: Generated<number>;
+  created_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface WorkflowVersionsTable {
+  id: Generated<string>;
+  workflow_id: string;
+  customer_id: string;
+  version: number;
+  definition: Record<string, unknown>;
+  notes: string | null;
+  published_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+export interface WorkflowRunsTable {
+  id: Generated<string>;
+  customer_id: string;
+  workflow_id: string;
+  version_id: string;
+  version: number;
+  subject_email: string;
+  status: Generated<WorkflowRunStatus>;
+  current_step_id: string | null;
+  trigger_source: Generated<WorkflowTriggerSource>;
+  context: Generated<Record<string, unknown>>;
+  wake_at: Timestamp | null;
+  waiting_event_types: string[] | null;
+  steps_executed: Generated<number>;
+  goal_met_at: Timestamp | null;
+  goal_step_id: string | null;
+  error: string | null;
+  started_at: Generated<Timestamp>;
+  finished_at: Timestamp | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface WorkflowRunStepsTable {
+  id: Generated<string>;
+  run_id: string;
+  customer_id: string;
+  step_id: string;
+  step_type: string;
+  seq: number;
+  status: Generated<'completed' | 'failed' | 'skipped' | 'waiting'>;
+  result: Generated<Record<string, unknown>>;
+  error: string | null;
+  executed_at: Generated<Timestamp>;
+}
+
+export interface WorkflowStepStatsTable {
+  workflow_id: string;
+  customer_id: string;
+  version: number;
+  step_id: string;
+  entered: Generated<number>;
+  completed: Generated<number>;
+  failed: Generated<number>;
+  updated_at: Generated<Timestamp>;
 }
