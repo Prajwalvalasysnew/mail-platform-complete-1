@@ -29,6 +29,7 @@ export * from './openapi.js';
 export * from './migrate.js';
 export * from './tracing.js';
 export * from './admin.js';
+export * from './platform-settings.js';
 export * from './billing.js';
 export * from './billing-provider.js';
 export * from './bot-detection.js';

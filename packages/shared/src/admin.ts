@@ -26,19 +26,64 @@ function hashToken(token: string): string {
   return crypto.createHmac('sha256', pepper).update(token).digest('base64url');
 }
 
+function generateCsrfToken(): string {
+  return `mpcsrf_${crypto.randomBytes(32).toString('base64url')}`;
+}
+
+export interface AdminSessionIssued {
+  token: string;
+  /** Per-session CSRF secret for cookie-based clients. Returned once at issue/rotate. */
+  csrf_token: string;
+  role: AdminRole;
+  admin_user_id: string;
+  expires_at: Date;
+}
+
 async function createAdminSessionForUser(
   adminUserId: string,
   role: AdminRole,
   ttlHours = 8
-): Promise<{ token: string; role: AdminRole; admin_user_id: string; expires_at: Date }> {
+): Promise<AdminSessionIssued> {
   const token = `mpadm_${crypto.randomBytes(32).toString('base64url')}`;
+  const csrfToken = generateCsrfToken();
   const expiresAt = new Date(Date.now() + ttlHours * 3600_000);
   await db
     .insertInto('admin_sessions')
-    .values({ admin_user_id: adminUserId, token_hash: hashToken(token), expires_at: expiresAt })
+    .values({ admin_user_id: adminUserId, token_hash: hashToken(token), csrf_hash: hashToken(csrfToken), expires_at: expiresAt })
     .execute();
   await db.updateTable('admin_users').set({ last_login_at: new Date() }).where('id', '=', adminUserId).execute();
-  return { token, role, admin_user_id: adminUserId, expires_at: expiresAt };
+  return { token, csrf_token: csrfToken, role, admin_user_id: adminUserId, expires_at: expiresAt };
+}
+
+/**
+ * Rotate the CSRF secret for a live session and return the new value. Used by
+ * the bootstrap endpoint so a page reload (cookie present, CSRF secret lost
+ * with the old JS heap) can re-arm mutation protection without re-login.
+ */
+export async function rotateAdminSessionCsrf(token: string): Promise<string | null> {
+  if (!token.startsWith('mpadm_')) return null;
+  const csrfToken = generateCsrfToken();
+  const res = await db
+    .updateTable('admin_sessions')
+    .set({ csrf_hash: hashToken(csrfToken) })
+    .where('token_hash', '=', hashToken(token))
+    .where('expires_at', '>', new Date())
+    .executeTakeFirst();
+  return Number(res.numUpdatedRows ?? 0) > 0 ? csrfToken : null;
+}
+
+/** Constant-time check of a presented CSRF token against the session's stored hash. */
+export async function verifyAdminSessionCsrf(token: string, csrfToken: string): Promise<boolean> {
+  if (!token.startsWith('mpadm_') || !csrfToken.startsWith('mpcsrf_')) return false;
+  const row = await db
+    .selectFrom('admin_sessions')
+    .select(['csrf_hash'])
+    .where('token_hash', '=', hashToken(token))
+    .executeTakeFirst();
+  if (!row?.csrf_hash) return false;
+  const presented = Buffer.from(hashToken(csrfToken));
+  const stored = Buffer.from(row.csrf_hash);
+  return presented.length === stored.length && crypto.timingSafeEqual(presented, stored);
 }
 
 /**
@@ -50,7 +95,7 @@ export async function createAdminSession(
   oidcSubject: string,
   email: string,
   ttlHours = 8
-): Promise<{ token: string; role: AdminRole } | null> {
+): Promise<AdminSessionIssued | null> {
   let user = await db
     .selectFrom('admin_users')
     .select(['id', 'role', 'disabled'])
@@ -70,8 +115,7 @@ export async function createAdminSession(
   }
   if (user.disabled) return null;
 
-  const session = await createAdminSessionForUser(user.id, user.role as AdminRole, ttlHours);
-  return { token: session.token, role: session.role };
+  return createAdminSessionForUser(user.id, user.role as AdminRole, ttlHours);
 }
 
 export interface AdminContext {
@@ -93,6 +137,8 @@ export async function resolveAdminSession(token: string): Promise<AdminContext |
     .innerJoin('admin_users', 'admin_users.id', 'admin_sessions.admin_user_id')
     .select(['admin_sessions.admin_user_id as admin_user_id', 'admin_sessions.expires_at as expires_at', 'admin_users.role as role', 'admin_users.email as email', 'admin_users.disabled as disabled'])
     .where('admin_sessions.token_hash', '=', hashToken(token))
+    // Audience binding: only sessions minted for the admin plane resolve here.
+    .where('admin_sessions.audience', '=', 'admin')
     .executeTakeFirst();
   if (!row || row.disabled) return null;
   if (new Date(row.expires_at) < new Date()) return null;
@@ -162,7 +208,7 @@ export async function verifyAdminPasswordCredentials(email: string, password: st
 export async function createAdminSessionForPasswordAuth(
   auth: AdminPasswordAuth,
   ttlHours = 8
-): Promise<{ token: string; role: AdminRole; admin_user_id: string; expires_at: Date }> {
+): Promise<AdminSessionIssued> {
   return createAdminSessionForUser(auth.admin_user_id, auth.role, ttlHours);
 }
 
@@ -175,7 +221,7 @@ export async function createAdminSessionWithPassword(
   email: string,
   password: string,
   ttlHours = 8
-): Promise<{ token: string; role: AdminRole; admin_user_id: string; expires_at: Date } | null> {
+): Promise<AdminSessionIssued | null> {
   const auth = await verifyAdminPasswordCredentials(email, password);
   if (!auth || auth.totp_enabled) return null;
   return createAdminSessionForPasswordAuth(auth, ttlHours);

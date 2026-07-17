@@ -14,7 +14,15 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    // The docs workspace (Docusaurus) hoists @types/react@19 to the repo
+    // root; pin type resolution to this package's React 18 types so hoisted
+    // libraries (e.g. @tanstack/react-router) don't mix React type majors.
+    "baseUrl": ".",
+    "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react-dom": ["./node_modules/@types/react-dom"]
+    }
   },
   "include": ["src"]
 }

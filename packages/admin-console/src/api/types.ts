@@ -14,6 +14,7 @@ export function roleAtLeast(role: AdminRole, min: AdminRole): boolean {
 
 export interface LoginResponse {
   token: string;
+  csrf_token: string;
   role: AdminRole;
   expires_at: string;
 }
@@ -22,6 +23,14 @@ export interface Me {
   admin_user_id: string;
   email: string;
   role: AdminRole;
+}
+
+export interface BootstrapResponse {
+  admin: Me & { standing_role: AdminRole; elevated: boolean };
+  /** null when the request authenticated via bearer token */
+  csrf_token: string | null;
+  capabilities: Record<string, boolean>;
+  auth_via: 'bearer' | 'cookie';
 }
 
 // ---- Tenants ----
@@ -36,10 +45,39 @@ export interface CustomerRow {
   status: CustomerStatus;
   billing_status: string | null;
   kyc_level: string | null;
+  kyc_status?: KycStatus;
+  kyc_note?: string | null;
+  kyc_submitted_at?: string | null;
+  kyc_reviewed_at?: string | null;
   daily_quota: number;
   monthly_quota: number;
   created_at: string;
   updated_at: string;
+}
+
+// ---- KYC ----
+export type KycStatus = 'none' | 'pending' | 'more_info' | 'approved' | 'rejected';
+export type KycLevel = 'email' | 'domain' | 'payment' | 'business';
+
+export interface KycRow {
+  id: string;
+  email: string;
+  name: string | null;
+  tier: CustomerTier;
+  account_status: CustomerStatus;
+  kyc_level: KycLevel | string;
+  kyc_status: KycStatus;
+  kyc_note: string | null;
+  kyc_submitted_at: string | null;
+  kyc_reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KycListResponse {
+  customers: KycRow[];
+  next_cursor: string | null;
+  counts_by_status: Partial<Record<KycStatus, number>>;
 }
 
 export interface CustomerListResponse {
@@ -223,7 +261,7 @@ export interface DeadLetterList {
 
 // ---- Audit ----
 export interface AuditRow {
-  id: string;
+  id: number;
   actor: string | null;
   action: string;
   resource: string | null;
@@ -273,6 +311,59 @@ export interface ElevationRow {
   break_glass: boolean;
   expires_at: string;
   created_at: string;
+}
+
+// ---- Fleet time series / top tenants ----
+export interface TimeseriesDay {
+  day: string;
+  total: number;
+  delivered: number;
+  bounced: number;
+  failed: number;
+  by_status: Record<string, number>;
+}
+
+export interface TimeseriesResponse {
+  days: number;
+  series: TimeseriesDay[];
+}
+
+export interface TopTenant {
+  customer_id: string;
+  email: string;
+  name: string | null;
+  tier: CustomerTier;
+  status: CustomerStatus;
+  total: number;
+  delivered: number;
+  bounced: number;
+  bounce_rate: number;
+}
+
+export interface TopTenantsResponse {
+  hours: number;
+  tenants: TopTenant[];
+}
+
+// ---- Payment gateways ----
+export type GatewayKey = 'stripe' | 'paypal' | 'cashfree';
+
+export interface GatewayInfo {
+  key: GatewayKey;
+  configured: boolean;
+  env: Record<string, boolean>;
+  enabled: boolean;
+  mode: 'live' | 'test' | null;
+  activity: { events_processed: number; last_event_at: string | null };
+}
+
+// ---- Platform settings ----
+export interface PlatformSettings {
+  quotas: { default_daily_quota: number; default_monthly_quota: number };
+  bounce_thresholds: { soft_bounce_hold_pct: number; hard_bounce_suspend_pct: number; complaint_hold_pct: number };
+  warmup: { initial_daily_volume: number; ramp_days: number };
+  security: { require_admin_mfa: boolean; session_lifetime_hours: number; lockout_threshold: number; lockout_minutes: number };
+  payment_gateways: Record<GatewayKey, { enabled: boolean; mode?: 'live' | 'test' }>;
 }
 
 // ---- Retention ----

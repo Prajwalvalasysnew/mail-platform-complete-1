@@ -18,9 +18,18 @@ import { DlqPage } from './pages/Dlq';
 
 function Root() {
   const { status } = useAuth();
-  // The session lives only in memory; any unauthenticated state (fresh tab,
-  // expiry, logout) renders the login screen regardless of URL. No route
-  // content, cached authority, or data survives across identities.
+  // Session identity is carried by the HttpOnly __Host- cookie; while the
+  // bootstrap probe runs on load we render a quiet splash instead of flashing
+  // the login screen. Any unauthenticated state (fresh tab, expiry, logout)
+  // renders login regardless of URL — no route content, cached authority, or
+  // data survives across identities.
+  if (status === 'restoring') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', color: 'var(--text-dim)', fontSize: 13 }}>
+        Restoring session…
+      </div>
+    );
+  }
   if (status !== 'authenticated') return <LoginPage />;
   return <Shell />;
 }
