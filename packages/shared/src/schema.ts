@@ -20,6 +20,11 @@ export interface CustomersTable {
   billing_status: Generated<'active' | 'past_due' | 'canceled' | 'trialing'>;
   status: Generated<'active' | 'suspended' | 'banned'>;
   kyc_level: Generated<'email' | 'domain' | 'payment' | 'business'>;
+  kyc_status: Generated<'none' | 'pending' | 'more_info' | 'approved' | 'rejected'>;
+  kyc_note: string | null;
+  kyc_submitted_at: Timestamp | null;
+  kyc_reviewed_at: Timestamp | null;
+  kyc_reviewed_by: string | null;
   new_account_until: Timestamp | null;
   email_verified_at: Timestamp | null;
   email_verify_token_hash: string | null;
@@ -269,6 +274,7 @@ export interface Database {
   quota_notifications: QuotaNotificationsTable;
   admin_users: AdminUsersTable;
   admin_sessions: AdminSessionsTable;
+  platform_settings: PlatformSettingsTable;
   admin_elevations: AdminElevationsTable;
   webauthn_credentials: WebauthnCredentialsTable;
   webauthn_challenges: WebauthnChallengesTable;
@@ -920,8 +926,19 @@ export interface AdminSessionsTable {
   id: Generated<string>;
   admin_user_id: string;
   token_hash: string;
+  /** HMAC of the per-session CSRF secret (cookie-session flows only). */
+  csrf_hash: string | null;
+  /** Session audience binding — admin console sessions are tagged 'admin'. */
+  audience: Generated<string>;
   expires_at: Timestamp;
   created_at: Generated<Timestamp>;
+}
+
+export interface PlatformSettingsTable {
+  key: string;
+  value: unknown;
+  updated_by: string | null;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface VolumeBaselinesTable {

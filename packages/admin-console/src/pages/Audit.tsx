@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import * as api from '../api/operations';
 import { useAuth } from '../auth/AuthContext';
 import { ApiError } from '../lib/http';
@@ -7,21 +7,27 @@ import { EmptyState, ErrorState, Loading, PermissionState, Pill, SearchInput } f
 import { Icon } from '../components/icons';
 import { fmtDate } from '../lib/format';
 
+const PAGE_SIZE = 100;
+
 export function AuditPage() {
   const { admin, hasRole } = useAuth();
   const [q, setQ] = useState('');
   const [action, setAction] = useState('');
 
-  const audit = useQuery({
-    queryKey: ['admin', admin?.admin_user_id, 'audit'],
-    queryFn: () => api.auditLog(300),
+  // Cursor-paginated: GET /admin/audit?cursor=<last id> walks the trail
+  // backwards page by page, so the list can grow unbounded server-side.
+  const audit = useInfiniteQuery({
+    queryKey: ['admin', admin?.admin_user_id, 'audit', { action }],
+    queryFn: ({ pageParam }) => api.auditLog({ limit: PAGE_SIZE, cursor: pageParam, action: action || undefined }),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: hasRole('admin'),
-    refetchInterval: 60_000,
   });
 
+  const loaded = useMemo(() => (audit.data?.pages ?? []).flatMap((p) => p.audit), [audit.data]);
+
   const rows = useMemo(() => {
-    let out = audit.data?.audit ?? [];
-    if (action) out = out.filter((r) => r.action === action);
+    let out = loaded;
     if (q.trim()) {
       const needle = q.toLowerCase();
       out = out.filter((r) =>
@@ -31,9 +37,9 @@ export function AuditPage() {
       );
     }
     return out;
-  }, [audit.data, q, action]);
+  }, [loaded, q]);
 
-  const actions = useMemo(() => [...new Set((audit.data?.audit ?? []).map((r) => r.action))].sort(), [audit.data]);
+  const actions = useMemo(() => [...new Set(loaded.map((r) => r.action))].sort(), [loaded]);
 
   if (!hasRole('admin')) return <PermissionState need="admin" />;
 
@@ -63,7 +69,9 @@ export function AuditPage() {
       <div className="page-head">
         <div className="page-desc">Immutable audit trail — every platform and admin action is logged here.</div>
         <div className="row">
-          <Pill tone="green"><span className="dot green" style={{ marginRight: 4 }} /> Live</Pill>
+          <button className="btn sm" onClick={() => void audit.refetch()} disabled={audit.isFetching}>
+            <Icon name="refresh" size={13} /> {audit.isFetching ? 'Refreshing…' : 'Refresh'}
+          </button>
           <button className="btn" onClick={exportCsv} disabled={rows.length === 0}>
             <Icon name="download" size={13} /> Export
           </button>
@@ -124,8 +132,18 @@ export function AuditPage() {
           </div>
         )}
         <div className="table-foot">
-          <span>{rows.length} entries (most recent 300)</span>
-          <span className="mono" style={{ fontSize: 10.5 }}>GET /admin/audit</span>
+          <span>
+            {rows.length} shown · {loaded.length} loaded
+            {audit.hasNextPage ? '' : ' · end of trail'}
+          </span>
+          <div className="row">
+            <span className="mono" style={{ fontSize: 10.5 }}>GET /admin/audit</span>
+            {audit.hasNextPage ? (
+              <button className="btn sm" onClick={() => void audit.fetchNextPage()} disabled={audit.isFetchingNextPage}>
+                {audit.isFetchingNextPage ? 'Loading…' : `Load ${PAGE_SIZE} more`}
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
     </>
