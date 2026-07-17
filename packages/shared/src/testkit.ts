@@ -63,7 +63,7 @@ export async function seedCustomer(opts: SeedCustomerOpts = {}): Promise<SeededC
       key_prefix: key.prefix,
       key_hash: key.hash,
       key_type: key.key_type,
-      scopes: opts.scopes ?? ['send', 'domains', 'suppressions', 'messages', 'webhooks', 'templates'],
+      scopes: opts.scopes ?? ['send', 'domains', 'suppressions', 'messages', 'webhooks', 'templates', 'workflows'],
     } as any)
     .returning(['id'])
     .executeTakeFirstOrThrow();

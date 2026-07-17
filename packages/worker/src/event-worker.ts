@@ -18,6 +18,8 @@ import {
   QUEUE_PREFIX,
   type EventJobData,
   isMessagePrivacyErased,
+  dispatchWorkflowEvent,
+  WORKFLOW_EVENT_TYPES,
 } from '@platform/shared';
 
 // Either the shared Kysely instance or a transaction from it. Keyed off the
@@ -361,6 +363,37 @@ export function startEventWorker(logger: Logger) {
           // duplicate delivery for the same event.
           { jobId: `wh:${wh.id}:${inserted.id}` }
         );
+      }
+
+      // Workflow automation dispatch: engagement events can start runs
+      // (event triggers), resume wait_for_event steps, and mark goals. All
+      // downstream transitions are idempotent against workflow_runs rows, so
+      // a job retry re-running this block is safe.
+      if ((WORKFLOW_EVENT_TYPES as readonly string[]).includes(ev.event_type)) {
+        const msg = await db
+          .selectFrom('messages')
+          .select('to_address')
+          .where('message_id', '=', ev.message_id)
+          .executeTakeFirst();
+        if (msg) {
+          const dispatched = await dispatchWorkflowEvent({
+            customerId,
+            eventType: ev.event_type,
+            subjectEmail: msg.to_address,
+            messageId: ev.message_id,
+            payload: ev.payload ?? {},
+          });
+          if (dispatched.started_runs.length || dispatched.resumed_runs.length || dispatched.goals_met.length) {
+            log.info(
+              {
+                started: dispatched.started_runs.length,
+                resumed: dispatched.resumed_runs.length,
+                goals: dispatched.goals_met.length,
+              },
+              'workflow dispatch for event'
+            );
+          }
+        }
       }
     },
     {

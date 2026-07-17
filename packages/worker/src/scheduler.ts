@@ -45,6 +45,8 @@ import {
   billingStuckRequests,
   checkpointAllAuditChains,
   expireElevations,
+  sweepOverdueWorkflowRuns,
+  recoverStuckWorkflowRuns,
 } from '@platform/shared';
 
 interface Job {
@@ -415,6 +417,21 @@ export function startScheduler(logger: Logger): { stop: () => void } {
             payload: { reason: 'stale_sending_reset' },
           });
         }
+      },
+    },
+    {
+      // Workflow durability sweeps. BullMQ jobs are the fast path for run
+      // wakeups; workflow_runs.wake_at is the durable truth. This re-arms
+      // waiting runs whose delayed Redis job was lost (flush/failover) and
+      // re-enqueues 'running' runs stranded between a DB transition and the
+      // Redis add — the workflow analog of send_outbox drain/reclaim.
+      name: 'workflow_run_sweep',
+      everyMs: MIN,
+      run: async () => {
+        const rearmed = await sweepOverdueWorkflowRuns();
+        if (rearmed) logger.warn({ rearmed }, 're-armed overdue workflow runs (lost wake jobs)');
+        const recovered = await recoverStuckWorkflowRuns();
+        if (recovered) logger.warn({ recovered }, 're-enqueued stuck running workflow runs');
       },
     },
     {

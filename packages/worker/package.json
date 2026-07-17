@@ -9,6 +9,7 @@
     "./send-worker.js": "./dist/send-worker.js",
     "./event-worker.js": "./dist/event-worker.js",
     "./webhook-worker.js": "./dist/webhook-worker.js",
+    "./workflow-worker.js": "./dist/workflow-worker.js",
     "./scheduler.js": "./dist/scheduler.js"
   },
   "scripts": {

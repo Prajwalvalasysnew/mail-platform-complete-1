@@ -60,6 +60,7 @@ import { auditRoutes } from '@platform/api/routes/audit.js';
 import { supportRoutes } from '@platform/api/routes/support.js';
 import { accountBillingRoutes } from '@platform/api/routes/account-billing.js';
 import { billingRoutes } from '@platform/api/routes/billing.js';
+import { workflowRoutes } from '@platform/api/routes/workflows.js';
 
 type RouteKey = string; // `${METHOD} ${path}`
 
@@ -113,6 +114,7 @@ async function collectRoutes(): Promise<Set<RouteKey>> {
     await instance.register(analyticsRoutes, { prefix: '/v1' });
     await instance.register(privacyRoutes, { prefix: '/v1' });
     await instance.register(webhookRoutes, { prefix: '/v1' });
+    await instance.register(workflowRoutes, { prefix: '/v1' });
   });
 
   await app.ready();
