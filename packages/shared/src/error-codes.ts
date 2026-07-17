@@ -65,6 +65,10 @@ export const ERROR_CODES = {
   admin_auth_required: { description: 'Admin authentication is required.', httpStatus: 401 },
   invalid_admin_session: { description: 'Admin session is invalid or expired.', httpStatus: 401 },
   oidc_not_configured: { description: 'Admin OIDC login is not configured.', httpStatus: 400 },
+  csrf_failed: { description: 'Missing or invalid CSRF token for a cookie-authenticated admin mutation.', httpStatus: 403 },
+  origin_mismatch: { description: 'The request Origin is not an allowed admin console origin.', httpStatus: 403 },
+  cross_site_blocked: { description: 'Cross-site requests are not permitted on the admin plane (Sec-Fetch-Site).', httpStatus: 403 },
+  note_required: { description: 'A note explaining the decision is required (KYC request-info / reject).', httpStatus: 400 },
 
   // ── API-key / bearer auth (plugins) ────────────────────────────────────────
   missing_auth: { description: 'No Authorization header / API key was provided.', httpStatus: 401 },
