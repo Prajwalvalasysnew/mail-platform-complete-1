@@ -42,14 +42,17 @@ within the 150 KB budget from the architecture doc).
   `['admin', adminUserId, resource, filters]`; logout/expiry cancels in-flight
   requests, clears the entire query cache, and returns to login. A 401 from
   any call triggers the same purge.
-- **Session handling (current backend reality).** The API authenticates admins
-  with a bearer session token from `POST /admin/auth/login`. The token is held
-  **in memory only** — never in local/session storage, per the storage policy.
-  A page reload therefore requires sign-in again until the gateway/identity
-  layer implements `__Host-` httpOnly cookie sessions (a release-blocking
-  backend prerequisite already tracked in the architecture doc). The request
-  layer (`src/lib/http.ts`) is written so the bearer header can be dropped
-  with no other changes once cookies land.
+- **Session handling.** Login sets a `__Host-`-prefixed, HttpOnly,
+  SameSite=Strict cookie server-side, so the session token never touches JS or
+  storage, and returns a per-session CSRF secret held in memory and attached
+  to every mutation as `x-csrf-token`. On page reload the console calls
+  `GET /admin/auth/bootstrap`, which restores identity from the cookie,
+  rotates a fresh CSRF secret, and returns the server-derived capability map.
+  Cookie-authenticated requests are additionally checked server-side for
+  Origin and `Sec-Fetch-Site` (fetch-metadata) correctness; bearer tokens
+  remain supported for ops tooling. For non-TLS local setups where the
+  `__Host-` prefix can't apply, start the API with `ADMIN_COOKIE_SECURE=false`
+  (localhost itself is a trustworthy origin, so the default works in dev).
 - **Role-aware UI.** Roles are `support < operator < admin < superadmin`
   (mirroring `roleAtLeast` on the API). Navigation, actions, and routes render
   permission states client-side for usability; the API remains the enforcement
@@ -62,44 +65,51 @@ within the 150 KB budget from the architecture doc).
 
 | Route | Screen | Operations | Min role |
 | --- | --- | --- | --- |
-| `/` | Fleet overview | `GET /overview`, `GET /review-queue/stats`, `GET /deliverability/pool-health`, `GET /support-tickets/sla-breaches`, `GET /dlq` | support (dlq widget: operator) |
+| `/` | Fleet overview | `GET /overview`, `GET /overview/timeseries`, `GET /overview/top-tenants`, `GET /review-queue/stats`, `GET /deliverability/pool-health`, `GET /support-tickets/sla-breaches`, `GET /dlq` | support (dlq widget: operator) |
 | `/tenants` | Tenants + drawer | `GET /customers`, `GET /customers/:id`, `POST /customers/:id/support-notes`, `PATCH /customers/:id`, `POST /customers/suspend·reinstate` | support / operator / admin |
 | `/deliverability` | Deliverability | `GET /deliverability/pool-health`, `GET /reputation/pools`, `POST /deliverability/blocklist-scan` | support (scan: operator) |
 | `/pools` | IP pools | `GET /reputation/pools`, `POST /deliverability/blocklist-scan` | support |
 | `/support` | Support inbox (3-pane) | `GET/PATCH /support-tickets*`, `POST …/messages·read·triage·suggest-reply`, `GET /support/canned-responses`, `GET /support-tickets/sla-breaches` | support |
 | `/abuse` | Abuse queue | `GET /review-queue(+/stats)`, `POST /review-queue/:id/approve·reject`, `POST /review-queue/bulk` | support (actions: operator) |
-| `/kyc` | KYC / verification | `GET /customers` (kyc_level) — **read-only, see gaps** | support |
-| `/audit` | Audit log | `GET /admin/audit` (+ client CSV export) | admin |
+| `/kyc` | KYC / verification | `GET /kyc`, `POST /kyc/:id/approve·request-info·reject` | support (decisions: operator) |
+| `/audit` | Audit log | `GET /admin/audit` (cursor-paginated + client CSV export) | admin |
 | `/billing` | Billing & metering | `GET /billing-events(+/:id)`, `POST /billing-events/:id/replay`, `POST /billing/reconcile` | operator (replay: admin) |
-| `/payments` | Payment gateways | `GET /billing-events` (activity-derived status) — **see gaps** | operator |
-| `/settings` | Settings | `POST /retention/run` — other panels read-only, **see gaps** | operator |
+| `/payments` | Payment gateways | `GET /payment-gateways`, `PUT /payment-gateways/:key` | operator (configure: admin) |
+| `/settings` | Settings | `GET/PUT /settings`, `POST /retention/run` | operator (write: admin) |
 | `/team` | Admin team + elevations | `GET/POST/PATCH /admins*`, `GET/POST/DELETE /elevations*`, `POST /elevations/break-glass` | operator (manage: superadmin) |
 | `/dlq` | Dead-letter queue | `GET /dlq(+/:id)`, `POST /dlq/:id/replay`, `DELETE /dlq/:id`, `POST /dlq/purge` | operator |
 
-## Backend gaps found during the end-to-end check
+## Backend gaps from the end-to-end check — now closed
 
-Discovered while mapping the confirmed design against the real
-`packages/api/src/routes/admin.ts`:
+The seven gaps found while mapping the confirmed design against
+`packages/api/src/routes/admin.ts` have all been implemented
+(migration `067_admin_console_gaps.sql`):
 
-1. **KYC decisions** — the design has Approve / More info / Reject per tenant;
-   the API only stores `kyc_level` on customers. Needs `/admin/kyc/*` decision
-   endpoints (screen ships read-only with an explanatory banner).
-2. **Payment gateway config** — the design has per-gateway Configure modals;
-   credentials are env-managed with no `/admin/payment-gateways` API. Screen
-   derives Active/Inactive from billing-event activity instead.
-3. **Platform settings CRUD** — quotas / bounce thresholds / warmup / security
-   panels in the design need a settings API; only the retention runner exists
-   (`POST /admin/retention/run`), which is fully wired.
-4. **Fleet time series** — the design's 7-day volume chart needs an admin
-   timeseries endpoint; `/admin/overview` is 24h aggregates only, so the
-   screen charts the 24h status breakdown.
-5. **Top tenants by volume** — needs a per-tenant volume aggregate endpoint.
-6. **Cookie sessions, CSRF, capability bootstrap** — the release-blocking
-   backend prerequisites from docs/frontend-architecture apply to this console
-   verbatim (bearer → `__Host-` cookie, CSRF token + Origin + Fetch Metadata
-   enforcement, audience-bound sessions).
-7. **Audit pagination** — `GET /admin/audit` is limit-only (max 500); cursor
-   pagination is needed before this list can grow unbounded.
+1. **KYC decisions** — `/admin/kyc` queue + `POST /admin/kyc/:id/approve`,
+   `…/request-info`, `…/reject`. Decisions stamp reviewer/timestamp/note on
+   the customer (`kyc_status`) and are audit-logged; approve can raise
+   `kyc_level`. The screen's action buttons are live (operator role).
+2. **Payment gateway config** — `GET /admin/payment-gateways` reports
+   credential *presence* from the environment (never values), the persisted
+   enable/mode toggle, and billing-event activity; `PUT
+   /admin/payment-gateways/:key` (admin) saves the toggle. The Configure modal
+   is wired to both.
+3. **Platform settings CRUD** — `GET/PUT /admin/settings` backed by the
+   `platform_settings` JSONB store with typed, zod-validated groups (quotas,
+   bounce thresholds, warmup, security). All four panels are editable (admin).
+4. **Fleet time series** — `GET /admin/overview/timeseries?days=7` (UTC daily
+   buckets, zero-filled) drives the 7-day volume chart on the fleet screen.
+5. **Top tenants by volume** — `GET /admin/overview/top-tenants?hours=24`
+   joins per-tenant message aggregates to the customer record; rendered as the
+   fleet screen's top-senders table.
+6. **Cookie sessions, CSRF, capability bootstrap** — login sets the `__Host-`
+   cookie and returns a CSRF secret; cookie-authed requests enforce Origin +
+   fetch metadata + `x-csrf-token` on mutations; sessions are audience-bound
+   (`admin_sessions.audience`); `GET /admin/auth/bootstrap` restores identity,
+   rotates CSRF, and returns the capability map.
+7. **Audit pagination** — `GET /admin/audit` is cursor-paginated
+   (`cursor=<last id>` + `next_cursor`, optional `action` filter) with a
+   partial index for the admin-plane scan; the screen loads pages on demand.
 
 ## Not in scope yet (per delivery order)
 

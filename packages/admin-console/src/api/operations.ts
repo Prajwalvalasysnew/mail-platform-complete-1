@@ -11,15 +11,22 @@ import type {
   AdminUserRow,
   AuditRow,
   BillingEventSummary,
+  BootstrapResponse,
   CannedResponse,
   CustomerListResponse,
   CustomerOverview,
   DeadLetterItem,
   DeadLetterList,
   ElevationRow,
+  GatewayInfo,
+  GatewayKey,
+  KycListResponse,
+  KycLevel,
+  KycStatus,
   LoginResponse,
   Me,
   OverviewResponse,
+  PlatformSettings,
   PoolHealth,
   ReconcileResult,
   ReputationPool,
@@ -30,6 +37,8 @@ import type {
   TicketDetail,
   TicketMessage,
   TicketRow,
+  TimeseriesResponse,
+  TopTenantsResponse,
 } from './types';
 
 // ---- Auth ----
@@ -37,9 +46,14 @@ export const login = (body: { email: string; password: string; code?: string }) 
   request<LoginResponse>('/auth/login', { method: 'POST', body, anonymous: true });
 export const logout = () => request<{ ok: true }>('/auth/logout', { method: 'POST' });
 export const me = () => request<Me>('/auth/me');
+/** Cookie-session restore on page load: identity + fresh CSRF secret + capability map. */
+export const bootstrap = () => request<BootstrapResponse>('/auth/bootstrap');
 
 // ---- Platform overview ----
 export const overview = () => request<OverviewResponse>('/overview');
+export const overviewTimeseries = (days = 7) => request<TimeseriesResponse>('/overview/timeseries', { query: { days } });
+export const topTenants = (q: { hours?: number; limit?: number } = {}) =>
+  request<TopTenantsResponse>('/overview/top-tenants', { query: q });
 
 // ---- Tenants ----
 export const listCustomers = (q: { q?: string; status?: string; tier?: string; limit?: number; before?: string }) =>
@@ -57,6 +71,16 @@ export const updateCustomer = (
   id: string,
   body: { tier?: string; daily_quota?: number; monthly_quota?: number; events_retention_days?: number | null; body_retention_days?: number | null }
 ) => request<{ updated: string }>(`/customers/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+
+// ---- KYC / verification ----
+export const kycList = (q: { status?: KycStatus | 'open' | 'all'; limit?: number; before?: string }) =>
+  request<KycListResponse>('/kyc', { query: q });
+export const kycApprove = (id: string, body: { note?: string; level?: KycLevel } = {}) =>
+  request<{ customer_id: string; kyc_status: KycStatus; kyc_level: string }>(`/kyc/${encodeURIComponent(id)}/approve`, { method: 'POST', body });
+export const kycRequestInfo = (id: string, body: { note: string }) =>
+  request<{ customer_id: string; kyc_status: KycStatus; kyc_level: string }>(`/kyc/${encodeURIComponent(id)}/request-info`, { method: 'POST', body });
+export const kycReject = (id: string, body: { note: string }) =>
+  request<{ customer_id: string; kyc_status: KycStatus; kyc_level: string }>(`/kyc/${encodeURIComponent(id)}/reject`, { method: 'POST', body });
 
 // ---- Support ----
 export const listTickets = (q: { status?: string; priority?: string; category?: string; assigned?: 'me' | 'unassigned'; customer_id?: string; limit?: number; before?: string }) =>
@@ -105,7 +129,8 @@ export const deleteDlq = (id: string) => request<{ deleted: string }>(`/dlq/${en
 export const purgeDlq = () => request<{ purged: number }>('/dlq/purge', { method: 'POST', body: { confirm: true } });
 
 // ---- Audit ----
-export const auditLog = (limit = 200) => request<{ audit: AuditRow[] }>('/audit', { query: { limit } });
+export const auditLog = (q: { limit?: number; cursor?: number; action?: string } = {}) =>
+  request<{ audit: AuditRow[]; next_cursor: number | null }>('/audit', { query: q });
 
 // ---- Billing ----
 export const billingEvents = (q: { limit?: number; before?: string }) =>
@@ -116,7 +141,15 @@ export const replayBillingEvent = (id: string) =>
   request<{ replayed: string; applied: unknown }>(`/billing-events/${encodeURIComponent(id)}/replay`, { method: 'POST' });
 export const reconcileMetering = () => request<ReconcileResult>('/billing/reconcile', { method: 'POST' });
 
+// ---- Payment gateways ----
+export const paymentGateways = () => request<{ gateways: GatewayInfo[] }>('/payment-gateways');
+export const updatePaymentGateway = (key: GatewayKey, body: { enabled: boolean; mode?: 'live' | 'test' }) =>
+  request<{ gateway: GatewayKey; config: { enabled: boolean; mode?: 'live' | 'test' } }>(`/payment-gateways/${encodeURIComponent(key)}`, { method: 'PUT', body });
+
 // ---- Settings / retention ----
+export const getSettings = () => request<{ settings: PlatformSettings }>('/settings');
+export const updateSettings = (body: Partial<PlatformSettings>) =>
+  request<{ ok: true; updated_groups: string[]; settings: PlatformSettings }>('/settings', { method: 'PUT', body });
 export const runRetention = (body: RetentionParams) => request<{ ok: true; result: Record<string, unknown> }>('/retention/run', { method: 'POST', body });
 
 // ---- Admin team ----

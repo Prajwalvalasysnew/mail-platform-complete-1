@@ -1,64 +1,76 @@
 import { useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from '../api/operations';
+import type { KycLevel, KycRow, KycStatus } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
-import { EmptyState, ErrorState, Loading, Pill, PlanPill, StatusPill } from '../components/ui';
+import { useToast } from '../components/Toast';
+import { friendlyError } from '../lib/http';
+import { EmptyState, ErrorState, Loading, Modal, Pill, PlanPill, StatusPill } from '../components/ui';
 import { fmtAgo } from '../lib/format';
 
 /**
- * KYC / verification.
+ * KYC / verification decisions.
  *
- * The backend tracks `kyc_level` per customer but does not yet expose
- * dedicated approve / request-info / reject endpoints (`/admin/kyc/*` is a
- * backend gap — see the workspace README). This screen gives operators the
- * read view over verification state; the action buttons land when the API
- * does.
+ * Backed by the /admin/kyc/* decision endpoints: operators can approve
+ * (optionally raising the verification level), request more information, or
+ * reject — each decision is audited and stamps reviewer + timestamp.
  */
+
+const STATUS_TONE: Record<KycStatus, 'green' | 'red' | 'amber' | 'blue' | 'ghost'> = {
+  approved: 'green',
+  rejected: 'red',
+  pending: 'amber',
+  more_info: 'blue',
+  none: 'ghost',
+};
+
+const STATUS_LABEL: Record<KycStatus, string> = {
+  approved: 'Approved',
+  rejected: 'Rejected',
+  pending: 'Pending review',
+  more_info: 'More info requested',
+  none: 'Not submitted',
+};
+
+type Decision = 'approve' | 'request-info' | 'reject';
+
 export function KycPage() {
-  const { admin } = useAuth();
-  const [level, setLevel] = useState('');
+  const { admin, hasRole } = useAuth();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [status, setStatus] = useState<KycStatus | 'open' | 'all'>('open');
   const [cursors, setCursors] = useState<string[]>([]);
   const before = cursors.at(-1);
+  const [decide, setDecide] = useState<{ row: KycRow; decision: Decision } | null>(null);
 
   const list = useQuery({
-    queryKey: ['admin', admin?.admin_user_id, 'customers', { kyc: true, before }],
-    queryFn: () => api.listCustomers({ limit: 50, before }),
+    queryKey: ['admin', admin?.admin_user_id, 'kyc', { status, before }],
+    queryFn: () => api.kycList({ status, limit: 50, before }),
     placeholderData: keepPreviousData,
   });
 
-  const rows = (list.data?.customers ?? []).filter((c) => {
-    const l = (c.kyc_level ?? 'none').toLowerCase();
-    if (!level) return true;
-    if (level === 'pending') return l !== 'verified' && l !== 'none';
-    return l === level;
-  });
+  const canDecide = hasRole('operator');
+  const rows = list.data?.customers ?? [];
+  const counts = list.data?.counts_by_status ?? {};
+  const openCount = (counts.pending ?? 0) + (counts.more_info ?? 0);
 
-  const pending = (list.data?.customers ?? []).filter((c) => {
-    const l = (c.kyc_level ?? '').toLowerCase();
-    return l && l !== 'verified' && l !== 'none';
-  }).length;
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['admin', admin?.admin_user_id, 'kyc'] });
 
   return (
     <>
       <div className="page-head">
-        <div className="page-desc">Sender verification levels per tenant — higher levels unlock higher quotas and dedicated IPs.</div>
+        <div className="page-desc">Sender verification per tenant — approve, request more info, or reject. Higher levels unlock higher quotas and dedicated IPs.</div>
         <div className="row">
-          {pending > 0 ? <Pill tone="blue">{pending} pending review</Pill> : null}
-          <select className="select" style={{ width: 150 }} value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Filter KYC level">
-            <option value="">All levels</option>
-            <option value="none">None</option>
+          {openCount > 0 ? <Pill tone="amber">{openCount} awaiting decision</Pill> : <Pill tone="green">queue clear</Pill>}
+          <select className="select" style={{ width: 180 }} value={status} onChange={(e) => { setStatus(e.target.value as typeof status); setCursors([]); }} aria-label="Filter KYC status">
+            <option value="open">Needs decision</option>
+            <option value="all">All tenants</option>
             <option value="pending">Pending</option>
-            <option value="verified">Verified</option>
+            <option value="more_info">More info requested</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="none">Not submitted</option>
           </select>
-        </div>
-      </div>
-
-      <div className="alert blue">
-        <div className="body">
-          <div className="t">Approve / request-info / reject actions are not wired yet</div>
-          The current API tracks <span className="codechip">kyc_level</span> per tenant but has no{' '}
-          <span className="codechip">/admin/kyc/*</span> decision endpoints. This view is read-only until those routes ship
-          (tracked as a backend gap in the console README).
         </div>
       </div>
 
@@ -76,11 +88,12 @@ export function KycPage() {
                 <thead>
                   <tr>
                     <th>Tenant</th>
-                    <th>Business name</th>
                     <th>Plan</th>
-                    <th>Account status</th>
+                    <th>Account</th>
                     <th>KYC level</th>
-                    <th>Submitted</th>
+                    <th>Decision</th>
+                    <th>Updated</th>
+                    {canDecide ? <th style={{ textAlign: 'right' }}>Actions</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -88,24 +101,36 @@ export function KycPage() {
                     <tr key={c.id}>
                       <td>
                         <div className="cell-main">{c.email}</div>
-                        <div className="cell-sub mono">{c.id.slice(0, 8)}…</div>
+                        <div className="cell-sub mono">{c.name ?? `${c.id.slice(0, 8)}…`}</div>
                       </td>
-                      <td>{c.name ?? <span className="section-note">—</span>}</td>
                       <td><PlanPill tier={c.tier} /></td>
-                      <td><StatusPill status={c.status} /></td>
+                      <td><StatusPill status={c.account_status} /></td>
+                      <td><Pill tone="outline">{c.kyc_level}</Pill></td>
                       <td>
-                        <Pill tone={(c.kyc_level ?? '').toLowerCase() === 'verified' ? 'green' : c.kyc_level ? 'amber' : 'ghost'}>
-                          {c.kyc_level ?? 'none'}
-                        </Pill>
+                        <Pill tone={STATUS_TONE[c.kyc_status] ?? 'ghost'}>{STATUS_LABEL[c.kyc_status] ?? c.kyc_status}</Pill>
+                        {c.kyc_note ? (
+                          <div className="section-note" style={{ marginTop: 4, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.kyc_note}>
+                            {c.kyc_note}
+                          </div>
+                        ) : null}
                       </td>
-                      <td style={{ fontSize: 11.5, color: 'var(--text-dim)' }}>{fmtAgo(c.updated_at)}</td>
+                      <td style={{ fontSize: 11.5, color: 'var(--text-dim)' }}>{fmtAgo(c.kyc_reviewed_at ?? c.updated_at)}</td>
+                      {canDecide ? (
+                        <td>
+                          <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
+                            <button className="btn sm" disabled={c.kyc_status === 'approved'} onClick={() => setDecide({ row: c, decision: 'approve' })}>Approve</button>
+                            <button className="btn sm" onClick={() => setDecide({ row: c, decision: 'request-info' })}>More info</button>
+                            <button className="btn sm danger" disabled={c.kyc_status === 'rejected'} onClick={() => setDecide({ row: c, decision: 'reject' })}>Reject</button>
+                          </div>
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <div className="table-foot">
-              <span>{rows.length} tenants</span>
+              <span>{rows.length} tenants{!canDecide ? ' · decisions require operator role' : ''}</span>
               <div className="row">
                 <button className="btn sm" disabled={cursors.length === 0} onClick={() => setCursors((c) => c.slice(0, -1))}>← Prev</button>
                 <button
@@ -120,6 +145,104 @@ export function KycPage() {
           </>
         )}
       </div>
+
+      {decide ? (
+        <KycDecisionModal
+          row={decide.row}
+          decision={decide.decision}
+          onDone={() => { setDecide(null); void invalidate(); }}
+          onClose={() => setDecide(null)}
+          notify={toast}
+        />
+      ) : null}
     </>
+  );
+}
+
+function KycDecisionModal({
+  row,
+  decision,
+  onDone,
+  onClose,
+  notify,
+}: {
+  row: KycRow;
+  decision: Decision;
+  onDone: () => void;
+  onClose: () => void;
+  notify: ReturnType<typeof useToast>;
+}) {
+  const [note, setNote] = useState('');
+  const [level, setLevel] = useState<KycLevel | ''>('');
+  const noteRequired = decision !== 'approve';
+
+  const titles: Record<Decision, string> = {
+    approve: `Approve verification — ${row.email}`,
+    'request-info': `Request more information — ${row.email}`,
+    reject: `Reject verification — ${row.email}`,
+  };
+
+  const run = useMutation({
+    mutationFn: () => {
+      if (decision === 'approve') return api.kycApprove(row.id, { note: note.trim() || undefined, level: level || undefined });
+      if (decision === 'request-info') return api.kycRequestInfo(row.id, { note: note.trim() });
+      return api.kycReject(row.id, { note: note.trim() });
+    },
+    onSuccess: (d) => {
+      notify(
+        decision === 'approve'
+          ? `Approved — ${row.email} is now level "${d.kyc_level}".`
+          : decision === 'request-info'
+            ? `More information requested from ${row.email}.`
+            : `Verification rejected for ${row.email}.`
+      );
+      onDone();
+    },
+    onError: (e) => notify(friendlyError(e), 'error'),
+  });
+
+  return (
+    <Modal title={titles[decision]} onClose={onClose} width={480}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {decision === 'approve' ? (
+          <div className="field">
+            <label>Verification level</label>
+            <select className="select" value={level} onChange={(e) => setLevel(e.target.value as KycLevel | '')} aria-label="Verification level">
+              <option value="">Keep current ({row.kyc_level})</option>
+              <option value="domain">domain</option>
+              <option value="payment">payment</option>
+              <option value="business">business</option>
+            </select>
+          </div>
+        ) : null}
+        <div className="field">
+          <label>{noteRequired ? 'Note (required — shared with the tenant)' : 'Note (optional)'}</label>
+          <textarea
+            className="input"
+            rows={4}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder={
+              decision === 'request-info'
+                ? 'What additional documentation or detail is needed?'
+                : decision === 'reject'
+                  ? 'Why is this verification being rejected?'
+                  : 'Internal context for this approval…'
+            }
+            aria-label="Decision note"
+          />
+        </div>
+        <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          <button className="btn" onClick={onClose} disabled={run.isPending}>Cancel</button>
+          <button
+            className={decision === 'reject' ? 'btn danger-solid' : 'btn primary'}
+            disabled={run.isPending || (noteRequired && !note.trim())}
+            onClick={() => run.mutate()}
+          >
+            {run.isPending ? 'Saving…' : decision === 'approve' ? 'Approve' : decision === 'request-info' ? 'Request info' : 'Reject'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }

@@ -15,6 +15,9 @@ export default defineConfig({
       '/api': {
         target: API_ORIGIN,
         changeOrigin: true,
+        // Forward X-Forwarded-Host so the API's cookie-session Origin check
+        // compares against the browser-facing host (5174), not the target.
+        xfwd: true,
         rewrite: (path) => path.replace(/^\/api/, '/admin'),
       },
     },

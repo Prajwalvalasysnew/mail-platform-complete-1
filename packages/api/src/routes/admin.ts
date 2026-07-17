@@ -62,28 +62,174 @@ import {
   runRetention,
   clearRetentionPolicyCache,
   reconcileMetering,
+  rotateAdminSessionCsrf,
+  verifyAdminSessionCsrf,
+  getPlatformSettings,
+  updatePlatformSettings,
   type AdminContext,
   type AdminRole,
+  type AdminSessionIssued,
 } from '@platform/shared';
 
 declare module 'fastify' {
   interface FastifyRequest {
     admin?: AdminContext;
+    /** How the admin authenticated: header token or __Host- session cookie. */
+    adminAuthVia?: 'bearer' | 'cookie';
+    /** The raw session token (for logout / CSRF rotation). */
+    adminSessionToken?: string;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Cookie sessions for the admin console (frontend-architecture prerequisite).
+//
+// The console authenticates with a `__Host-`-prefixed, HttpOnly, Secure,
+// SameSite=Strict cookie so the session token never touches JS. Cookie-authed
+// requests additionally enforce:
+//   * Fetch metadata — `Sec-Fetch-Site: cross-site` is rejected outright;
+//   * Origin — when the browser sends one it must match the request host or
+//     the ADMIN_CONSOLE_ORIGINS allowlist;
+//   * CSRF — every mutating request must carry `x-csrf-token` matching the
+//     per-session secret issued at login and rotated by /auth/bootstrap.
+// Bearer tokens remain accepted unchanged for ops tooling and tests; they are
+// exempt from CSRF because a cross-site page cannot set an Authorization
+// header. Set ADMIN_COOKIE_SECURE=false only for non-TLS local development
+// (drops the Secure attribute and the __Host- prefix, which requires it).
+// ---------------------------------------------------------------------------
+
+const COOKIE_SECURE = process.env.ADMIN_COOKIE_SECURE !== 'false';
+const SESSION_COOKIE = COOKIE_SECURE ? '__Host-admin_session' : 'admin_session';
+
+function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    const k = part.slice(0, eq).trim();
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      out[k] = part.slice(eq + 1).trim();
+    }
+  }
+  return out;
+}
+
+function sessionCookieHeader(token: string, maxAgeSeconds: number): string {
+  const attrs = [
+    `${SESSION_COOKIE}=${token}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Strict',
+    `Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`,
+  ];
+  if (COOKIE_SECURE) attrs.push('Secure');
+  return attrs.join('; ');
+}
+
+function issueSessionCookie(reply: FastifyReply, session: AdminSessionIssued): void {
+  reply.header('Set-Cookie', sessionCookieHeader(session.token, (session.expires_at.getTime() - Date.now()) / 1000));
+}
+
+function clearSessionCookie(reply: FastifyReply): void {
+  reply.header('Set-Cookie', sessionCookieHeader('', 0));
+}
+
+function originAllowed(req: FastifyRequest): boolean {
+  const origin = req.headers.origin;
+  // Same-origin GETs and non-browser clients send no Origin header; mutations
+  // without one are still gated by the CSRF token check below. An explicit
+  // "null" Origin (sandboxed iframe, privacy-stripped redirect) is rejected.
+  if (origin === undefined || origin === '') return true;
+  if (origin === 'null') return false;
+  const allowlist = (process.env.ADMIN_CONSOLE_ORIGINS ?? process.env.ADMIN_CONSOLE_ORIGIN ?? '')
+    .split(',')
+    .map((s) => s.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  if (allowlist.includes(origin.replace(/\/$/, ''))) return true;
+  try {
+    const originHost = new URL(origin).host;
+    const fwdHost = req.headers['x-forwarded-host'];
+    const host = (typeof fwdHost === 'string' ? fwdHost.split(',')[0]!.trim() : undefined) ?? req.headers.host;
+    return typeof host === 'string' && originHost.toLowerCase() === host.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+const CSRF_EXEMPT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 function requireAdmin(minRole: AdminRole) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     const header = req.headers.authorization;
-    if (!header?.startsWith('Bearer ')) {
-      return reply.code(401).send({ error: 'admin_auth_required' });
+    let token: string | null = null;
+    let via: 'bearer' | 'cookie' | null = null;
+    if (header?.startsWith('Bearer ')) {
+      token = header.slice(7).trim();
+      via = 'bearer';
+    } else {
+      const cookieToken = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+      if (cookieToken) {
+        token = cookieToken;
+        via = 'cookie';
+      }
     }
-    const ctx = await resolveAdminSession(header.slice(7).trim());
+    if (!token || !via) return reply.code(401).send({ error: 'admin_auth_required' });
+
+    if (via === 'cookie') {
+      const fetchSite = req.headers['sec-fetch-site'];
+      if (fetchSite === 'cross-site') {
+        return reply.code(403).send({ error: 'cross_site_blocked', message: 'Cross-site requests are not permitted on the admin plane.' });
+      }
+      if (!originAllowed(req)) {
+        return reply.code(403).send({ error: 'origin_mismatch', message: 'Request Origin is not an allowed admin console origin.' });
+      }
+      if (!CSRF_EXEMPT_METHODS.has(req.method)) {
+        const csrf = req.headers['x-csrf-token'];
+        if (typeof csrf !== 'string' || !(await verifyAdminSessionCsrf(token, csrf))) {
+          return reply.code(403).send({ error: 'csrf_failed', message: 'Missing or invalid x-csrf-token for this cookie session.' });
+        }
+      }
+    }
+
+    const ctx = await resolveAdminSession(token);
     if (!ctx) return reply.code(401).send({ error: 'invalid_admin_session' });
     if (!roleAtLeast(ctx.role, minRole)) {
       return reply.code(403).send({ error: 'insufficient_role', message: `Requires role >= ${minRole}` });
     }
     req.admin = ctx;
+    req.adminAuthVia = via;
+    req.adminSessionToken = token;
+  };
+}
+
+/**
+ * Capability map for the console bootstrap: what the signed-in admin's role
+ * can do, derived server-side so the UI never hardcodes role → screen logic.
+ */
+function capabilitiesForRole(role: AdminRole): Record<string, boolean> {
+  return {
+    tenants_view: true,
+    support: true,
+    kyc_view: true,
+    kyc_decide: roleAtLeast(role, 'operator'),
+    review_queue_decide: roleAtLeast(role, 'operator'),
+    dlq_manage: roleAtLeast(role, 'operator'),
+    billing_events: roleAtLeast(role, 'operator'),
+    billing_replay: roleAtLeast(role, 'admin'),
+    payment_gateways_view: roleAtLeast(role, 'operator'),
+    payment_gateways_configure: roleAtLeast(role, 'admin'),
+    settings_view: roleAtLeast(role, 'operator'),
+    settings_write: roleAtLeast(role, 'admin'),
+    retention_run: roleAtLeast(role, 'operator'),
+    customers_update: roleAtLeast(role, 'operator'),
+    customers_suspend: roleAtLeast(role, 'admin'),
+    audit_view: roleAtLeast(role, 'admin'),
+    elevations_grant: roleAtLeast(role, 'admin'),
+    admins_manage: roleAtLeast(role, 'superadmin'),
   };
 }
 
@@ -489,6 +635,101 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { reinstated: parsed.data.customer_id };
   });
 
+  // ---- KYC / verification decisions ----
+  //
+  // `kyc_level` is the capability ladder (email → domain → payment → business);
+  // `kyc_status` is the review decision driven here: approve / request more
+  // info / reject, matching the console design. Support can read the queue,
+  // decisions need operator.
+  const KYC_STATUSES = ['none', 'pending', 'more_info', 'approved', 'rejected'] as const;
+  const KycListQuery = z.object({
+    status: z.enum([...KYC_STATUSES, 'open', 'all']).optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+    before: z.string().uuid().optional(),
+  });
+  app.get('/kyc', { preHandler: requireAdmin('support') }, async (req, reply) => {
+    const parsed = KycListQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    const { status = 'all', limit = 50, before } = parsed.data;
+
+    let q = db
+      .selectFrom('customers')
+      .select([
+        'id', 'email', 'name', 'tier', 'status as account_status', 'kyc_level', 'kyc_status',
+        'kyc_note', 'kyc_submitted_at', 'kyc_reviewed_at', 'created_at', 'updated_at',
+      ])
+      .orderBy('id', 'desc')
+      .limit(limit + 1);
+    if (before) q = q.where('id', '<', before);
+    if (status === 'open') q = q.where('kyc_status', 'in', ['pending', 'more_info']);
+    else if (status !== 'all') q = q.where('kyc_status', '=', status);
+
+    const [rows, counts] = await Promise.all([
+      q.execute(),
+      db.selectFrom('customers')
+        .select(['kyc_status', (eb) => eb.fn.countAll<number>().as('c')])
+        .groupBy('kyc_status')
+        .execute(),
+    ]);
+    const hasMore = rows.length > limit;
+    const customers = hasMore ? rows.slice(0, limit) : rows;
+    return {
+      customers,
+      next_cursor: hasMore ? customers.at(-1)!.id : null,
+      counts_by_status: Object.fromEntries(counts.map((r) => [r.kyc_status, Number(r.c)])),
+    };
+  });
+
+  const KycDecisionSchema = z.object({
+    note: z.string().trim().min(1).max(2000).optional(),
+    /** Approve may simultaneously raise the verification level. */
+    level: z.enum(['email', 'domain', 'payment', 'business']).optional(),
+  });
+
+  async function applyKycDecision(
+    req: FastifyRequest,
+    reply: FastifyReply,
+    decision: 'approved' | 'more_info' | 'rejected'
+  ) {
+    const { id } = req.params as { id: string };
+    if (!z.string().uuid().safeParse(id).success) return reply.code(400).send({ error: 'validation_failed' });
+    const parsed = KycDecisionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    // Asking for more info or rejecting without telling the tenant why is
+    // useless — a note is mandatory for those decisions.
+    if (decision !== 'approved' && !parsed.data.note) {
+      return reply.code(400).send({ error: 'note_required', message: `A note is required when ${decision === 'rejected' ? 'rejecting' : 'requesting more information'}.` });
+    }
+
+    const customer = await db.selectFrom('customers').select(['id', 'kyc_level', 'kyc_status']).where('id', '=', id).executeTakeFirst();
+    if (!customer) return reply.code(404).send({ error: 'not_found' });
+
+    const set: Record<string, unknown> = {
+      kyc_status: decision,
+      kyc_note: parsed.data.note ?? null,
+      kyc_reviewed_at: new Date(),
+      kyc_reviewed_by: req.admin!.admin_user_id,
+      updated_at: new Date(),
+    };
+    if (decision === 'approved' && parsed.data.level) set.kyc_level = parsed.data.level;
+    await db.updateTable('customers').set(set).where('id', '=', id).execute();
+
+    await auditAdminAction(req.admin!, `kyc_${decision}`, 'customer', {
+      previous_status: customer.kyc_status,
+      note: parsed.data.note,
+      ...(set.kyc_level ? { kyc_level: set.kyc_level } : {}),
+    }, id);
+    return {
+      customer_id: id,
+      kyc_status: decision,
+      kyc_level: (set.kyc_level as string | undefined) ?? customer.kyc_level,
+    };
+  }
+
+  app.post('/kyc/:id/approve', { preHandler: requireAdmin('operator'), config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, (req, reply) => applyKycDecision(req, reply, 'approved'));
+  app.post('/kyc/:id/request-info', { preHandler: requireAdmin('operator'), config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, (req, reply) => applyKycDecision(req, reply, 'more_info'));
+  app.post('/kyc/:id/reject', { preHandler: requireAdmin('operator'), config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, (req, reply) => applyKycDecision(req, reply, 'rejected'));
+
   // ---- Deliverability ops ----
   app.get('/deliverability/pool-health', { preHandler: requireAdmin('support') }, async () => {
     return { pools: await evaluatePoolHealth() };
@@ -665,17 +906,149 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send({ ok: true, result });
   });
 
-  // ---- Audit trail ----
-  app.get('/audit', { preHandler: requireAdmin('admin') }, async (req) => {
-    const { limit = '100' } = req.query as Record<string, string>;
-    const rows = await db
+  // ---- Platform settings (Settings screen CRUD) ----
+  //
+  // Grouped JSONB documents in platform_settings, validated against typed
+  // schemas in @platform/shared. Secrets never live here — gateway credentials
+  // etc. stay in environment configuration.
+  app.get('/settings', { preHandler: requireAdmin('operator') }, async () => {
+    return { settings: await getPlatformSettings() };
+  });
+
+  const SettingsUpdateSchema = z
+    .object({
+      quotas: z.unknown().optional(),
+      bounce_thresholds: z.unknown().optional(),
+      warmup: z.unknown().optional(),
+      security: z.unknown().optional(),
+      payment_gateways: z.unknown().optional(),
+    })
+    .strict();
+  app.put('/settings', { preHandler: requireAdmin('admin') }, async (req, reply) => {
+    const parsed = SettingsUpdateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    const result = await updatePlatformSettings(parsed.data as Record<string, unknown>, req.admin!.admin_user_id);
+    if ('error' in result) {
+      return reply.code(400).send({ error: 'validation_failed', group: result.group, details: result.details });
+    }
+    if (result.updated_groups.length === 0) return reply.code(400).send({ error: 'no_fields' });
+    await auditAdminAction(req.admin!, 'settings_update', 'platform', { groups: result.updated_groups });
+    return { ok: true, updated_groups: result.updated_groups, settings: result.settings };
+  });
+
+  // ---- Payment gateways ----
+  //
+  // Credentials are provisioned via environment configuration and only ever
+  // reported as present/absent (never echoed). The enable toggle + mode label
+  // persist in platform_settings; observed activity comes from the processed
+  // billing-event stream, the most truthful signal of which gateways are live.
+  const GATEWAY_ENV: Record<'stripe' | 'paypal' | 'cashfree', string[]> = {
+    stripe: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
+    paypal: ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET', 'PAYPAL_WEBHOOK_ID'],
+    cashfree: ['CASHFREE_APP_ID', 'CASHFREE_SECRET_KEY', 'CASHFREE_WEBHOOK_SECRET'],
+  };
+  const GATEWAY_KEYS = Object.keys(GATEWAY_ENV) as Array<keyof typeof GATEWAY_ENV>;
+
+  app.get('/payment-gateways', { preHandler: requireAdmin('operator') }, async () => {
+    const [settings, activity] = await Promise.all([
+      getPlatformSettings(),
+      db.selectFrom('billing_events')
+        .select([
+          'provider',
+          (eb) => eb.fn.countAll<number>().as('events'),
+          (eb) => eb.fn.max('processed_at').as('last_event_at'),
+        ])
+        .groupBy('provider')
+        .execute(),
+    ]);
+    const activityByProvider = new Map(activity.map((a) => [(a.provider ?? 'stripe').toLowerCase(), a]));
+    return {
+      gateways: GATEWAY_KEYS.map((key) => {
+        const act = activityByProvider.get(key);
+        const envPresence = Object.fromEntries(GATEWAY_ENV[key].map((name) => [name, Boolean(process.env[name])]));
+        return {
+          key,
+          configured: GATEWAY_ENV[key].every((name) => Boolean(process.env[name])),
+          env: envPresence,
+          enabled: settings.payment_gateways[key].enabled,
+          mode: settings.payment_gateways[key].mode ?? null,
+          activity: {
+            events_processed: Number(act?.events ?? 0),
+            last_event_at: act?.last_event_at ?? null,
+          },
+        };
+      }),
+    };
+  });
+
+  const GatewayPatchSchema = z.object({
+    enabled: z.boolean(),
+    mode: z.enum(['live', 'test']).optional(),
+  });
+  app.put('/payment-gateways/:key', { preHandler: requireAdmin('admin') }, async (req, reply) => {
+    const { key } = req.params as { key: string };
+    if (!GATEWAY_KEYS.includes(key as any)) return reply.code(404).send({ error: 'not_found' });
+    const gatewayKey = key as keyof typeof GATEWAY_ENV;
+    const parsed = GatewayPatchSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const current = await getPlatformSettings();
+    const next = {
+      ...current.payment_gateways,
+      [gatewayKey]: { ...current.payment_gateways[gatewayKey], ...parsed.data },
+    };
+    const result = await updatePlatformSettings({ payment_gateways: next }, req.admin!.admin_user_id);
+    if ('error' in result) {
+      return reply.code(400).send({ error: 'validation_failed', group: result.group, details: result.details });
+    }
+    await auditAdminAction(req.admin!, 'payment_gateway_update', 'platform', { gateway: gatewayKey, ...parsed.data });
+    return { gateway: gatewayKey, config: result.settings.payment_gateways[gatewayKey] };
+  });
+
+  // ---- Audit trail (cursor-paginated) ----
+  //
+  // Descending id cursor so the list can grow unbounded: page N+1 is
+  // `cursor=<last id of page N>`. Rows are mapped to the console's shape —
+  // actor pulled out of the admin metadata, raw metadata exposed as `detail`.
+  const AuditQuery = z.object({
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+    cursor: z.coerce.number().int().positive().optional(),
+    action: z.string().trim().max(120).optional(),
+  });
+  app.get('/audit', { preHandler: requireAdmin('admin') }, async (req, reply) => {
+    const parsed = AuditQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    const { limit = 100, cursor, action } = parsed.data;
+
+    let q = db
       .selectFrom('audit_log')
       .selectAll()
       .where('action', 'like', 'admin:%')
-      .orderBy('occurred_at', 'desc')
-      .limit(Math.min(Number(limit), 500))
-      .execute();
-    return { audit: rows };
+      .orderBy('id', 'desc')
+      .limit(limit + 1);
+    if (cursor !== undefined) q = q.where('id', '<', cursor);
+    if (action) q = q.where('action', '=', action.startsWith('admin:') ? action : `admin:${action}`);
+
+    const rows = await q.execute();
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    return {
+      audit: page.map((r) => {
+        const meta = (r.metadata ?? {}) as Record<string, unknown>;
+        return {
+          // bigint comes back from pg as a string; normalize for the client.
+          id: Number(r.id),
+          actor: (typeof meta.admin_email === 'string' ? meta.admin_email : null) ?? r.actor_label ?? null,
+          action: r.action,
+          resource: r.resource,
+          customer_id: r.customer_id,
+          ip: r.ip,
+          detail: meta,
+          occurred_at: r.occurred_at,
+        };
+      }),
+      next_cursor: hasMore ? Number(page.at(-1)!.id) : null,
+    };
   });
 
   // ---- Admin authentication (OIDC / SSO) ----
@@ -743,10 +1116,12 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(403).send({ error: 'not_authorized', message: 'No admin account found for this identity. Ask a superadmin to provision one.' });
     }
 
+    issueSessionCookie(reply, session);
     return {
       token: session.token,
+      csrf_token: session.csrf_token,
       role: session.role,
-      expires_at: new Date(Date.now() + 8 * 3600_000).toISOString(),
+      expires_at: session.expires_at.toISOString(),
     };
   });
 
@@ -829,8 +1204,10 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       .execute();
 
     const session = await createAdminSessionForPasswordAuth(auth);
+    issueSessionCookie(reply, session);
     return {
       token: session.token,
+      csrf_token: session.csrf_token,
       role: session.role,
       expires_at: session.expires_at.toISOString(),
     };
@@ -860,14 +1237,33 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true, totp_enabled: false };
   });
 
-  app.post('/auth/logout', { preHandler: requireAdmin('support') }, async (req) => {
-    const header = req.headers.authorization!;
-    await revokeAdminSession(header.slice(7).trim());
+  app.post('/auth/logout', { preHandler: requireAdmin('support') }, async (req, reply) => {
+    await revokeAdminSession(req.adminSessionToken!);
+    clearSessionCookie(reply);
     return { ok: true };
   });
 
   app.get('/auth/me', { preHandler: requireAdmin('support') }, async (req) => {
     return { admin_user_id: req.admin!.admin_user_id, email: req.admin!.email, role: req.admin!.role };
+  });
+
+  // Capability bootstrap: the console calls this on load. A cookie session
+  // survives page reloads, so this restores identity without re-login and
+  // rotates the CSRF secret (the old one died with the previous JS heap).
+  app.get('/auth/bootstrap', { preHandler: requireAdmin('support') }, async (req) => {
+    const csrf = req.adminAuthVia === 'cookie' ? await rotateAdminSessionCsrf(req.adminSessionToken!) : null;
+    return {
+      admin: {
+        admin_user_id: req.admin!.admin_user_id,
+        email: req.admin!.email,
+        role: req.admin!.role,
+        standing_role: req.admin!.standing_role,
+        elevated: req.admin!.elevated,
+      },
+      csrf_token: csrf,
+      capabilities: capabilitiesForRole(req.admin!.role),
+      auth_via: req.adminAuthVia,
+    };
   });
 
   // ---- Admin user management (superadmin only) ----
@@ -1025,6 +1421,104 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       },
       send_queue: queueDepth,
       suppressions_total: Number(suppressions?.c ?? 0),
+    };
+  });
+
+  // ---- Platform overview: daily volume time series ----
+  //
+  // Backs the console's 7-day fleet volume chart. Days are UTC buckets and
+  // gaps are filled with zeros so the chart never has holes.
+  const TimeseriesQuery = z.object({ days: z.coerce.number().int().min(1).max(90).optional() });
+  app.get('/overview/timeseries', { preHandler: requireAdmin('support') }, async (req, reply) => {
+    const parsed = TimeseriesQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    const days = parsed.data.days ?? 7;
+
+    const now = new Date();
+    const startOfToday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const since = new Date(startOfToday - (days - 1) * 86400_000);
+
+    const rows = await db
+      .selectFrom('messages')
+      .select([
+        sql<string>`to_char(date_trunc('day', queued_at at time zone 'UTC'), 'YYYY-MM-DD')`.as('day'),
+        'status',
+        (eb) => eb.fn.countAll<number>().as('c'),
+      ])
+      .where('queued_at', '>=', since as any)
+      .groupBy(sql`1, 2`)
+      .execute();
+
+    const byDay = new Map<string, { total: number; delivered: number; bounced: number; failed: number; by_status: Record<string, number> }>();
+    for (let i = 0; i < days; i++) {
+      const day = new Date(since.getTime() + i * 86400_000).toISOString().slice(0, 10);
+      byDay.set(day, { total: 0, delivered: 0, bounced: 0, failed: 0, by_status: {} });
+    }
+    for (const r of rows) {
+      const bucket = byDay.get(r.day);
+      if (!bucket) continue;
+      const n = Number(r.c);
+      bucket.total += n;
+      bucket.by_status[r.status] = (bucket.by_status[r.status] ?? 0) + n;
+      if (r.status === 'delivered') bucket.delivered += n;
+      else if (r.status === 'hard_bounced' || r.status === 'soft_bounced') bucket.bounced += n;
+      else if (r.status === 'failed') bucket.failed += n;
+    }
+
+    return {
+      days,
+      series: [...byDay.entries()].map(([day, v]) => ({ day, ...v })),
+    };
+  });
+
+  // ---- Platform overview: top tenants by send volume ----
+  const TopTenantsQuery = z.object({
+    hours: z.coerce.number().int().min(1).max(720).optional(),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+  });
+  app.get('/overview/top-tenants', { preHandler: requireAdmin('support') }, async (req, reply) => {
+    const parsed = TopTenantsQuery.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    const hours = parsed.data.hours ?? 24;
+    const limit = parsed.data.limit ?? 10;
+    const since = new Date(Date.now() - hours * 3600_000);
+
+    const rows = await db
+      .selectFrom('messages')
+      .innerJoin('customers', 'customers.id', 'messages.customer_id')
+      .select([
+        'messages.customer_id as customer_id',
+        'customers.email as email',
+        'customers.name as name',
+        'customers.tier as tier',
+        'customers.status as status',
+        (eb) => eb.fn.countAll<number>().as('total'),
+        sql<number>`count(*) filter (where messages.status = 'delivered')`.as('delivered'),
+        sql<number>`count(*) filter (where messages.status in ('hard_bounced', 'soft_bounced'))`.as('bounced'),
+      ])
+      .where('messages.queued_at', '>=', since as any)
+      .groupBy(['messages.customer_id', 'customers.email', 'customers.name', 'customers.tier', 'customers.status'])
+      .orderBy('total', 'desc')
+      .limit(limit)
+      .execute();
+
+    return {
+      hours,
+      tenants: rows.map((r) => {
+        const total = Number(r.total);
+        const bounced = Number(r.bounced);
+        return {
+          customer_id: r.customer_id,
+          email: r.email,
+          name: r.name,
+          tier: r.tier,
+          status: r.status,
+          total,
+          delivered: Number(r.delivered),
+          bounced,
+          bounce_rate: total ? Number((bounced / total).toFixed(4)) : 0,
+        };
+      }),
     };
   });
 

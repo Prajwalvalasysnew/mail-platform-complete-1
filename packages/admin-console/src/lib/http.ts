@@ -8,11 +8,14 @@
  * from URL params / postMessage input: only the closed operation registry in
  * `src/api/operations.ts` calls this module.
  *
- * The current backend authenticates admins with a bearer session token
- * (`POST /admin/auth/login` -> `{ token }`). Until the gateway/identity layer
- * grows `__Host-` cookie sessions (a release-blocking backend prerequisite in
- * the frontend architecture doc), the token is held in memory only and
- * attached here. It is intentionally NOT persisted to local/session storage.
+ * Sessions: the backend sets a `__Host-`-prefixed, HttpOnly, SameSite=Strict
+ * session cookie at login, so the browser carries identity automatically and
+ * the token never has to touch storage. Login also returns a per-session CSRF
+ * secret which is held in memory and attached to every mutating request as
+ * `x-csrf-token`; after a page reload `GET /admin/auth/bootstrap` restores the
+ * identity from the cookie and rotates a fresh CSRF secret. The bearer token
+ * from the login response is additionally kept in memory (never persisted) as
+ * a fallback for deployments where the cookie can't be set.
  */
 
 export class ApiError extends Error {
@@ -31,6 +34,7 @@ export class ApiError extends Error {
 }
 
 let sessionToken: string | null = null;
+let csrfToken: string | null = null;
 let onSessionExpired: (() => void) | null = null;
 
 export function setSessionToken(token: string | null) {
@@ -38,6 +42,9 @@ export function setSessionToken(token: string | null) {
 }
 export function hasSessionToken() {
   return sessionToken !== null;
+}
+export function setCsrfToken(token: string | null) {
+  csrfToken = token;
 }
 export function registerSessionExpiredHandler(fn: () => void) {
   onSessionExpired = fn;
@@ -58,6 +65,10 @@ const FRIENDLY: Record<string, string> = {
   email_exists: 'An admin with this email already exists.',
   not_replayable: 'This event predates raw-payload storage and cannot be replayed.',
   password_login_disabled: 'Password login is disabled — use SSO.',
+  csrf_failed: 'Security token expired — reload the page and try again.',
+  origin_mismatch: 'Request blocked: unexpected origin for the admin console.',
+  cross_site_blocked: 'Request blocked: cross-site requests are not allowed here.',
+  note_required: 'A note explaining the decision is required.',
 };
 
 export function friendlyError(err: unknown): string {
@@ -84,12 +95,15 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
     if (v !== undefined && v !== '') url.searchParams.set(k, String(v));
   }
 
+  const method = opts.method ?? 'GET';
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (!opts.anonymous && sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`;
+  // Cookie-session CSRF: attach the per-session secret to every mutation.
+  if (!opts.anonymous && csrfToken && method !== 'GET') headers['x-csrf-token'] = csrfToken;
 
   const res = await fetch(url.pathname + url.search, {
-    method: opts.method ?? 'GET',
+    method,
     headers,
     credentials: 'same-origin',
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
