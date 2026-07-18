@@ -11,8 +11,14 @@ const config: Config = {
   url: process.env.DOCS_URL ?? 'https://docs.yourplatform.com',
   baseUrl: '/',
 
-  onBrokenLinks: 'warn',
-  onBrokenMarkdownLinks: 'warn',
+  // Fail the production build on any broken link — a public docs site must
+  // never ship 404s. (Was 'warn', which let breakage through silently.)
+  onBrokenLinks: 'throw',
+  markdown: {
+    hooks: {
+      onBrokenMarkdownLinks: 'throw',
+    },
+  },
 
   i18n: {
     defaultLocale: 'en',
@@ -49,6 +55,17 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/docs',
           editUrl: undefined,
+          // The repo docs/ directory also holds INTERNAL engineering material
+          // (runbooks, audit plans, testing infra notes). Only the curated
+          // public set below is built and published — everything else stays
+          // out of the site (and out of its search index).
+          include: [
+            'index.md',
+            'api-reference.md',
+            'api-versioning.md',
+            'SDK.md',
+            'guides/**/*.{md,mdx}',
+          ],
         },
         blog: false,
         theme: {
@@ -101,6 +118,7 @@ const config: Config = {
         {
           title: 'Guides',
           items: [
+            { label: 'Workflows', to: '/docs/guides/workflows' },
             { label: 'Templates', to: '/docs/guides/templates' },
             { label: 'Batch Sending', to: '/docs/guides/batch-sending' },
             { label: 'Suppressions', to: '/docs/guides/suppressions' },

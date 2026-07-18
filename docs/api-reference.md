@@ -1003,6 +1003,112 @@ Available only after the ticket is resolved or closed.
 
 ---
 
+## Workflows (Automation)
+
+Multi-step per-recipient journeys. Requires the `workflows` key scope. See the
+[Workflows guide](./guides/workflows.md) for the definition format and
+concepts.
+
+### List workflows
+```
+GET /v1/workflows?status=active&limit=50&offset=0
+```
+Returns workflows with run counts (`active_runs`, `total_runs`).
+
+### Create workflow
+```
+POST /v1/workflows
+```
+
+**Body**
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | Required. Unique per account. |
+| `description` | string | Optional. |
+| `definition` | object | Optional draft definition (validated leniently). |
+
+### Get / update / archive
+```
+GET    /v1/workflows/:id        → draft + published definitions
+PUT    /v1/workflows/:id        → edit name/description/draft definition
+DELETE /v1/workflows/:id        → archive (stops entries, cancels in-flight runs)
+```
+
+### Validate a definition
+```
+POST /v1/workflows/validate
+```
+Body: `{ "definition": { … }, "strict": true }`. Returns `{ valid, errors, warnings }` without saving anything.
+
+### Publish / lifecycle
+```
+POST /v1/workflows/:id/publish   → strict-validate, snapshot a version, activate
+POST /v1/workflows/:id/pause     → stop new entries (in-flight runs continue)
+POST /v1/workflows/:id/resume
+```
+
+### Version history
+```
+GET  /v1/workflows/:id/versions
+GET  /v1/workflows/:id/versions/:version
+POST /v1/workflows/:id/versions/:version/restore   → copy back into the draft
+```
+
+### Trigger a run
+```
+POST /v1/workflows/:id/trigger
+```
+Supports the `Idempotency-Key` header (same semantics as `/v1/send`).
+
+**Body**
+
+| Field | Type | Notes |
+|---|---|---|
+| `subject_email` | string | Required. The recipient entering the journey. |
+| `context` | object | Optional data, available to conditions and templates as `{{context.*}}`. |
+
+Returns `202 { "started": true, "run_id": "…" }` or `409 { "error": "not_started", "reason": "…" }`
+(`already_active`, `reentry_blocked`, `reentry_cooldown`, `capacity`).
+
+### Bulk trigger
+```
+POST /v1/workflows/:id/trigger/bulk
+```
+Body: `{ "subjects": [{ "email", "context"? }, …], "context"? }` — up to 1000
+subjects. Returns per-subject results.
+
+### Simulate (dry run)
+```
+POST /v1/workflows/:id/simulate
+```
+Walks the draft (or `"source": "published"`) definition for a hypothetical
+subject with zero side effects. `event_outcomes` / `split_outcomes` force
+specific branches.
+
+### Runs
+```
+GET  /v1/workflows/:id/runs?status=&subject_email=&limit=&offset=
+GET  /v1/workflows/runs/:runId          → run + step-by-step execution log
+POST /v1/workflows/runs/:runId/cancel
+```
+
+### Stats
+```
+GET /v1/workflows/:id/stats?days=30
+```
+Run counts by status, goal attainment, per-step entered/completed/failed
+counters, and a daily started/finished/goals timeseries.
+
+### Webhook signing secret
+```
+GET /v1/workflows/signing-secret
+```
+Per-account HMAC-SHA256 secret for verifying workflow `webhook` step
+deliveries (`X-Workflow-Signature`).
+
+---
+
 ## Other
 
 ### Health check

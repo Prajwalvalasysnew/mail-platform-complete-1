@@ -3,10 +3,20 @@
 FROM node:20-alpine AS builder
 WORKDIR /repo
 
-# Copy workspace files
-COPY package.json package-lock.json ./
+# Copy workspace files. npm workspaces requires EVERY workspace's
+# package.json to be present for `npm ci` to resolve the lockfile — copying
+# only docs+shared makes the install fail before it starts.
+COPY package.json package-lock.json .npmrc ./
 COPY packages/docs/package.json ./packages/docs/
 COPY packages/shared/package.json ./packages/shared/
+COPY packages/api/package.json ./packages/api/
+COPY packages/worker/package.json ./packages/worker/
+COPY packages/tracker/package.json ./packages/tracker/
+COPY packages/sdk/package.json ./packages/sdk/
+COPY packages/tests/package.json ./packages/tests/
+COPY packages/admin-console/package.json ./packages/admin-console/
+COPY packages/haraka-inbound/package.json ./packages/haraka-inbound/
+COPY packages/haraka-outbound/package.json ./packages/haraka-outbound/
 
 # Install all workspace deps
 RUN npm ci --ignore-scripts

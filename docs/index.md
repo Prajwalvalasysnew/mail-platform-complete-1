@@ -19,6 +19,7 @@ Task-oriented walkthroughs for every major feature.
 | [Sending email](./guides/sending-email.md) | Send API, parameters, message lifecycle |
 | [Batch sending](./guides/batch-sending.md) | Send to many recipients in one call |
 | [Templates](./guides/templates.md) | Create and reuse Handlebars templates |
+| [Workflows](./guides/workflows.md) | Multi-step automation journeys with delays, branching, and goals |
 | [Open & click tracking](./guides/tracking.md) | Tracking pixels, link rewriting, bot detection |
 | [Webhooks](./guides/webhooks.md) | Real-time delivery events pushed to your server |
 | [Suppressions](./guides/suppressions.md) | Manage your do-not-email list |

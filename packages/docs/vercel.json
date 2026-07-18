@@ -1,12 +1,10 @@
 {
-  "buildCommand": "npm run build",
+  "installCommand": "cd ../.. && npm ci",
+  "buildCommand": "cd ../.. && npm run build:docs",
   "outputDirectory": "build",
-  "installCommand": "npm ci",
-  "framework": "docusaurus2",
+  "framework": null,
+  "cleanUrls": true,
   "env": {
     "DOCS_URL": "https://docs.yourplatform.com"
-  },
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+  }
 }

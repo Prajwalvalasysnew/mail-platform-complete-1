@@ -11,18 +11,20 @@ npm run dev:docs         # live-reload dev server at http://localhost:3000
 npm run build:docs       # production build → packages/docs/build/
 ```
 
-## Option A — Vercel (recommended, zero-config)
+## Option A — Vercel (recommended)
 
 1. Push this repo to GitHub.
-2. Create a new Vercel project, set the **Root Directory** to `packages/docs`.
-3. Vercel auto-detects Docusaurus and sets the right build command.
+2. Create a new Vercel project, set the **Root Directory** to `packages/docs`,
+   and keep **"Include source files outside of the Root Directory"** enabled
+   (it is by default) — the install/build commands run from the repo root
+   because the npm-workspaces lockfile lives there.
+3. `packages/docs/vercel.json` supplies the install/build commands and output
+   directory; nothing else to configure.
 4. In project settings → **Environment Variables**, add:
    ```
    DOCS_URL = https://docs.yourcompany.com
    ```
 5. In **Domains**, add `docs.yourcompany.com` and follow the CNAME instructions.
-
-`vercel.json` is already present in `packages/docs/` — no extra config needed.
 
 ## Option B — Docker + nginx
 

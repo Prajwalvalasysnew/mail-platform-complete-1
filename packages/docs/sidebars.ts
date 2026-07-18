@@ -24,6 +24,14 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Automation',
+      collapsed: false,
+      items: [
+        { type: 'doc', id: 'guides/workflows', label: 'Workflows' },
+      ],
+    },
+    {
+      type: 'category',
       label: 'Delivery & Engagement',
       collapsed: false,
       items: [
