@@ -47,6 +47,7 @@ import {
   expireElevations,
   sweepOverdueWorkflowRuns,
   recoverStuckWorkflowRuns,
+  sweepFinishedWorkflowRuns,
 } from '@platform/shared';
 
 interface Job {
@@ -432,6 +433,16 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         if (rearmed) logger.warn({ rearmed }, 're-armed overdue workflow runs (lost wake jobs)');
         const recovered = await recoverStuckWorkflowRuns();
         if (recovered) logger.warn({ recovered }, 're-enqueued stuck running workflow runs');
+      },
+    },
+    {
+      // Age out finished workflow runs past the retention window; aggregate
+      // reporting lives on in workflow_step_stats, which is never swept.
+      name: 'workflow_run_retention',
+      everyMs: 24 * HOUR,
+      run: async () => {
+        const purged = await sweepFinishedWorkflowRuns();
+        if (purged) logger.info({ purged }, 'workflow run retention sweep complete');
       },
     },
     {

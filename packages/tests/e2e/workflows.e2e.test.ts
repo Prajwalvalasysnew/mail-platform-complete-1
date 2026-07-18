@@ -11,6 +11,9 @@ import {
   listWorkflowRuns,
   dispatchWorkflowEvent,
   triggerWorkflowRun,
+  sweepFinishedWorkflowRuns,
+  eraseWorkflowDataForRecipient,
+  db,
 } from '@platform/shared';
 
 let app: FastifyInstance;
@@ -322,6 +325,177 @@ describe('workflow execution', () => {
 
     const detail = await getWorkflowRun(cust.customerId, runId);
     expect(detail!.run.status).toBe('canceled');
+  });
+
+  it('auto-exits in-flight runs when the subject unsubscribes', async () => {
+    const id = await createAndPublish('auto-exit-flow', {
+      trigger: { type: 'api' },
+      entry_step_id: 'pause',
+      steps: [
+        { id: 'pause', type: 'delay', duration_seconds: 3600, next: 'send' },
+        { id: 'send', type: 'send_email', template_id: templateId, from: `hello@${domain}`, next: null },
+      ],
+      settings: { allow_reentry: false, reentry_cooldown_seconds: 0 }, // exit_on_events defaults
+    });
+
+    const subject = `quitter-${Date.now()}@example.com`;
+    const trigger = await app.inject({
+      method: 'POST', url: `/v1/workflows/${id}/trigger`, headers: authed(),
+      payload: { subject_email: subject },
+    });
+    const runId = trigger.json().run_id as string;
+    expect(await waitForRunStatus(runId, ['waiting_delay'])).toBe('waiting_delay');
+
+    const dispatched = await dispatchWorkflowEvent({
+      customerId: cust.customerId,
+      eventType: 'unsubscribed',
+      subjectEmail: subject,
+      payload: {},
+    });
+    expect(dispatched.exited_runs).toContain(runId);
+
+    const detail = await getWorkflowRun(cust.customerId, runId);
+    expect(detail!.run.status).toBe('exited');
+    expect(detail!.run.error).toBe('auto_exit:unsubscribed');
+    expect(await countMessagesTo(cust.customerId, subject)).toBe(0);
+  });
+
+  it('routes subjects through A/B split branches deterministically', async () => {
+    const id = await createAndPublish('split-flow', {
+      trigger: { type: 'api' },
+      entry_step_id: 'ab',
+      steps: [
+        { id: 'ab', type: 'split', percent_a: 100, branch_a: 'send', branch_b: 'skip' },
+        { id: 'send', type: 'send_email', template_id: templateId, from: `hello@${domain}`, next: null },
+        { id: 'skip', type: 'exit' },
+      ],
+      settings: { allow_reentry: false, reentry_cooldown_seconds: 0 },
+    });
+
+    const subject = `splitter-${Date.now()}@example.com`;
+    const trigger = await app.inject({
+      method: 'POST', url: `/v1/workflows/${id}/trigger`, headers: authed(),
+      payload: { subject_email: subject },
+    });
+    const runId = trigger.json().run_id as string;
+    expect(await waitForRunStatus(runId, ['completed'])).toBe('completed');
+
+    const detail = await getWorkflowRun(cust.customerId, runId);
+    const split = detail!.steps.find((s: any) => s.step_id === 'ab')!;
+    expect(split.result.branch).toBe('a'); // percent_a: 100 => always branch_a
+    expect(await countMessagesTo(cust.customerId, subject)).toBe(1);
+  });
+
+  it('bulk-enrolls subjects with per-subject results and re-entry screening', async () => {
+    const id = await createAndPublish('bulk-flow', {
+      trigger: { type: 'api' },
+      entry_step_id: 'pause',
+      steps: [{ id: 'pause', type: 'delay', duration_seconds: 3600, next: null }],
+      settings: { allow_reentry: false, reentry_cooldown_seconds: 0 },
+    });
+
+    const stamp = Date.now();
+    const fresh1 = `bulk-a-${stamp}@example.com`;
+    const fresh2 = `bulk-b-${stamp}@example.com`;
+
+    // Pre-enroll fresh2 so the bulk call must skip it as already active.
+    const pre = await app.inject({
+      method: 'POST', url: `/v1/workflows/${id}/trigger`, headers: authed(),
+      payload: { subject_email: fresh2 },
+    });
+    expect(pre.statusCode).toBe(202);
+
+    const bulk = await app.inject({
+      method: 'POST', url: `/v1/workflows/${id}/trigger/bulk`, headers: authed(),
+      payload: {
+        subjects: [{ email: fresh1, context: { seat: 1 } }, { email: fresh2 }, { email: fresh1.toUpperCase() }],
+        context: { cohort: 'q3' },
+      },
+    });
+    expect(bulk.statusCode).toBe(202);
+    const body = bulk.json();
+    expect(body.started).toBe(1);
+    expect(body.total).toBe(2); // request-level duplicate coalesced
+    const byEmail = new Map(body.results.map((r: any) => [r.email, r]));
+    expect((byEmail.get(fresh1) as any).started).toBe(true);
+    expect((byEmail.get(fresh2) as any).skipped_reason).toBe('already_active');
+
+    // Per-subject context merged over the shared batch context.
+    const run = await getWorkflowRun(cust.customerId, (byEmail.get(fresh1) as any).run_id);
+    expect((run!.run.context as any).context).toEqual({ cohort: 'q3', seat: 1 });
+  });
+
+  it('replays identical trigger requests via Idempotency-Key', async () => {
+    const id = await createAndPublish('idem-flow', {
+      trigger: { type: 'api' },
+      entry_step_id: 'pause',
+      steps: [{ id: 'pause', type: 'delay', duration_seconds: 3600, next: null }],
+      settings: { allow_reentry: true, reentry_cooldown_seconds: 0 },
+    });
+
+    const subject = `idem-${Date.now()}@example.com`;
+    const key = `wf-trigger-${Date.now()}`;
+    const first = await app.inject({
+      method: 'POST', url: `/v1/workflows/${id}/trigger`,
+      headers: { ...authed(), 'idempotency-key': key },
+      payload: { subject_email: subject },
+    });
+    expect(first.statusCode).toBe(202);
+
+    const replay = await app.inject({
+      method: 'POST', url: `/v1/workflows/${id}/trigger`,
+      headers: { ...authed(), 'idempotency-key': key },
+      payload: { subject_email: subject },
+    });
+    expect(replay.statusCode).toBe(202);
+    expect(replay.headers['idempotent-replayed']).toBe('true');
+    expect(replay.json().run_id).toBe(first.json().run_id);
+
+    const conflict = await app.inject({
+      method: 'POST', url: `/v1/workflows/${id}/trigger`,
+      headers: { ...authed(), 'idempotency-key': key },
+      payload: { subject_email: `different-${subject}` },
+    });
+    expect(conflict.statusCode).toBe(422);
+    expect(conflict.json().error).toBe('idempotency_key_reused');
+  });
+
+  it('retention sweep deletes finished runs past the window, erasure removes a recipient entirely', async () => {
+    const id = await createAndPublish('cleanup-flow', {
+      trigger: { type: 'api' },
+      entry_step_id: 'done',
+      steps: [{ id: 'done', type: 'exit' }],
+      settings: { allow_reentry: true, reentry_cooldown_seconds: 0 },
+    });
+
+    const oldSubject = `old-${Date.now()}@example.com`;
+    const gdprSubject = `gdpr-${Date.now()}@example.com`;
+    for (const subject of [oldSubject, gdprSubject]) {
+      const trigger = await app.inject({
+        method: 'POST', url: `/v1/workflows/${id}/trigger`, headers: authed(),
+        payload: { subject_email: subject },
+      });
+      expect(await waitForRunStatus(trigger.json().run_id, ['exited'])).toBe('exited');
+    }
+
+    // Backdate oldSubject's run beyond the retention window; the sweep must
+    // remove exactly that one.
+    await db
+      .updateTable('workflow_runs')
+      .set({ finished_at: new Date(Date.now() - 400 * 86_400_000) })
+      .where('subject_email', '=', oldSubject)
+      .execute();
+    const purged = await sweepFinishedWorkflowRuns(90);
+    expect(purged).toBeGreaterThanOrEqual(1);
+    const afterSweep = await listWorkflowRuns(cust.customerId, { workflowId: id });
+    expect(afterSweep.runs.some((r: any) => r.subject_email === oldSubject)).toBe(false);
+    expect(afterSweep.runs.some((r: any) => r.subject_email === gdprSubject)).toBe(true);
+
+    // GDPR erasure removes the recipient's runs (steps cascade).
+    const erased = await eraseWorkflowDataForRecipient(cust.customerId, gdprSubject);
+    expect(erased.runs_deleted).toBe(1);
+    const afterErase = await listWorkflowRuns(cust.customerId, { workflowId: id, subjectEmail: gdprSubject });
+    expect(afterErase.total).toBe(0);
   });
 
   it('archiving cancels in-flight runs and blocks new triggers', async () => {

@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -98,6 +98,11 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
         .where('customer_id', '=', auth.customer_id)
         .where('email', '=', recipient)
         .execute();
+
+      // Workflow runs + step ledgers carry the recipient's email and journey
+      // data; erase them in the same transaction (cancels in-flight journeys
+      // as a side effect — their rows are simply gone).
+      await eraseWorkflowDataForRecipient(auth.customer_id, recipient, trx);
 
       // Of the candidate keys, find which are STILL referenced by a surviving
       // message (bodies are content-addressed and deduped across recipients, so

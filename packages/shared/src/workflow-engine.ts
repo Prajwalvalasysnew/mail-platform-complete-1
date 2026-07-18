@@ -44,6 +44,7 @@ import {
 import {
   WorkflowDefinitionSchema,
   evaluateRules,
+  splitBranchForKey,
   type WorkflowDefinition,
   type WorkflowStep,
 } from './workflow-definition.js';
@@ -58,6 +59,8 @@ const MAX_ACTIVE_RUNS_PER_WORKFLOW = Number(process.env.WORKFLOW_MAX_ACTIVE_RUNS
 const QUOTA_RETRY_MINUTES = Number(process.env.WORKFLOW_QUOTA_RETRY_MINUTES ?? 60);
 const MAX_QUOTA_RETRIES = Number(process.env.WORKFLOW_MAX_QUOTA_RETRIES ?? 24);
 const WEBHOOK_TIMEOUT_MS = Number(process.env.WORKFLOW_WEBHOOK_TIMEOUT_MS ?? 10_000);
+const WEBHOOK_RETRY_MINUTES = Number(process.env.WORKFLOW_WEBHOOK_RETRY_MINUTES ?? 5);
+const MAX_WEBHOOK_RETRIES = Number(process.env.WORKFLOW_WEBHOOK_MAX_RETRIES ?? 5);
 const STUCK_RUN_MINUTES = Number(process.env.WORKFLOW_STUCK_RUN_MINUTES ?? 10);
 
 export interface TriggerRunInput {
@@ -243,6 +246,178 @@ export async function triggerWorkflowRun(
   return { started: true, run_id: run.id };
 }
 
+export interface BulkTriggerSubject {
+  email: string;
+  context?: Record<string, unknown>;
+}
+
+export interface BulkTriggerItemResult {
+  email: string;
+  started: boolean;
+  run_id?: string;
+  skipped_reason?: TriggerRunResult['skipped_reason'] | 'duplicate_in_request';
+}
+
+/**
+ * Enroll many subjects in one call (audience-sized entry, the batch analog of
+ * triggerWorkflowRun). Workflow/version load, re-entry screening, and the
+ * capacity check are each ONE query for the whole batch; eligible subjects
+ * are bulk-inserted with ON CONFLICT DO NOTHING so a concurrent single
+ * trigger can never double-enroll anyone.
+ *
+ * Same executor contract as triggerWorkflowRun: API routes pass their tenant
+ * transaction and kick the returned run ids after commit.
+ */
+export async function triggerWorkflowRunsBulk(
+  input: {
+    customerId: string;
+    workflowId: string;
+    subjects: BulkTriggerSubject[];
+    source: 'event' | 'api' | 'manual' | 'test';
+    triggerPayload?: Record<string, unknown>;
+  },
+  executor?: DbLike
+): Promise<{ results: BulkTriggerItemResult[]; started: number }> {
+  const exec = executor ?? db;
+  const deferKick = executor !== undefined;
+
+  // Normalize + de-dupe within the request (first occurrence wins).
+  const seen = new Set<string>();
+  const subjects: BulkTriggerSubject[] = [];
+  const results = new Map<string, BulkTriggerItemResult>();
+  for (const s of input.subjects) {
+    const email = s.email.toLowerCase();
+    if (seen.has(email)) continue; // duplicates coalesce into the first entry
+    seen.add(email);
+    subjects.push({ email, context: s.context });
+  }
+
+  const finish = (started: number): { results: BulkTriggerItemResult[]; started: number } => ({
+    results: subjects.map((s) => results.get(s.email)!),
+    started,
+  });
+  const skipAll = (reason: TriggerRunResult['skipped_reason']) => {
+    for (const s of subjects) results.set(s.email, { email: s.email, started: false, skipped_reason: reason });
+    return finish(0);
+  };
+
+  const wf = await exec
+    .selectFrom('workflows')
+    .innerJoin('customers', 'customers.id', 'workflows.customer_id')
+    .select([
+      'workflows.id as id',
+      'workflows.status as status',
+      'workflows.published_version_id',
+      'workflows.allow_reentry',
+      'workflows.reentry_cooldown_seconds',
+      'customers.status as customer_status',
+    ])
+    .where('workflows.id', '=', input.workflowId)
+    .where('workflows.customer_id', '=', input.customerId)
+    .executeTakeFirst();
+  if (!wf || wf.status !== 'active') return skipAll('workflow_not_active');
+  if (!wf.published_version_id) return skipAll('not_published');
+  if (wf.customer_status !== 'active') return skipAll('customer_inactive');
+
+  const version = await exec
+    .selectFrom('workflow_versions')
+    .select(['id', 'version', 'definition'])
+    .where('id', '=', wf.published_version_id)
+    .executeTakeFirstOrThrow();
+  const def = parseDefinition(version.definition);
+  if (!def.entry_step_id) return skipAll('not_published');
+
+  // Re-entry screening: latest run per subject in one DISTINCT ON query.
+  const emails = subjects.map((s) => s.email);
+  const latest = await exec
+    .selectFrom('workflow_runs')
+    .select(['subject_email', 'status', 'started_at'])
+    .distinctOn('subject_email')
+    .where('workflow_id', '=', input.workflowId)
+    .where('subject_email', 'in', emails)
+    .orderBy('subject_email')
+    .orderBy('started_at', 'desc')
+    .execute();
+  const latestBySubject = new Map(latest.map((r) => [r.subject_email, r]));
+
+  const cooldownMs = wf.reentry_cooldown_seconds * 1000;
+  const eligible: BulkTriggerSubject[] = [];
+  for (const s of subjects) {
+    const last = latestBySubject.get(s.email);
+    if (last) {
+      if (['running', 'waiting_delay', 'waiting_event'].includes(last.status)) {
+        results.set(s.email, { email: s.email, started: false, skipped_reason: 'already_active' });
+        continue;
+      }
+      if (!wf.allow_reentry) {
+        results.set(s.email, { email: s.email, started: false, skipped_reason: 'reentry_blocked' });
+        continue;
+      }
+      if (cooldownMs > 0 && Date.now() - new Date(last.started_at as unknown as string | Date).getTime() < cooldownMs) {
+        results.set(s.email, { email: s.email, started: false, skipped_reason: 'reentry_cooldown' });
+        continue;
+      }
+    }
+    eligible.push(s);
+  }
+
+  // Capacity: admit only up to the per-workflow active-run headroom.
+  const activeCount = await exec
+    .selectFrom('workflow_runs')
+    .select(sql<number>`count(*)`.as('c'))
+    .where('workflow_id', '=', input.workflowId)
+    .where('status', 'in', ['running', 'waiting_delay', 'waiting_event'])
+    .executeTakeFirst();
+  const headroom = Math.max(0, MAX_ACTIVE_RUNS_PER_WORKFLOW - Number(activeCount?.c ?? 0));
+  const admitted = eligible.slice(0, headroom);
+  for (const s of eligible.slice(headroom)) {
+    results.set(s.email, { email: s.email, started: false, skipped_reason: 'capacity' });
+  }
+
+  let started = 0;
+  if (admitted.length > 0) {
+    // ON CONFLICT DO NOTHING: the partial unique index absorbs races with
+    // concurrent single/bulk triggers; conflicting rows simply don't return.
+    const inserted = await exec
+      .insertInto('workflow_runs')
+      .values(
+        admitted.map((s) => ({
+          customer_id: input.customerId,
+          workflow_id: input.workflowId,
+          version_id: version.id,
+          version: version.version,
+          subject_email: s.email,
+          status: 'running' as const,
+          current_step_id: def.entry_step_id,
+          trigger_source: input.source,
+          context: {
+            subject: { email: s.email },
+            trigger: input.triggerPayload ?? {},
+            context: s.context ?? {},
+          },
+        }))
+      )
+      .onConflict((oc) => oc.doNothing())
+      .returning(['id', 'subject_email'])
+      .execute();
+
+    const startedBySubject = new Map(inserted.map((r) => [r.subject_email, r.id]));
+    for (const s of admitted) {
+      const runId = startedBySubject.get(s.email);
+      if (runId) {
+        results.set(s.email, { email: s.email, started: true, run_id: runId });
+        started++;
+        workflowRunsStarted.inc({ trigger_source: input.source });
+        if (!deferKick) await kickWorkflowRun(runId, input.customerId);
+      } else {
+        results.set(s.email, { email: s.email, started: false, skipped_reason: 'already_active' });
+      }
+    }
+  }
+
+  return finish(started);
+}
+
 // ---------------------------------------------------------------------------
 // Step advancement
 // ---------------------------------------------------------------------------
@@ -384,6 +559,7 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
   let sideEffect: Record<string, unknown> = {};
   let stepFailed: string | null = null;
   let parkForQuota = false;
+  let parkForWebhookRetry = false;
 
   if (step.type === 'send_email') {
     const prep = await prepareSendEmail(pre, step);
@@ -393,7 +569,12 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
   } else if (step.type === 'webhook') {
     const delivery = await deliverWorkflowWebhook(pre, step);
     sideEffect = delivery;
-    if (!delivery.ok) stepFailed = `webhook_failed:${delivery.status ?? delivery.error ?? 'unknown'}`;
+    if (!delivery.ok) {
+      // Transient failures (timeout / 5xx / network) get a bounded park-based
+      // retry; permanent ones (4xx, SSRF, bad URL) fail through immediately.
+      if (isRetryableWebhookFailure(delivery)) parkForWebhookRetry = true;
+      else stepFailed = `webhook_failed:${delivery.status ?? delivery.error ?? 'unknown'}`;
+    }
   }
 
   // Phase 2: transactional advancement. Re-verify the run under lock — a
@@ -435,6 +616,31 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
       }
     }
 
+    // Transient webhook failure: park and re-attempt the same step later
+    // (no seq consumed — the step hasn't logically executed yet).
+    if (parkForWebhookRetry) {
+      const retries = Number((run.context as any)._webhook_retries ?? 0);
+      if (retries >= MAX_WEBHOOK_RETRIES) {
+        stepFailed = `webhook_failed:${(sideEffect as any).status ?? (sideEffect as any).error ?? 'retries_exhausted'}`;
+      } else {
+        const wakeAt = new Date(Date.now() + WEBHOOK_RETRY_MINUTES * 60_000);
+        await t
+          .updateTable('workflow_runs')
+          .set({
+            status: 'waiting_delay',
+            wake_at: wakeAt,
+            context: { ...run.context, _webhook_retries: retries + 1 } as any,
+          })
+          .where('id', '=', runId)
+          .execute();
+        try {
+          await enqueue('wake', run, { seq: run.steps_executed, delayMs: wakeAt.getTime() - Date.now(), stepId: step.id, uniqueSuffix: `-w${retries + 1}` });
+        } catch { /* sweep recovers */ }
+        workflowStepsExecuted.inc({ step_type: step.type, outcome: 'webhook_retry_deferred' });
+        return { kind: 'parked' };
+      }
+    }
+
     await bumpStepStat(t, run, step.id, 'entered');
 
     let nextStepId: string | null = null;
@@ -447,6 +653,9 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
     if (stepFailed) {
       ledgerStatus = 'failed';
       result = { ...sideEffect, error: stepFailed };
+      // A webhook that failed through (permanent or retries exhausted) must
+      // not bequeath its spent retry budget to a later webhook step.
+      if (step.type === 'webhook') contextPatch = { _webhook_retries: 0 };
       nextStepId = defaultNext(step);
     } else {
       switch (step.type) {
@@ -461,6 +670,14 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
           const pass = evaluateRules(run.context, step.rules, step.match);
           result = { branch: pass ? 'on_true' : 'on_false' };
           nextStepId = pass ? step.on_true : step.on_false;
+          break;
+        }
+        case 'split': {
+          // Deterministic per (run, step): a re-executed job takes the same
+          // branch, preserving effectively-once semantics.
+          const branch = splitBranchForKey(`${run.id}:${step.id}`, step.percent_a);
+          result = { branch, percent_a: step.percent_a };
+          nextStepId = branch === 'a' ? step.branch_a : step.branch_b;
           break;
         }
         case 'wait_for_event': {
@@ -531,6 +748,8 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
         }
         case 'webhook': {
           result = sideEffect;
+          // Reset the retry budget — it is per webhook attempt-cycle, not per run.
+          contextPatch = { _webhook_retries: 0 };
           nextStepId = step.next;
           break;
         }
@@ -660,6 +879,8 @@ function defaultNext(step: WorkflowStep): string | null {
       return step.on_false;
     case 'wait_for_event':
       return step.on_timeout;
+    case 'split':
+      return step.branch_b;
     case 'exit':
       return null;
     default:
@@ -793,6 +1014,25 @@ function workflowSigningSecret(customerId: string): string {
 
 export function getWorkflowSigningSecret(customerId: string): string {
   return workflowSigningSecret(customerId);
+}
+
+export interface WorkflowWebhookDelivery {
+  ok: boolean;
+  status?: number;
+  error?: string;
+  delivery_id: string;
+}
+
+/**
+ * Transient failures earn a park-based retry; permanent ones fail through.
+ * 5xx and timeouts/network errors are transient. 4xx means the endpoint
+ * rejected the request (retrying identical bytes won't help), and SSRF/URL
+ * failures are configuration problems.
+ */
+export function isRetryableWebhookFailure(d: Pick<WorkflowWebhookDelivery, 'ok' | 'status' | 'error'>): boolean {
+  if (d.ok) return false;
+  if (d.status !== undefined) return d.status >= 500;
+  return d.error !== 'ssrf_blocked' && d.error !== 'url_error';
 }
 
 async function deliverWorkflowWebhook(
@@ -957,13 +1197,65 @@ export interface WorkflowEventDispatchResult {
   started_runs: string[];
   resumed_runs: string[];
   goals_met: string[];
+  exited_runs: string[];
 }
 
 export async function dispatchWorkflowEvent(input: WorkflowEventInput): Promise<WorkflowEventDispatchResult> {
-  const result: WorkflowEventDispatchResult = { started_runs: [], resumed_runs: [], goals_met: [] };
+  const result: WorkflowEventDispatchResult = { started_runs: [], resumed_runs: [], goals_met: [], exited_runs: [] };
   if (!(await tenantHasWorkflowActivity(input.customerId))) return result;
 
   const subject = input.subjectEmail.toLowerCase();
+
+  // One query serves auto-exits, goals, and trigger matching below.
+  const workflows = await db
+    .selectFrom('workflows')
+    .innerJoin('workflow_versions', 'workflow_versions.id', 'workflows.published_version_id')
+    .select([
+      'workflows.id as id',
+      'workflows.status as status',
+      'workflows.trigger_type',
+      'workflows.trigger_event_type',
+      'workflow_versions.definition as definition',
+    ])
+    .where('workflows.customer_id', '=', input.customerId)
+    .where('workflows.status', 'in', ['active', 'paused'])
+    .execute();
+  const parsedDefs = new Map<string, WorkflowDefinition>();
+  for (const wf of workflows) {
+    try {
+      parsedDefs.set(wf.id, parseDefinition(wf.definition));
+    } catch {
+      /* skip corrupt definitions */
+    }
+  }
+
+  // --- 0. Auto-exit rules — processed FIRST, so a subject who unsubscribes
+  // or complains is out of the journey before any wait-resume could push them
+  // toward another send. Applies to active AND paused workflows (paused only
+  // stops new entries; in-flight compliance still binds).
+  for (const wf of workflows) {
+    const def = parsedDefs.get(wf.id);
+    if (!def || !def.settings.exit_on_events.includes(input.eventType as any)) continue;
+    const exited = await db
+      .updateTable('workflow_runs')
+      .set({
+        status: 'exited',
+        error: `auto_exit:${input.eventType}`,
+        finished_at: new Date(),
+        wake_at: null,
+        waiting_event_types: null,
+        current_step_id: null,
+      })
+      .where('workflow_id', '=', wf.id)
+      .where('subject_email', '=', subject)
+      .where('status', 'in', ['running', 'waiting_delay', 'waiting_event'])
+      .returning('id')
+      .execute();
+    for (const r of exited) {
+      result.exited_runs.push(r.id);
+      workflowRunsFinished.inc({ status: 'exited' });
+    }
+  }
 
   // --- 1. Resume waiting_event runs for this subject -----------------------
   const waiting = await db
@@ -1028,29 +1320,10 @@ export async function dispatchWorkflowEvent(input: WorkflowEventInput): Promise<
     }
   }
 
-  // --- 2 & 3. Goal attainment + trigger matching need the tenant's active
-  // workflows with their published definitions — one query serves both.
-  const workflows = await db
-    .selectFrom('workflows')
-    .innerJoin('workflow_versions', 'workflow_versions.id', 'workflows.published_version_id')
-    .select([
-      'workflows.id as id',
-      'workflows.status as status',
-      'workflows.trigger_type',
-      'workflows.trigger_event_type',
-      'workflow_versions.definition as definition',
-    ])
-    .where('workflows.customer_id', '=', input.customerId)
-    .where('workflows.status', 'in', ['active', 'paused'])
-    .execute();
-
+  // --- 2 & 3. Goal attainment + trigger matching over the same workflow set.
   for (const wf of workflows) {
-    let def: WorkflowDefinition;
-    try {
-      def = parseDefinition(wf.definition);
-    } catch {
-      continue;
-    }
+    const def = parsedDefs.get(wf.id);
+    if (!def) continue;
 
     // Goal attainment: any in-flight run of this workflow for the subject.
     if (def.goal && def.goal.event_type === input.eventType) {
@@ -1137,6 +1410,36 @@ export async function sweepOverdueWorkflowRuns(limit = 500): Promise<number> {
   }
   if (armed > 0) workflowSweepRecovered.inc({ kind: 'overdue_wake' }, armed);
   return armed;
+}
+
+/**
+ * Age out finished runs (terminal for longer than the retention window).
+ * Step-ledger rows cascade via FK. Aggregate reporting survives in
+ * workflow_step_stats, which is never swept. Batched so a large backlog
+ * cannot hold long row locks.
+ */
+export async function sweepFinishedWorkflowRuns(
+  retentionDays = Number(process.env.WORKFLOW_RUN_RETENTION_DAYS ?? 90),
+  batchSize = 10_000
+): Promise<number> {
+  const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+  let total = 0;
+  for (;;) {
+    const batch = await db
+      .selectFrom('workflow_runs')
+      .select('id')
+      .where('status', 'in', ['completed', 'goal_met', 'exited', 'failed', 'canceled'])
+      .where('finished_at', '<', cutoff)
+      .limit(batchSize)
+      .execute();
+    if (batch.length === 0) return total;
+    await db
+      .deleteFrom('workflow_runs')
+      .where('id', 'in', batch.map((r) => r.id))
+      .execute();
+    total += batch.length;
+    if (batch.length < batchSize) return total;
+  }
 }
 
 /**

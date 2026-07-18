@@ -363,7 +363,10 @@ export const openapiSpec = {
       post: { summary: 'Copy a historical version back into the draft', operationId: 'restoreWorkflowVersion', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'version', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'Restored' }, '404': { description: 'Not found' } } },
     },
     '/workflows/{id}/trigger': {
-      post: { summary: 'Start a run for a subject (external/API trigger)', operationId: 'triggerWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, run_id }' }, '409': { description: 'Not started (re-entry policy / already active / capacity)' } } },
+      post: { summary: 'Start a run for a subject (external/API trigger; supports Idempotency-Key)', operationId: 'triggerWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, run_id }' }, '409': { description: 'Not started (re-entry policy / already active / capacity)' } } },
+    },
+    '/workflows/{id}/trigger/bulk': {
+      post: { summary: 'Enroll up to 1000 subjects in one call, with per-subject results', operationId: 'triggerWorkflowBulk', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, total, results: [{ email, started, run_id | skipped_reason }] }' } } },
     },
     '/workflows/{id}/simulate': {
       post: { summary: 'Dry-run the definition for a hypothetical subject (no side effects)', operationId: 'simulateWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Step-by-step path with virtual timing' } } },

@@ -45,8 +45,13 @@ A definition is a validated DAG (`packages/shared/src/workflow-definition.ts`):
 Step types: `delay`, `condition` (attribute if/else over
 `trigger.* / context.* / subject.email`), `wait_for_event` (engagement wait
 with timeout branch; `scope: "run"` counts only events on messages this run
-sent), `send_email`, `webhook`, `suppress` (add/remove suppression), `goal`,
-`exit`.
+sent), `split` (A/B percentage split — assignment is a deterministic hash of
+run + step, so a retried execution always lands on the same branch),
+`send_email`, `webhook`, `suppress` (add/remove suppression), `goal`, `exit`.
+
+`settings.exit_on_events` (default `["unsubscribed", "complaint"]`) auto-exits
+in-flight subjects the moment one of those events arrives — processed before
+any wait-resume, and enforced even while the workflow is paused.
 
 Validation is two-tier: drafts may be incomplete (warnings), publish is strict
 (entry required, no unreachable steps, no cycles, referenced templates must
@@ -70,7 +75,10 @@ exist in the org, webhook URLs must pass the DNS-resolving SSRF gate).
 - **webhook is at-least-once**: SSRF-guarded, 10s timeout, HMAC-signed
   (`X-Workflow-Signature: v1=hex(hmac_sha256(secret, "<ts>.<body>"))`; fetch
   the per-org secret from `GET /v1/workflows/signing-secret`). Receivers
-  dedupe on `X-Workflow-Delivery`.
+  dedupe on `X-Workflow-Delivery`. Transient failures (5xx / timeout /
+  network) park the run and retry every `WORKFLOW_WEBHOOK_RETRY_MINUTES`
+  (default 5) up to `WORKFLOW_WEBHOOK_MAX_RETRIES` (default 5); permanent
+  failures (4xx, SSRF, bad URL) fail the step through to its next edge.
 - **Event integration**: the event worker calls `dispatchWorkflowEvent` for
   every engagement event, which (1) resumes matching `wait_for_event` runs,
   (2) marks goals (optionally exiting the run), and (3) starts runs for
@@ -83,8 +91,14 @@ exist in the org, webhook URLs must pass the DNS-resolving SSRF gate).
   (50k), `WORKFLOW_QUOTA_RETRY_MINUTES`/`WORKFLOW_MAX_QUOTA_RETRIES`,
   `WORKFLOW_WEBHOOK_TIMEOUT_MS`, `WORKFLOW_WORKER_CONCURRENCY`.
 
-Lifecycle: pausing stops **new entries** (in-flight runs continue); archiving
-stops new entries **and cancels** in-flight runs.
+Lifecycle: pausing stops **new entries** (in-flight runs continue, and
+auto-exit rules still bind); archiving stops new entries **and cancels**
+in-flight runs.
+
+Data lifecycle: finished runs age out after `WORKFLOW_RUN_RETENTION_DAYS`
+(default 90; step ledgers cascade, aggregate `workflow_step_stats` survive),
+and GDPR recipient erasure (`POST /v1/privacy/delete-recipient`) removes the
+recipient's workflow runs in the same transaction as their messages/events.
 
 ## API (scope: `workflows`)
 
@@ -96,12 +110,13 @@ POST          /v1/workflows/:id/publish           strict-validate + snapshot + a
 POST          /v1/workflows/:id/pause|resume      lifecycle
 GET           /v1/workflows/:id/versions[/:v]     version history / snapshot
 POST          /v1/workflows/:id/versions/:v/restore
-POST          /v1/workflows/:id/trigger           start a run (subject_email + context)
+POST          /v1/workflows/:id/trigger           start a run (subject_email + context; Idempotency-Key supported)
+POST          /v1/workflows/:id/trigger/bulk      enroll up to 1000 subjects, per-subject results
 POST          /v1/workflows/:id/simulate          dry-run path trace (no side effects)
 GET           /v1/workflows/:id/runs              run listing (+status/subject filters)
 GET           /v1/workflows/runs/:runId           run detail + step ledger
 POST          /v1/workflows/runs/:runId/cancel
-GET           /v1/workflows/:id/stats             run counts, goal attainment, step counters
+GET           /v1/workflows/:id/stats?days=30     run counts, goal attainment, step counters, daily timeseries
 GET           /v1/workflows/signing-secret        webhook-step HMAC secret
 ```
 

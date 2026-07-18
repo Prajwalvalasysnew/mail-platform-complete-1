@@ -20,6 +20,7 @@
 //   goal           — inline goal marker: records attainment and exits.
 //   exit           — explicit end of the journey.
 
+import crypto from 'node:crypto';
 import { z } from 'zod';
 
 // Engagement/delivery events a workflow can react to (trigger, waits, goals).
@@ -121,6 +122,16 @@ const WebhookStepSchema = z.object({
   next: STEP_ID.nullable(),
 });
 
+const SplitStepSchema = z.object({
+  id: STEP_ID,
+  type: z.literal('split'),
+  name: z.string().max(200).optional(),
+  // Percentage of subjects routed to branch_a; the remainder go to branch_b.
+  percent_a: z.number().int().min(0).max(100),
+  branch_a: STEP_ID.nullable(),
+  branch_b: STEP_ID.nullable(),
+});
+
 const SuppressStepSchema = z.object({
   id: STEP_ID,
   type: z.literal('suppress'),
@@ -148,6 +159,7 @@ export const WorkflowStepSchema = z.discriminatedUnion('type', [
   WaitForEventStepSchema,
   SendEmailStepSchema,
   WebhookStepSchema,
+  SplitStepSchema,
   SuppressStepSchema,
   GoalStepSchema,
   ExitStepSchema,
@@ -185,6 +197,10 @@ export type WorkflowGoal = z.infer<typeof WorkflowGoalSchema>;
 export const WorkflowSettingsSchema = z.object({
   allow_reentry: z.boolean().default(false),
   reentry_cooldown_seconds: z.number().int().min(0).max(365 * 86_400).default(0),
+  // Auto-exit: events that immediately pull an in-flight subject out of the
+  // journey. Defaults to the compliance-critical pair — someone who
+  // unsubscribes or complains must not keep receiving journey mail.
+  exit_on_events: z.array(z.enum(WORKFLOW_EVENT_TYPES)).max(WORKFLOW_EVENT_TYPES.length).default(['unsubscribed', 'complaint']),
 });
 
 export const WorkflowDefinitionSchema = z.object({
@@ -219,11 +235,23 @@ function outgoingTargets(step: WorkflowStep): Array<string | null> {
       return [step.on_true, step.on_false];
     case 'wait_for_event':
       return [step.on_event, step.on_timeout];
+    case 'split':
+      return [step.branch_a, step.branch_b];
     case 'exit':
       return [];
     default:
       return [step.next];
   }
+}
+
+/**
+ * Deterministic A/B assignment for a split step. Keyed (not random) so a
+ * crashed/retried step execution always lands on the same branch — randomness
+ * would break the engine's effectively-once guarantee.
+ */
+export function splitBranchForKey(key: string, percentA: number): 'a' | 'b' {
+  const bucket = crypto.createHash('sha256').update(key).digest().readUInt32BE(0) % 100;
+  return bucket < percentA ? 'a' : 'b';
 }
 
 /**
@@ -321,6 +349,17 @@ export function validateWorkflowDefinition(raw: unknown, opts: { strict?: boolea
     }
   }
 
+  // A workflow triggered by an event that is also configured to auto-exit
+  // subjects would start runs that a *second* occurrence immediately kills —
+  // usually a misconfiguration, occasionally intentional (win-back on
+  // complaint). Surface it, don't block it.
+  if (def.trigger.type === 'event' && def.settings.exit_on_events.includes(def.trigger.event_type)) {
+    warnings.push({
+      code: 'trigger_is_exit_event',
+      message: `Trigger event '${def.trigger.event_type}' is also in settings.exit_on_events; a repeat of the event will exit the run it started`,
+    });
+  }
+
   return { valid: errors.length === 0, errors, warnings, definition: errors.length === 0 ? def : undefined };
 }
 
@@ -398,6 +437,9 @@ export interface SimulationInput {
   // For each wait_for_event step id: does the awaited event arrive in time?
   // Missing entries default to true (the optimistic path).
   event_outcomes?: Record<string, boolean>;
+  // For each split step id: force branch 'a' or 'b'. Missing entries use the
+  // same deterministic hash the engine uses (keyed on subject email here).
+  split_outcomes?: Record<string, 'a' | 'b'>;
 }
 
 export interface SimulationStepTrace {
@@ -474,6 +516,14 @@ export function simulateWorkflow(def: WorkflowDefinition, input: SimulationInput
         outcome = `would POST ${step.url}`;
         next = step.next;
         break;
+      case 'split': {
+        const branch =
+          input.split_outcomes?.[step.id] ??
+          splitBranchForKey(`${(bag.subject as any).email}:${step.id}`, step.percent_a);
+        outcome = `branch:${branch} (${step.percent_a}/${100 - step.percent_a})`;
+        next = branch === 'a' ? step.branch_a : step.branch_b;
+        break;
+      }
       case 'suppress':
         outcome = `would ${step.action} suppression`;
         next = step.next;

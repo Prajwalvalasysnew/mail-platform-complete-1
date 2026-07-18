@@ -24,10 +24,14 @@ import {
   validateWorkflowDefinition,
   simulateWorkflow,
   triggerWorkflowRun,
+  triggerWorkflowRunsBulk,
   kickWorkflowRun,
   getWorkflowSigningSecret,
   invalidateWorkflowActivityCache,
   recordAuditSafe,
+  hashRequestBody,
+  reserveIdempotencyKey,
+  recordIdempotentResponse,
 } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
@@ -331,6 +335,33 @@ export const workflowRoutes: FastifyPluginAsync = async (app) => {
       const parsed = TriggerSchema.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
 
+      // Idempotency: with allow_reentry enabled, a client retry would happily
+      // enroll the subject twice — the Idempotency-Key header closes that.
+      const idemKey = (req.headers['idempotency-key'] as string | undefined)?.trim();
+      if (idemKey) {
+        if (idemKey.length > 255) {
+          return reply.code(400).send({ error: 'invalid_idempotency_key', message: 'Idempotency-Key too long' });
+        }
+        const lookup = await reserveIdempotencyKey(auth.customer_id, idemKey, hashRequestBody(req.body));
+        if (lookup.kind === 'replay') {
+          reply.header('Idempotent-Replayed', 'true');
+          return reply.code(lookup.status_code).send(lookup.response_body);
+        }
+        if (lookup.kind === 'conflict') {
+          return reply.code(422).send({
+            error: 'idempotency_key_reused',
+            message: 'This Idempotency-Key was already used with a different request body.',
+          });
+        }
+        if (lookup.kind === 'in_progress') {
+          reply.header('Retry-After', '2');
+          return reply.code(409).send({
+            error: 'idempotency_in_progress',
+            message: 'A request with this Idempotency-Key is still being processed. Retry shortly.',
+          });
+        }
+      }
+
       const res = await tenantScoped(req, (trx) =>
         triggerWorkflowRun(
           {
@@ -345,12 +376,74 @@ export const workflowRoutes: FastifyPluginAsync = async (app) => {
       );
       if (!res.started) {
         const status = res.skipped_reason === 'workflow_not_active' ? 404 : 409;
-        return reply.code(status).send({ error: 'not_started', reason: res.skipped_reason });
+        const body = { error: 'not_started', reason: res.skipped_reason };
+        if (idemKey) await recordIdempotentResponse(auth.customer_id, idemKey, status, body);
+        return reply.code(status).send(body);
       }
       // Enqueued only after the tenant transaction committed (the worker
       // could otherwise race commit visibility).
       await kickWorkflowRun(res.run_id!, auth.customer_id);
-      return reply.code(202).send({ started: true, run_id: res.run_id });
+      const body = { started: true, run_id: res.run_id };
+      if (idemKey) await recordIdempotentResponse(auth.customer_id, idemKey, 202, body);
+      return reply.code(202).send(body);
+    }
+  );
+
+  // ---- bulk trigger (audience enrollment) ---------------------------------
+  const BulkTriggerSchema = z.object({
+    subjects: z
+      .array(z.object({ email: z.string().email(), context: z.record(z.unknown()).optional() }))
+      .min(1)
+      .max(Number(process.env.WORKFLOW_BULK_TRIGGER_MAX ?? 1000)),
+    context: z.record(z.unknown()).optional(),
+  });
+
+  app.post(
+    '/workflows/:id/trigger/bulk',
+    {
+      config: {
+        rateLimit: {
+          max: Number(process.env.WORKFLOW_BULK_TRIGGER_RATE_LIMIT_PER_MINUTE ?? 60),
+          timeWindow: '1 minute',
+        },
+      },
+      preHandler: scope,
+    },
+    async (req, reply) => {
+      const auth = req.auth!;
+      const { id } = req.params as { id: string };
+      const parsed = BulkTriggerSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+      const res = await tenantScoped(req, (trx) =>
+        triggerWorkflowRunsBulk(
+          {
+            customerId: auth.customer_id,
+            workflowId: id,
+            subjects: parsed.data.subjects.map((s) => ({
+              email: s.email,
+              // Per-subject context wins over the shared batch context.
+              context: { ...(parsed.data.context ?? {}), ...(s.context ?? {}) },
+            })),
+            source: 'api',
+          },
+          trx
+        )
+      );
+      // Kick every started run only after the tenant transaction committed.
+      for (const item of res.results) {
+        if (item.started && item.run_id) await kickWorkflowRun(item.run_id, auth.customer_id);
+      }
+      recordAuditSafe({
+        customerId: auth.customer_id,
+        apiKeyId: auth.api_key_id,
+        actorType: 'api_key',
+        action: 'workflow:bulk_triggered',
+        resource: id,
+        ip: req.ip,
+        metadata: { requested: parsed.data.subjects.length, started: res.started },
+      });
+      return reply.code(202).send({ started: res.started, total: res.results.length, results: res.results });
     }
   );
 
@@ -396,8 +489,12 @@ export const workflowRoutes: FastifyPluginAsync = async (app) => {
   app.get('/workflows/:id/stats', { preHandler: scope }, async (req, reply) => {
     const auth = req.auth!;
     const { id } = req.params as { id: string };
+    const days = Number((req.query as any)?.days ?? 30);
+    if (!Number.isInteger(days) || days < 1 || days > 90) {
+      return reply.code(400).send({ error: 'validation_failed', message: 'days must be an integer 1-90' });
+    }
     try {
-      return await tenantScoped(req, (trx) => getWorkflowStats(auth.customer_id, id, trx));
+      return await tenantScoped(req, (trx) => getWorkflowStats(auth.customer_id, id, { timeseriesDays: days }, trx));
     } catch (err) {
       if (sendWorkflowError(reply, err)) return;
       throw err;
