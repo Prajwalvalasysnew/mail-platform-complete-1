@@ -165,6 +165,29 @@ services:
       - "8025:8025"
       - "1025:1025"
 
+  smtp-gateway:
+    build:
+      context: .
+      dockerfile: packages/smtp-gateway/Dockerfile
+    container_name: mail-smtp-gateway
+    ports:
+      - "587:587"
+    environment:
+      DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SMTP_GATEWAY_PORT: 587
+      SMTP_GATEWAY_METRICS_PORT: 9102
+      # Provide TLS material in production:
+      # SMTP_TLS_KEY_FILE / SMTP_TLS_CERT_FILE (mounted volume)
+      METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   tracker:
     build:
       context: .

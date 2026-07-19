@@ -10,7 +10,7 @@ import { db } from './db.js';
 import { generateApiKeyV2, type KeyType } from './apikeys.js';
 
 // The scopes the platform actually enforces (see api/src/plugins/scope.ts).
-export const API_KEY_SCOPES = ['send', 'domains', 'suppressions', 'messages', 'webhooks', 'templates', 'workflows'] as const;
+export const API_KEY_SCOPES = ['send', 'domains', 'suppressions', 'messages', 'webhooks', 'templates', 'workflows', 'smtp'] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 export const API_KEY_TYPES: KeyType[] = ['secret', 'publishable', 'test'];

@@ -208,6 +208,16 @@ If some recipients are rejected (suppressed, invalid), `accepted` and `rejected`
 
 ---
 
+### SMTP relay
+```
+smtp.yourplatform.example:587 (STARTTLS)
+```
+Username `apikey`, password = an API key with the `send` or `smtp` scope.
+Anything that speaks SMTP submits through the same pipeline as this API. See
+[SMTP Relay](./guides/smtp-relay.md).
+
+---
+
 ### SendGrid compatibility endpoint
 ```
 POST /v3/mail/send

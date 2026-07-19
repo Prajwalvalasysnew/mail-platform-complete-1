@@ -22,6 +22,7 @@ export default defineConfig({
           '@platform/shared',
           '@platform/api',
           '@platform/worker',
+          '@platform/smtp-gateway',
           /node_modules/,
         ],
       },

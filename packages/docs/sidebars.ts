@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'guides/sending-email', label: 'Sending Email' },
         { type: 'doc', id: 'guides/batch-sending', label: 'Batch Sending' },
+        { type: 'doc', id: 'guides/smtp-relay', label: 'SMTP Relay' },
         { type: 'doc', id: 'guides/templates', label: 'Templates' },
         { type: 'doc', id: 'guides/tracking', label: 'Open & Click Tracking' },
       ],

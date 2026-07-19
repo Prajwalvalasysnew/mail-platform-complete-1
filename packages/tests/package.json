@@ -12,7 +12,8 @@
   "dependencies": {
     "@platform/shared": "*",
     "@platform/api": "*",
-    "@platform/worker": "*"
+    "@platform/worker": "*",
+    "@platform/smtp-gateway": "*"
   },
   "devDependencies": {
     "vitest": "^4.1.7",
