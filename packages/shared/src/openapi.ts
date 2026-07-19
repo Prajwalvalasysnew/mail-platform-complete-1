@@ -380,6 +380,13 @@ export const openapiSpec = {
     '/workflows/runs/{runId}': {
       get: { summary: 'Get a run with its step execution history', operationId: 'getWorkflowRun', parameters: [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' }, '404': { description: 'Not found' } } },
     },
+    '/tools/domain-scan': {
+      post: {
+        summary: 'Deliverability scan of any domain: SPF (lookup limit, includes, detected ESPs), DMARC grade, MX provider, DKIM selector probe, DNSBL listings, and copy-paste DNS fixes',
+        operationId: 'scanDomain',
+        responses: { '200': { description: 'Graded DomainScanReport with issues[] and fixes[]' }, '400': { description: 'Invalid domain' } },
+      },
+    },
     '/workflows/runs/{runId}/cancel': {
       post: { summary: 'Cancel an in-flight run', operationId: 'cancelWorkflowRun', parameters: [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Canceled' }, '409': { description: 'Not cancelable' } } },
     },

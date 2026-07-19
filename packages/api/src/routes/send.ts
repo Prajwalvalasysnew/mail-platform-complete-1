@@ -27,6 +27,7 @@ import {
   recordIdempotentResponse,
   createSendOutboxRows,
   drainSendOutbox,
+  resolveSendLane,
   checkQuotaThresholds,
   sendQuotaWarningEmail,
   injectTraceContext,
@@ -74,6 +75,10 @@ const SendSchema = z.object({
   ip_pool: z.enum(['transactional', 'marketing', 'quarantine']).optional(),
   send_at: z.string().datetime().optional(),
   unsubscribe_group_id: z.string().uuid().optional(),
+  // 'critical' puts the message at the head of the queue (OTPs, fraud/outage
+  // alerts). Paid/enterprise tiers only; per-minute capped — overflow is
+  // downgraded to the standard lane, reported via priority_applied.
+  priority: z.enum(['normal', 'critical']).optional(),
 });
 
 export const sendRoutes: FastifyPluginAsync = async (app) => {
@@ -403,7 +408,8 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     const sendAt = body.send_at ? new Date(body.send_at) : null;
     const scheduled = sendAt && sendAt.getTime() > Date.now() + 1000;
 
-    const priority = auth.tier === 'enterprise' ? 1 : auth.tier === 'paid' ? 5 : 10;
+    const laneDecision = await resolveSendLane(auth.customer_id, auth.tier, body.priority, toInsert.length);
+    const priority = laneDecision.priority;
 
     // Offload the body once (content-addressed) when a non-inline store is
     // configured. The body is identical across recipients, so one object is
@@ -541,6 +547,12 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
       message_ids: inserted.map((m) => m.message_id),
       suppressed,
       ...(scheduled ? { scheduled_for: sendAt!.toISOString() } : {}),
+      ...(body.priority
+        ? {
+            priority_applied: laneDecision.lane,
+            ...(laneDecision.downgraded_reason ? { priority_downgraded_reason: laneDecision.downgraded_reason } : {}),
+          }
+        : {}),
     } as SendResponse);
   });
 
@@ -551,7 +563,9 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
   // single transaction, then best-effort dispatched via send_outbox drain.
   const BatchSchema = z.object({
     messages: z
-      .array(SendSchema.extend({ to: z.string().email() }))
+      // The critical lane is single-send only (batches are inherently
+      // bulk-shaped); a priority field in a batch entry is stripped.
+      .array(SendSchema.omit({ priority: true }).extend({ to: z.string().email() }))
       .min(1)
       .max(100),
   });

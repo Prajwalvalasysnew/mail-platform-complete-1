@@ -24,6 +24,10 @@ export interface SendResponse {
   rejected: number;
   message_ids: string[];
   suppressed: string[];
+  scheduled_for?: string;
+  /** Which queue lane was applied when `priority` was requested. */
+  priority_applied?: 'critical' | 'standard';
+  priority_downgraded_reason?: 'tier_not_eligible' | 'rate_capped';
 }
 
 export interface ApiError {

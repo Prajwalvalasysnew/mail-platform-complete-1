@@ -31,6 +31,7 @@ export interface CustomersTable {
   email_verify_token_expires_at: Timestamp | null;
   physical_address: string | null;
   sso_enforced: Generated<boolean>;
+  tls_required: Generated<boolean>;
   events_retention_days: number | null;
   body_retention_days: number | null;
   created_at: Generated<Timestamp>;

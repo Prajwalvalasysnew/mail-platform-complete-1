@@ -32,6 +32,7 @@ import { auditRoutes } from './routes/audit.js';
 import { supportRoutes } from './routes/support.js';
 import { accountBillingRoutes } from './routes/account-billing.js';
 import { workflowRoutes } from './routes/workflows.js';
+import { toolRoutes } from './routes/tools.js';
 
 const PORT = Number(process.env.API_PORT ?? 3000);
 const HOST = process.env.API_HOST ?? '0.0.0.0';
@@ -217,6 +218,7 @@ await app.register(async (instance) => {
   await instance.register(privacyRoutes, { prefix: '/v1' });
   await instance.register(exportRoutes, { prefix: '/v1' });
   await instance.register(workflowRoutes, { prefix: '/v1' });
+  await instance.register(toolRoutes, { prefix: '/v1' });
 });
 
 const shutdown = async (signal: string) => {

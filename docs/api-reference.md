@@ -76,6 +76,7 @@ Scope: `messages`
 |---|---|---|
 | `name` | string | 1–200 chars. |
 | `physical_address` | string \| null | Required by CAN-SPAM for commercial email. Set to `null` to clear. |
+| `tls_required` | boolean | Compliance posture: stamp every send with a require-TLS marker and record per-delivery TLS evidence (`tls_secured`) in delivered event payloads. |
 
 **Response `200`**
 ```json
@@ -178,6 +179,7 @@ Scope: `send`
 | `tracking_opens` | boolean | Inject a 1×1 open-tracking pixel. Default `false`. |
 | `tracking_clicks` | boolean | Rewrite links for click tracking. Default `false`. |
 | `unsubscribe_group_id` | string | Associate with an unsubscribe group. |
+| `priority` | string | `"critical"` puts the message at the head of the queue (OTPs, fraud/outage alerts). Paid/enterprise tiers; per-minute capped — overflow is delivered on the standard lane and reported via `priority_applied` in the response. |
 | `headers` | object | Additional SMTP headers (string → string). |
 | `metadata` | object | Arbitrary key/value pairs stored with the message. |
 | `ip_pool` | string | Force a specific IP pool (contact support to configure pools). |
@@ -1106,6 +1108,25 @@ GET /v1/workflows/signing-secret
 ```
 Per-account HMAC-SHA256 secret for verifying workflow `webhook` step
 deliveries (`X-Workflow-Signature`).
+
+---
+
+## Tools
+
+### Domain deliverability scan
+```
+POST /v1/tools/domain-scan
+```
+Scope: `domains`. Body: `{ "domain": "acme.com", "check_blocklists": true }`.
+
+Analyzes any domain's live DNS posture and returns a graded report
+(`score` 0–100, `grade` A–F): SPF record parsing including the 10-DNS-lookup
+limit and nested includes, the ESPs currently authorized in SPF
+(`esps_detected`), DMARC policy strength, MX provider detection, a DKIM
+selector probe, DNSBL listings for the domain's mail IPs, `issues[]` with
+severities, and `fixes[]` — copy-paste TXT records that resolve them. Use it
+to diagnose your own domains or to audit a domain before migrating it to the
+platform.
 
 ---
 

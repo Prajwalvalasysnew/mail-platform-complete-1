@@ -50,7 +50,17 @@ exports.on_delivered = function (next, hmail, params) {
   const messageId = getMessageId(hmail);
   if (!messageId || !eventsQueue) return next();
 
-  const [host, ip, response, delay, port, mode, ok_recips] = params;
+  const [host, ip, response, delay, port, mode, ok_recips, secured] = params;
+
+  // Per-delivery transport-encryption evidence for TLS-required tenants
+  // (HIPAA/PCI posture): record whether this hop was actually TLS-secured,
+  // and log loudly when a require-TLS message went out in the clear.
+  const notes = (hmail.todo && hmail.todo.notes) || hmail.notes || {};
+  const tlsRequired = notes.require_tls === true;
+  const tlsSecured = typeof secured === 'boolean' ? secured : null;
+  if (tlsRequired && tlsSecured === false) {
+    this.logerror(`TLS-REQUIRED VIOLATION: message ${messageId} delivered to ${host} without TLS`);
+  }
 
   eventsQueue.add('delivered', {
     message_id: messageId,
@@ -66,6 +76,8 @@ exports.on_delivered = function (next, hmail, params) {
       // Source IP Haraka used for this outbound connection (set by
       // outbound.src_ip config per pool). Null on shared-IP setups.
       src_ip: (hmail.todo && hmail.todo.src_ip) || null,
+      tls_secured: tlsSecured,
+      ...(tlsRequired ? { tls_required: true } : {}),
     },
     occurred_at: new Date().toISOString(),
   }).catch((err) => this.logerror(`failed to enqueue delivered: ${err.message}`));

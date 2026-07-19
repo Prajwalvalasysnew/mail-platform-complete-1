@@ -142,6 +142,9 @@ export const ERROR_CODES = {
   invalid_state: { description: 'The workflow is not in a state that allows this lifecycle transition.', httpStatus: 409 },
   unknown_template: { description: 'A send_email step references a template that does not exist in this org.', httpStatus: 422 },
   invalid_webhook_url: { description: 'The webhook URL is not a resolvable public HTTP(S) endpoint.', httpStatus: 422 },
+
+  // ── Tools ──────────────────────────────────────────────────────────────────
+  invalid_domain: { description: 'The domain is not a scannable public fully-qualified domain name.', httpStatus: 400 },
 } as const satisfies Record<string, ErrorCodeSpec | { description: string; httpStatus: number }>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

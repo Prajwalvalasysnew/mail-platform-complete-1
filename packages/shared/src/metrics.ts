@@ -173,6 +173,14 @@ export const pgPoolConnections = new Gauge({
   registers: [registry],
 });
 
+export const acceptToHandoffSeconds = new Histogram({
+  name: 'mp_accept_to_handoff_seconds',
+  help: 'Latency from API accept (queued_at) to transport handoff, by priority lane',
+  labelNames: ['lane'], // p1 (critical/enterprise) | p5 | p10
+  buckets: [0.5, 1, 2, 5, 10, 30, 60, 300, 900, 3600],
+  registers: [registry],
+});
+
 export const workflowRunsStarted = new Counter({
   name: 'mp_workflow_runs_started_total',
   help: 'Workflow runs started',
