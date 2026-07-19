@@ -106,6 +106,7 @@ export interface MessagesTable {
   body_object_key: string | null;
   body_size: number | null;
   body_hash: string | null;
+  attachments: Array<{ filename: string; content_type: string; size: number; content_b64?: string }> | null;
   send_at: Timestamp | null;
   queued_at: Generated<Timestamp>;
   accepted_at: Timestamp | null;

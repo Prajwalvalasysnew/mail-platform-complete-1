@@ -229,6 +229,7 @@ export function startSendWorker(logger: Logger) {
             'List-Unsubscribe': `<${unsubUrl}>, <mailto:unsubscribe@${BOUNCE_DOMAIN}?subject=${msg.message_id}>`,
             'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
           },
+          attachments: loaded.attachments,
         });
 
         // Record the audit event and usage FIRST, then flip status to

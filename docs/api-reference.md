@@ -180,6 +180,7 @@ Scope: `send`
 | `tracking_clicks` | boolean | Rewrite links for click tracking. Default `false`. |
 | `unsubscribe_group_id` | string | Associate with an unsubscribe group. |
 | `priority` | string | `"critical"` puts the message at the head of the queue (OTPs, fraud/outage alerts). Paid/enterprise tiers; per-minute capped — overflow is delivered on the standard lane and reported via `priority_applied` in the response. |
+| `attachments` | array | Up to 10 base64 files: `[{ "filename", "content", "content_type"? }]`. 5 MB each / 7 MB total; executable types refused. |
 | `headers` | object | Additional SMTP headers (string → string). |
 | `metadata` | object | Arbitrary key/value pairs stored with the message. |
 | `ip_pool` | string | Force a specific IP pool (contact support to configure pools). |
@@ -204,6 +205,16 @@ Scope: `send`
 ```
 
 If some recipients are rejected (suppressed, invalid), `accepted` and `rejected` reflect the actual split. Check `results[n].accepted` per-index.
+
+---
+
+### SendGrid compatibility endpoint
+```
+POST /v3/mail/send
+```
+Accepts SendGrid v3 payloads unchanged — swap the base URL and API key and
+existing SendGrid client code keeps working. See
+[Migrate from SendGrid](./guides/migrate-from-sendgrid.md).
 
 ---
 

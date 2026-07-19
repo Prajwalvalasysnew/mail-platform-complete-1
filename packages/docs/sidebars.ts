@@ -9,6 +9,7 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'guides/getting-started', label: 'Quickstart' },
         { type: 'doc', id: 'guides/authentication', label: 'Authentication' },
+        { type: 'doc', id: 'guides/migrate-from-sendgrid', label: 'Migrate from SendGrid' },
       ],
     },
     {
@@ -48,6 +49,7 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'guides/deliverability', label: 'Deliverability' },
         { type: 'doc', id: 'guides/dns-setup', label: 'Domain Authentication' },
+        { type: 'doc', id: 'guides/security-compliance', label: 'Security & Compliance' },
       ],
     },
     {

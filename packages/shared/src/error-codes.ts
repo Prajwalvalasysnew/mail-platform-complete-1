@@ -145,6 +145,10 @@ export const ERROR_CODES = {
 
   // ── Tools ──────────────────────────────────────────────────────────────────
   invalid_domain: { description: 'The domain is not a scannable public fully-qualified domain name.', httpStatus: 400 },
+
+  // ── Attachments ────────────────────────────────────────────────────────────
+  attachment_rejected: { description: 'An attachment was refused (blocked executable type, invalid base64, or too many attachments).', httpStatus: 422 },
+  attachment_too_large: { description: 'An attachment (or the attachment total) exceeds the size limit.', httpStatus: 422 },
 } as const satisfies Record<string, ErrorCodeSpec | { description: string; httpStatus: number }>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

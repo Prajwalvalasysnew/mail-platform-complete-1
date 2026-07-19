@@ -65,6 +65,7 @@ import { exportRoutes } from '@platform/api/routes/exports.js';
 import { analyticsRoutes } from '@platform/api/routes/analytics.js';
 import { workflowRoutes } from '@platform/api/routes/workflows.js';
 import { toolRoutes } from '@platform/api/routes/tools.js';
+import { sendgridCompatRoutes } from '@platform/api/routes/sendgrid-compat.js';
 
 export interface Harness {
   app: FastifyInstance;
@@ -153,6 +154,7 @@ export async function buildTestApp(): Promise<FastifyInstance> {
     await instance.register(exportRoutes, { prefix: '/v1' });
     await instance.register(workflowRoutes, { prefix: '/v1' });
     await instance.register(toolRoutes, { prefix: '/v1' });
+    await instance.register(sendgridCompatRoutes);
   });
 
   await app.ready();
