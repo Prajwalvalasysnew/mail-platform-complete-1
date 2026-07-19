@@ -134,7 +134,7 @@ if (config?.services) {
   for (const service of ['api', 'worker', 'tracker', 'haraka-outbound', 'haraka-inbound']) {
     check(config.services[service]?.environment?.NODE_ENV === 'production', `${service} must run with NODE_ENV=production`, failures);
   }
-  for (const service of ['api', 'worker', 'tracker']) {
+  for (const service of ['api', 'worker', 'tracker', 'smtp-gateway']) {
     check(Boolean(config.services[service]?.environment?.METRICS_TOKEN), `${service} must require METRICS_TOKEN`, failures);
   }
   check(config.services.api?.environment?.ADMIN_PASSWORD_LOGIN_DISABLED === 'true', 'api must disable password admin login in production', failures);

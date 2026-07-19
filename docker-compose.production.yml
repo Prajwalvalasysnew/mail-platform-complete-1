@@ -115,6 +115,23 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
       METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}
 
+  smtp-gateway:
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9102/live').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${SERVICE_DATABASE_URL:?set SERVICE_DATABASE_URL}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}
+      # STARTTLS material (required in production for AUTH over the wire):
+      SMTP_TLS_KEY_FILE: ${SMTP_TLS_KEY_FILE:?set SMTP_TLS_KEY_FILE}
+      SMTP_TLS_CERT_FILE: ${SMTP_TLS_CERT_FILE:?set SMTP_TLS_CERT_FILE}
+
   migrate:
     environment:
       DATABASE_URL: ${MIGRATION_DATABASE_URL:?set MIGRATION_DATABASE_URL}
