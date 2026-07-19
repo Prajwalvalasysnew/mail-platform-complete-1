@@ -380,6 +380,27 @@ export const openapiSpec = {
     '/workflows/runs/{runId}': {
       get: { summary: 'Get a run with its step execution history', operationId: 'getWorkflowRun', parameters: [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' }, '404': { description: 'Not found' } } },
     },
+    '/subaccounts': {
+      get: { summary: 'List sub-accounts', operationId: 'listSubaccounts', responses: { '200': { description: 'OK' } } },
+      post: { summary: 'Create a sub-account (isolated child tenant under this org)', operationId: 'createSubaccount', responses: { '201': { description: 'Created' }, '409': { description: 'Limit reached / nesting refused' } } },
+    },
+    '/subaccounts/usage': {
+      get: { summary: 'Per-child usage roll-up + family totals', operationId: 'subaccountUsage', parameters: [{ name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 90, default: 30 } }], responses: { '200': { description: 'OK' } } },
+    },
+    '/subaccounts/{id}': {
+      get: { summary: 'Get a sub-account', operationId: 'getSubaccount', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' }, '404': { description: 'Not found' } } },
+      patch: { summary: 'Update a sub-account (name, suspend/activate, quota spend caps)', operationId: 'updateSubaccount', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Updated' }, '404': { description: 'Not found' } } },
+    },
+    '/subaccounts/{id}/keys': {
+      get: { summary: "List a sub-account's API keys", operationId: 'listSubaccountKeys', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' } } },
+      post: { summary: 'Mint a credential for a sub-account (defaults to send+smtp scopes)', operationId: 'createSubaccountKey', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '201': { description: 'Created (plaintext shown once)' } } },
+    },
+    '/subaccounts/{id}/keys/{keyId}': {
+      delete: { summary: 'Revoke a sub-account credential', operationId: 'revokeSubaccountKey', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'keyId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '204': { description: 'Revoked' }, '404': { description: 'Not found' } } },
+    },
+    '/subaccounts/templates/push': {
+      post: { summary: 'Copy a parent template to sub-accounts (franchise model)', operationId: 'pushTemplateToSubaccounts', responses: { '200': { description: '{ pushed: [ids] }' } } },
+    },
     '/tools/domain-scan': {
       post: {
         summary: 'Deliverability scan of any domain: SPF (lookup limit, includes, detected ESPs), DMARC grade, MX provider, DKIM selector probe, DNSBL listings, and copy-paste DNS fixes',

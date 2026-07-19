@@ -146,6 +146,14 @@ export const ERROR_CODES = {
   // ── Tools ──────────────────────────────────────────────────────────────────
   invalid_domain: { description: 'The domain is not a scannable public fully-qualified domain name.', httpStatus: 400 },
 
+  // ── Sub-accounts ───────────────────────────────────────────────────────────
+  not_a_subaccount: { description: 'The id does not reference a sub-account of this org.', httpStatus: 404 },
+  subaccount_limit_reached: { description: 'The org has reached its sub-account limit.', httpStatus: 409 },
+  subaccounts_cannot_nest: { description: 'Sub-accounts cannot create their own sub-accounts.', httpStatus: 409 },
+  parent_not_active: { description: 'The parent account is not active.', httpStatus: 403 },
+  invalid_on_behalf_of: { description: 'X-On-Behalf-Of must reference a sub-account of the authenticated org.', httpStatus: 403 },
+  subaccount_suspended: { description: 'The referenced sub-account is suspended.', httpStatus: 403 },
+
   // ── Attachments ────────────────────────────────────────────────────────────
   attachment_rejected: { description: 'An attachment was refused (blocked executable type, invalid base64, or too many attachments).', httpStatus: 422 },
   attachment_too_large: { description: 'An attachment (or the attachment total) exceeds the size limit.', httpStatus: 422 },

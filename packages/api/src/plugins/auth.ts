@@ -88,6 +88,34 @@ const authPluginImpl: FastifyPluginAsync = async (app) => {
       test_mode: matched.key_type === 'test',
       email_verified: matched.email_verified_at != null,
     };
+
+    // Reseller convenience: a PARENT key may act as one of its sub-accounts
+    // via X-On-Behalf-Of. Strictly validated — the target must be a live,
+    // active child of the authenticated org; anything else is a hard 403
+    // (never a silent fallthrough to the parent context).
+    const onBehalfOf = req.headers['x-on-behalf-of'];
+    if (typeof onBehalfOf === 'string' && onBehalfOf.trim()) {
+      const targetId = onBehalfOf.trim();
+      const child = await db
+        .selectFrom('customers')
+        .select(['id', 'parent_customer_id', 'status', 'tier', 'email_verified_at'])
+        .where('id', '=', targetId)
+        .executeTakeFirst()
+        .catch(() => undefined); // malformed UUIDs -> not found
+      if (!child || child.parent_customer_id !== matched.customer_id) {
+        return reply.code(403).send({
+          error: 'invalid_on_behalf_of',
+          message: 'X-On-Behalf-Of must reference a sub-account of this org.',
+        });
+      }
+      if (child.status !== 'active') {
+        return reply.code(403).send({ error: 'subaccount_suspended', message: 'This sub-account is suspended.' });
+      }
+      req.auth.customer_id = child.id;
+      req.auth.tier = child.tier;
+      req.auth.email_verified = child.email_verified_at != null;
+      req.auth.on_behalf_of_parent = matched.customer_id;
+    }
   });
 };
 

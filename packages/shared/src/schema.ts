@@ -32,6 +32,7 @@ export interface CustomersTable {
   physical_address: string | null;
   sso_enforced: Generated<boolean>;
   tls_required: Generated<boolean>;
+  parent_customer_id: string | null;
   events_retention_days: number | null;
   body_retention_days: number | null;
   created_at: Generated<Timestamp>;

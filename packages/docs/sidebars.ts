@@ -55,6 +55,14 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Sub-accounts',
+      collapsed: false,
+      items: [
+        { type: 'doc', id: 'guides/subaccounts', label: 'Sub-accounts' },
+      ],
+    },
+    {
+      type: 'category',
       label: 'Account',
       collapsed: false,
       items: [

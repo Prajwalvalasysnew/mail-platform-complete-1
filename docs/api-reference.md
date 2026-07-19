@@ -190,6 +190,7 @@ Scope: `send`
 | Header | Notes |
 |---|---|
 | `Idempotency-Key` | Any unique string. A retry with the same key and body returns the original result. |
+| `X-On-Behalf-Of` | Sub-account id. A parent key executes the request in that child's context (child domains/suppressions/quotas). See [Sub-accounts](./guides/subaccounts.md). |
 
 **Response `202`**
 ```json
