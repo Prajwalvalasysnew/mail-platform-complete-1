@@ -72,3 +72,8 @@ export * from './logging.js';
 export * from './workflow-definition.js';
 export * from './workflows.js';
 export * from './workflow-engine.js';
+export * from './domain-scanner.js';
+export * from './send-lane.js';
+export * from './attachments.js';
+export * from './subaccounts.js';
+export * from './dmarc-reports.js';

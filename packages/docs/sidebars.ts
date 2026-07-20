@@ -9,6 +9,7 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'guides/getting-started', label: 'Quickstart' },
         { type: 'doc', id: 'guides/authentication', label: 'Authentication' },
+        { type: 'doc', id: 'guides/migrate-from-sendgrid', label: 'Migrate from SendGrid' },
       ],
     },
     {
@@ -18,8 +19,17 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'guides/sending-email', label: 'Sending Email' },
         { type: 'doc', id: 'guides/batch-sending', label: 'Batch Sending' },
+        { type: 'doc', id: 'guides/smtp-relay', label: 'SMTP Relay' },
         { type: 'doc', id: 'guides/templates', label: 'Templates' },
         { type: 'doc', id: 'guides/tracking', label: 'Open & Click Tracking' },
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Automation',
+      collapsed: false,
+      items: [
+        { type: 'doc', id: 'guides/workflows', label: 'Workflows' },
       ],
     },
     {
@@ -40,6 +50,16 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'guides/deliverability', label: 'Deliverability' },
         { type: 'doc', id: 'guides/dns-setup', label: 'Domain Authentication' },
+        { type: 'doc', id: 'guides/dmarc-monitoring', label: 'DMARC Monitoring' },
+        { type: 'doc', id: 'guides/security-compliance', label: 'Security & Compliance' },
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Sub-accounts',
+      collapsed: false,
+      items: [
+        { type: 'doc', id: 'guides/subaccounts', label: 'Sub-accounts' },
       ],
     },
     {

@@ -173,6 +173,28 @@ export const pgPoolConnections = new Gauge({
   registers: [registry],
 });
 
+export const smtpGatewayMessages = new Counter({
+  name: 'mp_smtp_gateway_messages_total',
+  help: 'SMTP gateway submissions by outcome',
+  labelNames: ['outcome'], // accepted | all_suppressed | content_rejected
+  registers: [registry],
+});
+
+export const smtpGatewayAuthFailures = new Counter({
+  name: 'mp_smtp_gateway_auth_failures_total',
+  help: 'SMTP gateway authentication failures',
+  labelNames: ['reason'],
+  registers: [registry],
+});
+
+export const acceptToHandoffSeconds = new Histogram({
+  name: 'mp_accept_to_handoff_seconds',
+  help: 'Latency from API accept (queued_at) to transport handoff, by priority lane',
+  labelNames: ['lane'], // p1 (critical/enterprise) | p5 | p10
+  buckets: [0.5, 1, 2, 5, 10, 30, 60, 300, 900, 3600],
+  registers: [registry],
+});
+
 export const workflowRunsStarted = new Counter({
   name: 'mp_workflow_runs_started_total',
   help: 'Workflow runs started',

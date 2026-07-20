@@ -61,6 +61,9 @@ import { supportRoutes } from '@platform/api/routes/support.js';
 import { accountBillingRoutes } from '@platform/api/routes/account-billing.js';
 import { billingRoutes } from '@platform/api/routes/billing.js';
 import { workflowRoutes } from '@platform/api/routes/workflows.js';
+import { toolRoutes } from '@platform/api/routes/tools.js';
+import { subaccountRoutes } from '@platform/api/routes/subaccounts.js';
+import { dmarcRoutes } from '@platform/api/routes/dmarc.js';
 
 type RouteKey = string; // `${METHOD} ${path}`
 
@@ -115,6 +118,9 @@ async function collectRoutes(): Promise<Set<RouteKey>> {
     await instance.register(privacyRoutes, { prefix: '/v1' });
     await instance.register(webhookRoutes, { prefix: '/v1' });
     await instance.register(workflowRoutes, { prefix: '/v1' });
+    await instance.register(toolRoutes, { prefix: '/v1' });
+    await instance.register(subaccountRoutes, { prefix: '/v1' });
+    await instance.register(dmarcRoutes, { prefix: '/v1' });
   });
 
   await app.ready();

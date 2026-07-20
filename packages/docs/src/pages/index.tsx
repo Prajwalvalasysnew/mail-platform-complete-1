@@ -28,6 +28,13 @@ const FEATURES = [
     link: '/docs/guides/templates',
   },
   {
+    icon: '🤖',
+    title: 'Workflows',
+    description:
+      'Multi-step automation journeys: delays, engagement branching, A/B splits, goals, and auto-exit on unsubscribe. Versioned, simulatable, durable.',
+    link: '/docs/guides/workflows',
+  },
+  {
     icon: '🔔',
     title: 'Real-time Webhooks',
     description:

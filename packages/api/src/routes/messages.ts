@@ -245,6 +245,15 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
     // Expose hold_reason without leaking the numeric risk score.
     const hold_reason = result.msg.status === 'held' ? 'under_review' : undefined;
 
-    return { message: result.msg, events: result.events, ...(hold_reason ? { hold_reason } : {}) };
+    // Attachment metadata is part of the message record; the raw content
+    // (inline storage keeps content_b64 in the row) is not an API payload.
+    const message = {
+      ...result.msg,
+      attachments: result.msg.attachments
+        ? result.msg.attachments.map(({ filename, content_type, size }) => ({ filename, content_type, size }))
+        : null,
+    };
+
+    return { message, events: result.events, ...(hold_reason ? { hold_reason } : {}) };
   });
 };

@@ -76,6 +76,7 @@ Scope: `messages`
 |---|---|---|
 | `name` | string | 1–200 chars. |
 | `physical_address` | string \| null | Required by CAN-SPAM for commercial email. Set to `null` to clear. |
+| `tls_required` | boolean | Compliance posture: stamp every send with a require-TLS marker and record per-delivery TLS evidence (`tls_secured`) in delivered event payloads. |
 
 **Response `200`**
 ```json
@@ -178,6 +179,8 @@ Scope: `send`
 | `tracking_opens` | boolean | Inject a 1×1 open-tracking pixel. Default `false`. |
 | `tracking_clicks` | boolean | Rewrite links for click tracking. Default `false`. |
 | `unsubscribe_group_id` | string | Associate with an unsubscribe group. |
+| `priority` | string | `"critical"` puts the message at the head of the queue (OTPs, fraud/outage alerts). Paid/enterprise tiers; per-minute capped — overflow is delivered on the standard lane and reported via `priority_applied` in the response. |
+| `attachments` | array | Up to 10 base64 files: `[{ "filename", "content", "content_type"? }]`. 5 MB each / 7 MB total; executable types refused. |
 | `headers` | object | Additional SMTP headers (string → string). |
 | `metadata` | object | Arbitrary key/value pairs stored with the message. |
 | `ip_pool` | string | Force a specific IP pool (contact support to configure pools). |
@@ -187,6 +190,7 @@ Scope: `send`
 | Header | Notes |
 |---|---|
 | `Idempotency-Key` | Any unique string. A retry with the same key and body returns the original result. |
+| `X-On-Behalf-Of` | Sub-account id. A parent key executes the request in that child's context (child domains/suppressions/quotas). See [Sub-accounts](./guides/subaccounts.md). |
 
 **Response `202`**
 ```json
@@ -202,6 +206,26 @@ Scope: `send`
 ```
 
 If some recipients are rejected (suppressed, invalid), `accepted` and `rejected` reflect the actual split. Check `results[n].accepted` per-index.
+
+---
+
+### SMTP relay
+```
+smtp.yourplatform.example:587 (STARTTLS)
+```
+Username `apikey`, password = an API key with the `send` or `smtp` scope.
+Anything that speaks SMTP submits through the same pipeline as this API. See
+[SMTP Relay](./guides/smtp-relay.md).
+
+---
+
+### SendGrid compatibility endpoint
+```
+POST /v3/mail/send
+```
+Accepts SendGrid v3 payloads unchanged — swap the base URL and API key and
+existing SendGrid client code keeps working. See
+[Migrate from SendGrid](./guides/migrate-from-sendgrid.md).
 
 ---
 
@@ -1000,6 +1024,145 @@ Available only after the ticket is resolved or closed.
 |---|---|---|
 | `rating` | integer | Required. 1–5. |
 | `comment` | string | Optional free-text feedback. |
+
+---
+
+## Workflows (Automation)
+
+Multi-step per-recipient journeys. Requires the `workflows` key scope. See the
+[Workflows guide](./guides/workflows.md) for the definition format and
+concepts.
+
+### List workflows
+```
+GET /v1/workflows?status=active&limit=50&offset=0
+```
+Returns workflows with run counts (`active_runs`, `total_runs`).
+
+### Create workflow
+```
+POST /v1/workflows
+```
+
+**Body**
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | Required. Unique per account. |
+| `description` | string | Optional. |
+| `definition` | object | Optional draft definition (validated leniently). |
+
+### Get / update / archive
+```
+GET    /v1/workflows/:id        → draft + published definitions
+PUT    /v1/workflows/:id        → edit name/description/draft definition
+DELETE /v1/workflows/:id        → archive (stops entries, cancels in-flight runs)
+```
+
+### Validate a definition
+```
+POST /v1/workflows/validate
+```
+Body: `{ "definition": { … }, "strict": true }`. Returns `{ valid, errors, warnings }` without saving anything.
+
+### Publish / lifecycle
+```
+POST /v1/workflows/:id/publish   → strict-validate, snapshot a version, activate
+POST /v1/workflows/:id/pause     → stop new entries (in-flight runs continue)
+POST /v1/workflows/:id/resume
+```
+
+### Version history
+```
+GET  /v1/workflows/:id/versions
+GET  /v1/workflows/:id/versions/:version
+POST /v1/workflows/:id/versions/:version/restore   → copy back into the draft
+```
+
+### Trigger a run
+```
+POST /v1/workflows/:id/trigger
+```
+Supports the `Idempotency-Key` header (same semantics as `/v1/send`).
+
+**Body**
+
+| Field | Type | Notes |
+|---|---|---|
+| `subject_email` | string | Required. The recipient entering the journey. |
+| `context` | object | Optional data, available to conditions and templates as `{{context.*}}`. |
+
+Returns `202 { "started": true, "run_id": "…" }` or `409 { "error": "not_started", "reason": "…" }`
+(`already_active`, `reentry_blocked`, `reentry_cooldown`, `capacity`).
+
+### Bulk trigger
+```
+POST /v1/workflows/:id/trigger/bulk
+```
+Body: `{ "subjects": [{ "email", "context"? }, …], "context"? }` — up to 1000
+subjects. Returns per-subject results.
+
+### Simulate (dry run)
+```
+POST /v1/workflows/:id/simulate
+```
+Walks the draft (or `"source": "published"`) definition for a hypothetical
+subject with zero side effects. `event_outcomes` / `split_outcomes` force
+specific branches.
+
+### Runs
+```
+GET  /v1/workflows/:id/runs?status=&subject_email=&limit=&offset=
+GET  /v1/workflows/runs/:runId          → run + step-by-step execution log
+POST /v1/workflows/runs/:runId/cancel
+```
+
+### Stats
+```
+GET /v1/workflows/:id/stats?days=30
+```
+Run counts by status, goal attainment, per-step entered/completed/failed
+counters, and a daily started/finished/goals timeseries.
+
+### Webhook signing secret
+```
+GET /v1/workflows/signing-secret
+```
+Per-account HMAC-SHA256 secret for verifying workflow `webhook` step
+deliveries (`X-Workflow-Signature`).
+
+---
+
+## DMARC monitoring
+
+Turn DMARC aggregate reports into a "who is sending as your domain" view.
+Scope: `domains`. See [DMARC Monitoring](./guides/dmarc-monitoring.md).
+
+```
+GET  /v1/dmarc/reporting-address   # the rua= address to publish in DNS
+POST /v1/dmarc/reports             # ingest a report (raw XML, .xml.gz, or .zip)
+GET  /v1/dmarc/summary?days=30     # pass-rate + disposition summary
+GET  /v1/dmarc/sources?days=30     # per-source-IP alignment; likely spoofers first
+```
+
+---
+
+## Tools
+
+### Domain deliverability scan
+```
+POST /v1/tools/domain-scan
+```
+Scope: `domains`. Body: `{ "domain": "acme.com", "check_blocklists": true }`.
+
+Analyzes any domain's live DNS posture and returns a graded report
+(`score` 0–100, `grade` A–F): SPF record parsing including the 10-DNS-lookup
+limit and nested includes, the ESPs currently authorized in SPF
+(`esps_detected`), DMARC policy strength, MX provider detection, a DKIM
+selector probe, DNSBL listings for the domain's mail IPs, `issues[]` with
+severities, and `fixes[]` — copy-paste TXT records that resolve them. Use it
+to diagnose your own domains or to audit a domain before migrating it to the
+platform.
 
 ---
 

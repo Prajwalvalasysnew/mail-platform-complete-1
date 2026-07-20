@@ -63,6 +63,9 @@ jobs:
           # whose package.json main/exports point at dist/, so an unbuilt sdk
           # fails module resolution ("Failed to resolve entry for @platform/sdk").
           npm run build --workspace=@platform/sdk
+          # smtp-gateway: e2e/smtp-gateway.e2e.test.ts imports the built
+          # package (exports point at dist/), so it must be compiled here.
+          npm run build --workspace=@platform/smtp-gateway
       - name: Validate production deployment contract
         run: npm run prod:check
       - name: Apply migrations
@@ -121,6 +124,8 @@ jobs:
             dockerfile: packages/worker/Dockerfile
           - name: tracker
             dockerfile: packages/tracker/Dockerfile
+          - name: smtp-gateway
+            dockerfile: packages/smtp-gateway/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

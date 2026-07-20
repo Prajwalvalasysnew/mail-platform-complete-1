@@ -23,7 +23,7 @@ export const profileRoutes: FastifyPluginAsync = async (app) => {
       .selectFrom('customers')
       .select([
         'id', 'email', 'name', 'physical_address', 'tier', 'daily_quota',
-        'monthly_quota', 'billing_status', 'status', 'kyc_level', 'created_at',
+        'monthly_quota', 'billing_status', 'status', 'kyc_level', 'tls_required', 'created_at',
       ])
       .where('id', '=', auth.customer_id)
       .executeTakeFirstOrThrow();
@@ -34,6 +34,9 @@ export const profileRoutes: FastifyPluginAsync = async (app) => {
   const UpdateProfileSchema = z.object({
     name: z.string().min(1).max(200).optional(),
     physical_address: z.string().min(5).max(500).optional().nullable(),
+    // Compliance posture: stamp every send with a require-TLS marker and
+    // record per-delivery TLS evidence in the delivered event payload.
+    tls_required: z.boolean().optional(),
   });
   app.patch('/profile', { preHandler: requireScope('messages') }, async (req, reply) => {
     const auth = req.auth!;
@@ -42,6 +45,7 @@ export const profileRoutes: FastifyPluginAsync = async (app) => {
     const updates: Record<string, unknown> = {};
     if (parsed.data.name !== undefined) updates.name = parsed.data.name;
     if ('physical_address' in parsed.data) updates.physical_address = parsed.data.physical_address ?? null;
+    if (parsed.data.tls_required !== undefined) updates.tls_required = parsed.data.tls_required;
     if (!Object.keys(updates).length) return reply.code(400).send({ error: 'no_fields_provided' });
     await db.updateTable('customers').set(updates as any).where('id', '=', auth.customer_id).execute();
     return { ok: true };

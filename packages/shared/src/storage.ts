@@ -21,25 +21,42 @@ export interface StoredBody {
   hash: string;
 }
 
+export interface StoredAttachment {
+  filename: string;
+  content_type: string;
+  size: number;
+  content_b64: string;
+}
+
+export interface BodyPayload {
+  html?: string;
+  text?: string;
+  attachments?: StoredAttachment[];
+}
+
 export interface BodyStore {
   readonly kind: BodyStorageKind;
   /** Store a body (content-addressed). Returns a pointer to persist on the message. */
-  put(body: { html?: string; text?: string }): Promise<StoredBody>;
+  put(body: BodyPayload): Promise<StoredBody>;
   /** Read a previously stored body by its object key. */
-  get(objectKey: string): Promise<{ html?: string; text?: string }>;
+  get(objectKey: string): Promise<BodyPayload>;
   /** Remove a stored body (lifecycle / GDPR erase). No-op for inline. */
   delete(objectKey: string): Promise<void>;
 }
 
-function serialize(body: { html?: string; text?: string }): string {
-  return JSON.stringify({ html: body.html ?? null, text: body.text ?? null });
+function serialize(body: BodyPayload): string {
+  return JSON.stringify({
+    html: body.html ?? null,
+    text: body.text ?? null,
+    ...(body.attachments?.length ? { attachments: body.attachments } : {}),
+  });
 }
 function hashOf(payload: string): { hash: string; size: number } {
   return { hash: crypto.createHash('sha256').update(payload).digest('hex'), size: Buffer.byteLength(payload) };
 }
-function parse(payload: string): { html?: string; text?: string } {
-  const o = JSON.parse(payload) as { html: string | null; text: string | null };
-  return { html: o.html ?? undefined, text: o.text ?? undefined };
+function parse(payload: string): BodyPayload {
+  const o = JSON.parse(payload) as { html: string | null; text: string | null; attachments?: StoredAttachment[] };
+  return { html: o.html ?? undefined, text: o.text ?? undefined, attachments: o.attachments ?? undefined };
 }
 function keyFor(prefix: string, hash: string): string {
   // Content-addressed: identical bodies (e.g. one campaign to many recipients)
@@ -50,11 +67,11 @@ function keyFor(prefix: string, hash: string): string {
 // --- inline: nothing offloaded; caller keeps writing html_body/text_body ----
 class InlineStore implements BodyStore {
   readonly kind = 'inline';
-  async put(body: { html?: string; text?: string }): Promise<StoredBody> {
+  async put(body: BodyPayload): Promise<StoredBody> {
     const payload = serialize(body);
     return { storage: 'inline', ...hashOf(payload) };
   }
-  async get(): Promise<{ html?: string; text?: string }> {
+  async get(): Promise<BodyPayload> {
     throw new Error('inline bodies are read from the messages table, not the body store');
   }
   async delete(): Promise<void> {
@@ -69,7 +86,7 @@ export class FilesystemStore implements BodyStore {
   private full(objectKey: string): string {
     return path.join(this.dir, objectKey);
   }
-  async put(body: { html?: string; text?: string }): Promise<StoredBody> {
+  async put(body: BodyPayload): Promise<StoredBody> {
     const payload = serialize(body);
     const { hash, size } = hashOf(payload);
     const objectKey = keyFor(this.prefix, hash);
@@ -78,7 +95,7 @@ export class FilesystemStore implements BodyStore {
     await fs.writeFile(file, payload);
     return { storage: 'fs', object_key: objectKey, size, hash };
   }
-  async get(objectKey: string): Promise<{ html?: string; text?: string }> {
+  async get(objectKey: string): Promise<BodyPayload> {
     return parse(await fs.readFile(this.full(objectKey), 'utf8'));
   }
   async delete(objectKey: string): Promise<void> {
@@ -151,14 +168,14 @@ export class S3Store implements BodyStore {
   readonly kind = 's3';
   private prefix = process.env.BODY_S3_PREFIX ?? 'bodies/';
   constructor(private readonly client: ObjectClient = new S3ObjectClient()) {}
-  async put(body: { html?: string; text?: string }): Promise<StoredBody> {
+  async put(body: BodyPayload): Promise<StoredBody> {
     const payload = serialize(body);
     const { hash, size } = hashOf(payload);
     const objectKey = keyFor(this.prefix, hash);
     await this.client.putObject(objectKey, payload, 'application/json');
     return { storage: 's3', object_key: objectKey, size, hash };
   }
-  async get(objectKey: string): Promise<{ html?: string; text?: string }> {
+  async get(objectKey: string): Promise<BodyPayload> {
     return parse(await this.client.getObject(objectKey));
   }
   async delete(objectKey: string): Promise<void> {
@@ -189,9 +206,20 @@ export async function loadMessageBody(msg: {
   text_body?: string | null;
   body_storage?: string | null;
   body_object_key?: string | null;
-}): Promise<{ html?: string; text?: string }> {
+  attachments?: Array<{ filename: string; content_type: string; size: number; content_b64?: string }> | null;
+}): Promise<BodyPayload> {
   if (msg.body_storage && msg.body_storage !== 'inline' && msg.body_object_key) {
+    // Offloaded: html/text/attachment content all live in the body object;
+    // the row's attachments column carries metadata only.
     return getBodyStore().get(msg.body_object_key);
   }
-  return { html: msg.html_body ?? undefined, text: msg.text_body ?? undefined };
+  // Inline: attachment content rides in the row's attachments column.
+  const attachments = (msg.attachments ?? [])
+    .filter((a) => typeof a.content_b64 === 'string')
+    .map((a) => ({ filename: a.filename, content_type: a.content_type, size: a.size, content_b64: a.content_b64! }));
+  return {
+    html: msg.html_body ?? undefined,
+    text: msg.text_body ?? undefined,
+    attachments: attachments.length ? attachments : undefined,
+  };
 }

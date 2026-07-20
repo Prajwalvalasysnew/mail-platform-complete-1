@@ -5,6 +5,8 @@ import {
   simulateWorkflow,
   computeWakeAt,
   evaluateRule,
+  splitBranchForKey,
+  isRetryableWebhookFailure,
 } from '@platform/shared';
 
 const TEMPLATE_ID = '4f0b17a6-52b3-4c1d-9e59-1af2cbb7e001';
@@ -149,6 +151,84 @@ describe('workflow simulation', () => {
 
     expect(simulateWorkflow(def, { context: { plan: 'pro' } }).path[0]!.outcome).toBe('branch:on_true');
     expect(simulateWorkflow(def, { context: { plan: 'free' } }).path[0]!.outcome).toBe('branch:on_false');
+  });
+});
+
+describe('A/B split step', () => {
+  function splitDef(percentA: number) {
+    return validateWorkflowDefinition(
+      {
+        trigger: { type: 'api' },
+        entry_step_id: 'ab',
+        steps: [
+          { id: 'ab', type: 'split', percent_a: percentA, branch_a: 'a', branch_b: 'b' },
+          { id: 'a', type: 'exit' },
+          { id: 'b', type: 'exit' },
+        ],
+        settings: { allow_reentry: false, reentry_cooldown_seconds: 0 },
+      },
+      { strict: true }
+    ).definition!;
+  }
+
+  it('validates split steps and their branch targets', () => {
+    const bad = {
+      trigger: { type: 'api' },
+      entry_step_id: 'ab',
+      steps: [{ id: 'ab', type: 'split', percent_a: 50, branch_a: 'ghost', branch_b: null }],
+      settings: { allow_reentry: false, reentry_cooldown_seconds: 0 },
+    };
+    expect(validateWorkflowDefinition(bad).errors.some((e) => e.code === 'missing_target')).toBe(true);
+  });
+
+  it('assigns branches deterministically (same key, same branch) at roughly the configured ratio', () => {
+    expect(splitBranchForKey('run-1:ab', 50)).toBe(splitBranchForKey('run-1:ab', 50));
+    let a = 0;
+    for (let i = 0; i < 1000; i++) if (splitBranchForKey(`run-${i}:ab`, 30) === 'a') a++;
+    expect(a).toBeGreaterThan(200);
+    expect(a).toBeLessThan(400);
+    expect(splitBranchForKey('any:key', 0)).toBe('b');
+    expect(splitBranchForKey('any:key', 100)).toBe('a');
+  });
+
+  it('simulates splits with forced and hashed outcomes', () => {
+    const def = splitDef(50);
+    const forcedA = simulateWorkflow(def, { split_outcomes: { ab: 'a' } });
+    expect(forcedA.path.map((p) => p.step_id)).toEqual(['ab', 'a']);
+    const forcedB = simulateWorkflow(def, { split_outcomes: { ab: 'b' } });
+    expect(forcedB.path.map((p) => p.step_id)).toEqual(['ab', 'b']);
+    // Hashed default is deterministic for the same subject.
+    const s1 = simulateWorkflow(def, { subject_email: 'x@example.com' });
+    const s2 = simulateWorkflow(def, { subject_email: 'x@example.com' });
+    expect(s1.path[1]!.step_id).toBe(s2.path[1]!.step_id);
+  });
+});
+
+describe('auto-exit settings', () => {
+  it('defaults exit_on_events to unsubscribed + complaint', () => {
+    const def = validateWorkflowDefinition(welcomeSeries(), { strict: true }).definition!;
+    expect(def.settings.exit_on_events.sort()).toEqual(['complaint', 'unsubscribed']);
+  });
+
+  it('warns when the trigger event is also an exit event', () => {
+    const def = welcomeSeries();
+    (def as any).trigger = { type: 'event', event_type: 'complaint' };
+    const v = validateWorkflowDefinition(def, { strict: true });
+    expect(v.valid).toBe(true);
+    expect(v.warnings.some((w) => w.code === 'trigger_is_exit_event')).toBe(true);
+  });
+});
+
+describe('webhook failure classification', () => {
+  it('retries 5xx, timeouts, and network errors; fails through 4xx/SSRF/URL errors', () => {
+    expect(isRetryableWebhookFailure({ ok: false, status: 503 })).toBe(true);
+    expect(isRetryableWebhookFailure({ ok: false, error: 'timeout' })).toBe(true);
+    expect(isRetryableWebhookFailure({ ok: false, error: 'fetch failed' })).toBe(true);
+    expect(isRetryableWebhookFailure({ ok: false, status: 404 })).toBe(false);
+    expect(isRetryableWebhookFailure({ ok: false, status: 401 })).toBe(false);
+    expect(isRetryableWebhookFailure({ ok: false, error: 'ssrf_blocked' })).toBe(false);
+    expect(isRetryableWebhookFailure({ ok: false, error: 'url_error' })).toBe(false);
+    expect(isRetryableWebhookFailure({ ok: true, status: 200 })).toBe(false);
   });
 });
 

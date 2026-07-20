@@ -13,10 +13,12 @@ exports.strip_internal_headers = function (next, connection) {
   txn.notes.customer_id = (txn.header.get('X-MP-Customer-ID') || '').trim();
   txn.notes.message_id = (txn.header.get('X-MP-Message-ID') || '').trim();
   txn.notes.ip_pool = (txn.header.get('X-MP-IP-Pool') || '').trim();
+  txn.notes.require_tls = (txn.header.get('X-MP-Require-TLS') || '').trim() === '1';
 
   txn.remove_header('X-MP-Customer-ID');
   txn.remove_header('X-MP-Message-ID');
   txn.remove_header('X-MP-IP-Pool');
+  txn.remove_header('X-MP-Require-TLS');
 
   next();
 };

@@ -269,6 +269,16 @@ export interface BillingAccess {
 }
 
 export async function evaluateBillingAccess(customerId: string): Promise<BillingAccess> {
+  // Sub-accounts have no billing relationship of their own — their access
+  // rides the parent's billing state (the parent pays for the family).
+  const identity = await db
+    .selectFrom('customers')
+    .select('parent_customer_id')
+    .where('id', '=', customerId)
+    .executeTakeFirst();
+  if (identity?.parent_customer_id) {
+    return evaluateBillingAccess(identity.parent_customer_id);
+  }
   const customer = await db.selectFrom('customers').select(['billing_status', 'tier']).where('id', '=', customerId).executeTakeFirstOrThrow();
   const subscription = await db.selectFrom('subscriptions').select(['plan', 'status']).where('customer_id', '=', customerId).orderBy('updated_at', 'desc').executeTakeFirst();
   const planKey = subscription?.plan ?? (customer.tier === 'free' ? 'free' : customer.tier);

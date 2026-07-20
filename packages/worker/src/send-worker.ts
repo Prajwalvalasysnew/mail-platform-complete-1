@@ -12,6 +12,8 @@ import {
   messagesSent,
   messagesBlocked,
   sendDuration,
+  acceptToHandoffSeconds,
+  laneLabel,
   deadLetter,
   deadLetterTotal,
   QUEUE_PREFIX,
@@ -179,10 +181,11 @@ export function startSendWorker(logger: Logger) {
         // Fetch once per message from the customer record.
         const customer = await db
           .selectFrom('customers')
-          .select('physical_address')
+          .select(['physical_address', 'tls_required'])
           .where('id', '=', msg.customer_id)
           .executeTakeFirst();
         const physicalAddress = customer?.physical_address ?? null;
+        const tlsRequired = customer?.tls_required === true;
 
         // Enforce for live sends. Test-mode sends skip enforcement (no real
         // delivery, no legal exposure). Set SKIP_PHYSICAL_ADDRESS_CHECK=true
@@ -222,9 +225,11 @@ export function startSendWorker(logger: Logger) {
             'X-MP-Customer-ID': msg.customer_id,
             'X-MP-Message-ID': msg.message_id,
             'X-MP-IP-Pool': msg.ip_pool,
+            ...(tlsRequired ? { 'X-MP-Require-TLS': '1' } : {}),
             'List-Unsubscribe': `<${unsubUrl}>, <mailto:unsubscribe@${BOUNCE_DOMAIN}?subject=${msg.message_id}>`,
             'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
           },
+          attachments: loaded.attachments,
         });
 
         // Record the audit event and usage FIRST, then flip status to
@@ -255,6 +260,15 @@ export function startSendWorker(logger: Logger) {
           .execute();
 
         messagesSent.inc({ transport: tx.name, ip_pool: msg.ip_pool });
+        // Accept→handoff latency by priority lane — the number quoted in
+        // OTP/critical-alert SLOs (p1 = critical/enterprise lane).
+        const queuedAtMs = msg.queued_at ? new Date(msg.queued_at as unknown as string | Date).getTime() : NaN;
+        if (Number.isFinite(queuedAtMs)) {
+          acceptToHandoffSeconds.observe(
+            { lane: laneLabel(job.data.priority) },
+            Math.max(0, (Date.now() - queuedAtMs) / 1000)
+          );
+        }
         decrementQueueDepth(msg.customer_id).catch(() => {});
 
         log.info({ transport: tx.name, response: result.response }, 'accepted by transport');

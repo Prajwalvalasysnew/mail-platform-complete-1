@@ -24,6 +24,10 @@ export interface SendResponse {
   rejected: number;
   message_ids: string[];
   suppressed: string[];
+  scheduled_for?: string;
+  /** Which queue lane was applied when `priority` was requested. */
+  priority_applied?: 'critical' | 'standard';
+  priority_downgraded_reason?: 'tier_not_eligible' | 'rate_capped';
 }
 
 export interface ApiError {
@@ -42,4 +46,7 @@ export interface AuthContext {
   // Set at auth time from customers.email_verified_at to avoid a per-request
   // extra DB round-trip on the send hot path.
   email_verified: boolean;
+  // Set when a parent key acts as a sub-account via X-On-Behalf-Of:
+  // customer_id is the CHILD; this records the authenticated parent.
+  on_behalf_of_parent?: string;
 }

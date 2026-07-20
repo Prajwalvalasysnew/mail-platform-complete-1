@@ -35,6 +35,17 @@ export interface DeliveryMessage {
   text?: string;
   messageId: string;
   headers: Record<string, string>;
+  attachments?: Array<{ filename: string; content_type: string; content_b64: string }>;
+}
+
+/** Map platform attachments to nodemailer's attachment shape. */
+function mailAttachments(msg: DeliveryMessage) {
+  if (!msg.attachments?.length) return undefined;
+  return msg.attachments.map((a) => ({
+    filename: a.filename,
+    content: Buffer.from(a.content_b64, 'base64'),
+    contentType: a.content_type,
+  }));
 }
 
 export interface Transport {
@@ -103,6 +114,7 @@ class SesSmtpTransport implements Transport {
         text: msg.text,
         messageId: msg.messageId,
         headers: msg.headers,
+        attachments: mailAttachments(msg),
       });
       return {
         provider_message_id: info.messageId,
@@ -158,6 +170,7 @@ class HarakaSmtpTransport implements Transport {
         text: msg.text,
         messageId: msg.messageId,
         headers: msg.headers,
+        attachments: mailAttachments(msg),
       });
       return {
         provider_message_id: info.messageId,

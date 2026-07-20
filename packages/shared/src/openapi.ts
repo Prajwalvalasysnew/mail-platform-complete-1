@@ -363,7 +363,10 @@ export const openapiSpec = {
       post: { summary: 'Copy a historical version back into the draft', operationId: 'restoreWorkflowVersion', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'version', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'Restored' }, '404': { description: 'Not found' } } },
     },
     '/workflows/{id}/trigger': {
-      post: { summary: 'Start a run for a subject (external/API trigger)', operationId: 'triggerWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, run_id }' }, '409': { description: 'Not started (re-entry policy / already active / capacity)' } } },
+      post: { summary: 'Start a run for a subject (external/API trigger; supports Idempotency-Key)', operationId: 'triggerWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, run_id }' }, '409': { description: 'Not started (re-entry policy / already active / capacity)' } } },
+    },
+    '/workflows/{id}/trigger/bulk': {
+      post: { summary: 'Enroll up to 1000 subjects in one call, with per-subject results', operationId: 'triggerWorkflowBulk', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, total, results: [{ email, started, run_id | skipped_reason }] }' } } },
     },
     '/workflows/{id}/simulate': {
       post: { summary: 'Dry-run the definition for a hypothetical subject (no side effects)', operationId: 'simulateWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Step-by-step path with virtual timing' } } },
@@ -376,6 +379,46 @@ export const openapiSpec = {
     },
     '/workflows/runs/{runId}': {
       get: { summary: 'Get a run with its step execution history', operationId: 'getWorkflowRun', parameters: [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' }, '404': { description: 'Not found' } } },
+    },
+    '/subaccounts': {
+      get: { summary: 'List sub-accounts', operationId: 'listSubaccounts', responses: { '200': { description: 'OK' } } },
+      post: { summary: 'Create a sub-account (isolated child tenant under this org)', operationId: 'createSubaccount', responses: { '201': { description: 'Created' }, '409': { description: 'Limit reached / nesting refused' } } },
+    },
+    '/subaccounts/usage': {
+      get: { summary: 'Per-child usage roll-up + family totals', operationId: 'subaccountUsage', parameters: [{ name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 90, default: 30 } }], responses: { '200': { description: 'OK' } } },
+    },
+    '/subaccounts/{id}': {
+      get: { summary: 'Get a sub-account', operationId: 'getSubaccount', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' }, '404': { description: 'Not found' } } },
+      patch: { summary: 'Update a sub-account (name, suspend/activate, quota spend caps)', operationId: 'updateSubaccount', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Updated' }, '404': { description: 'Not found' } } },
+    },
+    '/subaccounts/{id}/keys': {
+      get: { summary: "List a sub-account's API keys", operationId: 'listSubaccountKeys', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'OK' } } },
+      post: { summary: 'Mint a credential for a sub-account (defaults to send+smtp scopes)', operationId: 'createSubaccountKey', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '201': { description: 'Created (plaintext shown once)' } } },
+    },
+    '/subaccounts/{id}/keys/{keyId}': {
+      delete: { summary: 'Revoke a sub-account credential', operationId: 'revokeSubaccountKey', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'keyId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '204': { description: 'Revoked' }, '404': { description: 'Not found' } } },
+    },
+    '/subaccounts/templates/push': {
+      post: { summary: 'Copy a parent template to sub-accounts (franchise model)', operationId: 'pushTemplateToSubaccounts', responses: { '200': { description: '{ pushed: [ids] }' } } },
+    },
+    '/dmarc/reporting-address': {
+      get: { summary: 'Get the rua= address to publish for DMARC aggregate reporting', operationId: 'dmarcReportingAddress', responses: { '200': { description: 'rua_address + DNS hint' } } },
+    },
+    '/dmarc/reports': {
+      post: { summary: 'Ingest a DMARC aggregate report (raw XML, .xml.gz, or .zip body)', operationId: 'ingestDmarcReport', responses: { '201': { description: 'Ingested' }, '200': { description: 'Duplicate (no-op)' }, '422': { description: 'Unparseable/unsafe report' } } },
+    },
+    '/dmarc/summary': {
+      get: { summary: 'DMARC pass-rate + disposition summary over a window', operationId: 'dmarcSummary', parameters: [{ name: 'domain', in: 'query', schema: { type: 'string' } }, { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 365, default: 30 } }], responses: { '200': { description: 'OK' } } },
+    },
+    '/dmarc/sources': {
+      get: { summary: 'Who is sending as your domain — per-source-IP alignment, spoofers first', operationId: 'dmarcSources', parameters: [{ name: 'domain', in: 'query', schema: { type: 'string' } }, { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 365, default: 30 } }], responses: { '200': { description: 'OK' } } },
+    },
+    '/tools/domain-scan': {
+      post: {
+        summary: 'Deliverability scan of any domain: SPF (lookup limit, includes, detected ESPs), DMARC grade, MX provider, DKIM selector probe, DNSBL listings, and copy-paste DNS fixes',
+        operationId: 'scanDomain',
+        responses: { '200': { description: 'Graded DomainScanReport with issues[] and fixes[]' }, '400': { description: 'Invalid domain' } },
+      },
     },
     '/workflows/runs/{runId}/cancel': {
       post: { summary: 'Cancel an in-flight run', operationId: 'cancelWorkflowRun', parameters: [{ name: 'runId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Canceled' }, '409': { description: 'Not cancelable' } } },

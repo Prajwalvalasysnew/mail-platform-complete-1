@@ -142,6 +142,28 @@ export const ERROR_CODES = {
   invalid_state: { description: 'The workflow is not in a state that allows this lifecycle transition.', httpStatus: 409 },
   unknown_template: { description: 'A send_email step references a template that does not exist in this org.', httpStatus: 422 },
   invalid_webhook_url: { description: 'The webhook URL is not a resolvable public HTTP(S) endpoint.', httpStatus: 422 },
+
+  // ── Tools ──────────────────────────────────────────────────────────────────
+  invalid_domain: { description: 'The domain is not a scannable public fully-qualified domain name.', httpStatus: 400 },
+
+  // ── Sub-accounts ───────────────────────────────────────────────────────────
+  not_a_subaccount: { description: 'The id does not reference a sub-account of this org.', httpStatus: 404 },
+  subaccount_limit_reached: { description: 'The org has reached its sub-account limit.', httpStatus: 409 },
+  subaccounts_cannot_nest: { description: 'Sub-accounts cannot create their own sub-accounts.', httpStatus: 409 },
+  parent_not_active: { description: 'The parent account is not active.', httpStatus: 403 },
+  invalid_on_behalf_of: { description: 'X-On-Behalf-Of must reference a sub-account of the authenticated org.', httpStatus: 403 },
+  subaccount_suspended: { description: 'The referenced sub-account is suspended.', httpStatus: 403 },
+
+  // ── DMARC monitoring ─────────────────────────────────────────────────────────
+  empty_report: { description: 'The DMARC report body was empty.', httpStatus: 400 },
+  invalid_report: { description: 'The DMARC aggregate report could not be parsed.', httpStatus: 422 },
+  unsafe_xml: { description: 'The DMARC report contained a disallowed DOCTYPE/ENTITY declaration.', httpStatus: 422 },
+  report_too_large: { description: 'The DMARC report exceeds the size limit.', httpStatus: 422 },
+  unsupported_zip: { description: 'The DMARC report zip used an unsupported compression method.', httpStatus: 422 },
+
+  // ── Attachments ────────────────────────────────────────────────────────────
+  attachment_rejected: { description: 'An attachment was refused (blocked executable type, invalid base64, or too many attachments).', httpStatus: 422 },
+  attachment_too_large: { description: 'An attachment (or the attachment total) exceeds the size limit.', httpStatus: 422 },
 } as const satisfies Record<string, ErrorCodeSpec | { description: string; httpStatus: number }>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

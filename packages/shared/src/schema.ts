@@ -31,6 +31,9 @@ export interface CustomersTable {
   email_verify_token_expires_at: Timestamp | null;
   physical_address: string | null;
   sso_enforced: Generated<boolean>;
+  tls_required: Generated<boolean>;
+  parent_customer_id: string | null;
+  dmarc_report_token: string | null;
   events_retention_days: number | null;
   body_retention_days: number | null;
   created_at: Generated<Timestamp>;
@@ -105,6 +108,7 @@ export interface MessagesTable {
   body_object_key: string | null;
   body_size: number | null;
   body_hash: string | null;
+  attachments: Array<{ filename: string; content_type: string; size: number; content_b64?: string }> | null;
   send_at: Timestamp | null;
   queued_at: Generated<Timestamp>;
   accepted_at: Timestamp | null;
@@ -301,6 +305,47 @@ export interface Database {
   workflow_runs: WorkflowRunsTable;
   workflow_run_steps: WorkflowRunStepsTable;
   workflow_step_stats: WorkflowStepStatsTable;
+  dmarc_reports: DmarcReportsTable;
+  dmarc_report_records: DmarcReportRecordsTable;
+}
+
+// =====================================================
+// Migration 072 tables (DMARC aggregate-report monitoring)
+// =====================================================
+
+export interface DmarcReportsTable {
+  id: Generated<string>;
+  customer_id: string;
+  domain: string;
+  org_name: string;
+  report_id: string;
+  date_range_begin: Timestamp;
+  date_range_end: Timestamp;
+  policy_p: string | null;
+  policy_sp: string | null;
+  policy_pct: number | null;
+  policy_adkim: string | null;
+  policy_aspf: string | null;
+  total_messages: Generated<number>;
+  aligned_messages: Generated<number>;
+  created_at: Generated<Timestamp>;
+}
+
+export interface DmarcReportRecordsTable {
+  id: Generated<string>;
+  report_id: string;
+  customer_id: string;
+  domain: string;
+  source_ip: string;
+  message_count: Generated<number>;
+  disposition: string | null;
+  dkim_result: string | null;
+  spf_result: string | null;
+  header_from: string | null;
+  spf_domain: string | null;
+  dkim_domain: string | null;
+  dmarc_pass: Generated<boolean>;
+  created_at: Generated<Timestamp>;
 }
 
 // =====================================================

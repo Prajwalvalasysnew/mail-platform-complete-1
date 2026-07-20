@@ -27,6 +27,8 @@ import {
   recordIdempotentResponse,
   createSendOutboxRows,
   drainSendOutbox,
+  resolveSendLane,
+  validateAttachments,
   checkQuotaThresholds,
   sendQuotaWarningEmail,
   injectTraceContext,
@@ -74,6 +76,22 @@ const SendSchema = z.object({
   ip_pool: z.enum(['transactional', 'marketing', 'quarantine']).optional(),
   send_at: z.string().datetime().optional(),
   unsubscribe_group_id: z.string().uuid().optional(),
+  // 'critical' puts the message at the head of the queue (OTPs, fraud/outage
+  // alerts). Paid/enterprise tiers only; per-minute capped — overflow is
+  // downgraded to the standard lane, reported via priority_applied.
+  priority: z.enum(['normal', 'critical']).optional(),
+  // Base64 file attachments (invoices, reports). Executable types are
+  // refused; size limits enforced in validateAttachments.
+  attachments: z
+    .array(
+      z.object({
+        filename: z.string().min(1).max(255),
+        content: z.string().min(1).max(10_000_000),
+        content_type: z.string().max(120).optional(),
+      })
+    )
+    .max(10)
+    .optional(),
 });
 
 export const sendRoutes: FastifyPluginAsync = async (app) => {
@@ -403,7 +421,23 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     const sendAt = body.send_at ? new Date(body.send_at) : null;
     const scheduled = sendAt && sendAt.getTime() > Date.now() + 1000;
 
-    const priority = auth.tier === 'enterprise' ? 1 : auth.tier === 'paid' ? 5 : 10;
+    const laneDecision = await resolveSendLane(auth.customer_id, auth.tier, body.priority, toInsert.length);
+    const priority = laneDecision.priority;
+
+    // Attachments: validate (size caps + executable denylist) before anything
+    // is stored. Content travels with the body object on fs/s3 stores; on the
+    // inline store it rides in the row's attachments column.
+    let storedAttachments: Array<{ filename: string; content_type: string; size: number; content_b64: string }> = [];
+    if (body.attachments?.length) {
+      const validated = validateAttachments(body.attachments);
+      if (!validated.ok) {
+        // Suppressed/trap recipients were already refunded above; only the
+        // still-reserved remainder (toInsert) goes back.
+        await releaseQuota(auth.customer_id, toInsert.length);
+        return reply.code(422).send({ error: validated.error, message: validated.message });
+      }
+      storedAttachments = validated.attachments;
+    }
 
     // Offload the body once (content-addressed) when a non-inline store is
     // configured. The body is identical across recipients, so one object is
@@ -413,12 +447,23 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     let bodyPtr: { storage: 'inline' | 'fs' | 's3'; object_key: string | null; size: number | null; hash: string | null } = {
       storage: 'inline', object_key: null, size: null, hash: null,
     };
-    if (bodyStore.kind !== 'inline' && (html || text)) {
-      const stored = await bodyStore.put({ html: html ?? undefined, text: text ?? undefined });
+    if (bodyStore.kind !== 'inline' && (html || text || storedAttachments.length > 0)) {
+      const stored = await bodyStore.put({
+        html: html ?? undefined,
+        text: text ?? undefined,
+        attachments: storedAttachments.length ? storedAttachments : undefined,
+      });
       bodyPtr = { storage: stored.storage, object_key: stored.object_key ?? null, size: stored.size, hash: stored.hash };
     }
     const inlineHtml = bodyPtr.storage === 'inline' ? (html ?? null) : null;
     const inlineText = bodyPtr.storage === 'inline' ? (text ?? null) : null;
+    // Row column: metadata always; content only when the body wasn't offloaded.
+    const attachmentsColumn =
+      storedAttachments.length === 0
+        ? null
+        : bodyPtr.storage === 'inline'
+          ? storedAttachments
+          : storedAttachments.map(({ filename, content_type, size }) => ({ filename, content_type, size }));
 
     const inserted = await tenantScoped(req, async (trx) => {
       const rows = await trx
@@ -438,6 +483,9 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
             body_object_key: bodyPtr.object_key,
             body_size: bodyPtr.size,
             body_hash: bodyPtr.hash,
+            // node-pg serializes top-level JS arrays as PG array literals, not
+            // JSON — stringify explicitly for the jsonb column.
+            attachments: attachmentsColumn ? (JSON.stringify(attachmentsColumn) as any) : null,
             headers: body.headers ?? {},
             tags: body.tags ?? [],
             metadata: { ...(body.metadata ?? {}), ...(auth.test_mode ? { _test_mode: true } : {}) },
@@ -541,6 +589,12 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
       message_ids: inserted.map((m) => m.message_id),
       suppressed,
       ...(scheduled ? { scheduled_for: sendAt!.toISOString() } : {}),
+      ...(body.priority
+        ? {
+            priority_applied: laneDecision.lane,
+            ...(laneDecision.downgraded_reason ? { priority_downgraded_reason: laneDecision.downgraded_reason } : {}),
+          }
+        : {}),
     } as SendResponse);
   });
 
@@ -551,7 +605,10 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
   // single transaction, then best-effort dispatched via send_outbox drain.
   const BatchSchema = z.object({
     messages: z
-      .array(SendSchema.extend({ to: z.string().email() }))
+      // The critical lane and attachments are single-send only for now
+      // (batches are bulk-shaped and share one request body budget); those
+      // fields in a batch entry are stripped.
+      .array(SendSchema.omit({ priority: true, attachments: true }).extend({ to: z.string().email() }))
       .min(1)
       .max(100),
   });

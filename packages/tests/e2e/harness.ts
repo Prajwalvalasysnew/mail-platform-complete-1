@@ -64,6 +64,10 @@ import { billingRoutes } from '@platform/api/routes/billing.js';
 import { exportRoutes } from '@platform/api/routes/exports.js';
 import { analyticsRoutes } from '@platform/api/routes/analytics.js';
 import { workflowRoutes } from '@platform/api/routes/workflows.js';
+import { toolRoutes } from '@platform/api/routes/tools.js';
+import { sendgridCompatRoutes } from '@platform/api/routes/sendgrid-compat.js';
+import { subaccountRoutes } from '@platform/api/routes/subaccounts.js';
+import { dmarcRoutes } from '@platform/api/routes/dmarc.js';
 
 export interface Harness {
   app: FastifyInstance;
@@ -151,6 +155,10 @@ export async function buildTestApp(): Promise<FastifyInstance> {
     await instance.register(webhookRoutes, { prefix: '/v1' });
     await instance.register(exportRoutes, { prefix: '/v1' });
     await instance.register(workflowRoutes, { prefix: '/v1' });
+    await instance.register(toolRoutes, { prefix: '/v1' });
+    await instance.register(subaccountRoutes, { prefix: '/v1' });
+    await instance.register(dmarcRoutes, { prefix: '/v1' });
+    await instance.register(sendgridCompatRoutes);
   });
 
   await app.ready();

@@ -241,7 +241,7 @@ function emptyDefinition(): WorkflowDefinition {
     trigger: { type: 'api' },
     entry_step_id: null,
     steps: [],
-    settings: { allow_reentry: false, reentry_cooldown_seconds: 0 },
+    settings: { allow_reentry: false, reentry_cooldown_seconds: 0, exit_on_events: ['unsubscribed', 'complaint'] },
   };
 }
 
@@ -529,15 +529,39 @@ export async function cancelWorkflowRun(
 // Stats (powers the builder overlay + workflow dashboard)
 // ---------------------------------------------------------------------------
 
+/**
+ * GDPR erasure hook: remove every workflow run (and, via cascade, its step
+ * ledger — both hold the recipient's email and journey data) for a recipient.
+ * Called from the privacy recipient-deletion transaction so it shares the
+ * legal-hold gate and tenant RLS scope of the surrounding erasure.
+ */
+export async function eraseWorkflowDataForRecipient(
+  customerId: string,
+  email: string,
+  executor?: TenantExecutor
+): Promise<{ runs_deleted: number }> {
+  const res = await runForTenant(customerId, executor, (trx) =>
+    trx
+      .deleteFrom('workflow_runs')
+      .where('customer_id', '=', customerId)
+      .where('subject_email', '=', email.toLowerCase())
+      .executeTakeFirst()
+  );
+  return { runs_deleted: Number(res.numDeletedRows ?? 0) };
+}
+
 export async function getWorkflowStats(
   customerId: string,
   workflowId: string,
+  opts: { timeseriesDays?: number } = {},
   executor?: TenantExecutor
 ): Promise<{
   runs: Record<string, number>;
   goal: { met: number };
   steps: Array<{ step_id: string; version: number; entered: number; completed: number; failed: number }>;
+  timeseries: Array<{ date: string; started: number; finished: number; goals_met: number }>;
 }> {
+  const timeseriesDays = Math.max(1, Math.min(opts.timeseriesDays ?? 30, 90));
   return runForTenant(customerId, executor, async (trx) => {
     const wf = await trx
       .selectFrom('workflows')
@@ -580,8 +604,52 @@ export async function getWorkflowStats(
       }));
     }
 
+    // Daily trend for dashboards: runs started, runs finished, goals met.
+    const sinceExpr = sql<boolean>`started_at >= NOW() - INTERVAL '1 day' * ${timeseriesDays}`;
+    const [startedRows, finishedRows, goalRows] = await Promise.all([
+      trx
+        .selectFrom('workflow_runs')
+        .select([sql<string>`to_char(date_trunc('day', started_at), 'YYYY-MM-DD')`.as('d'), sql<number>`count(*)`.as('c')])
+        .where('workflow_id', '=', workflowId)
+        .where('customer_id', '=', customerId)
+        .where(sinceExpr)
+        .groupBy('d')
+        .execute(),
+      trx
+        .selectFrom('workflow_runs')
+        .select([sql<string>`to_char(date_trunc('day', finished_at), 'YYYY-MM-DD')`.as('d'), sql<number>`count(*)`.as('c')])
+        .where('workflow_id', '=', workflowId)
+        .where('customer_id', '=', customerId)
+        .where('finished_at', 'is not', null)
+        .where(sql<boolean>`finished_at >= NOW() - INTERVAL '1 day' * ${timeseriesDays}`)
+        .groupBy('d')
+        .execute(),
+      trx
+        .selectFrom('workflow_runs')
+        .select([sql<string>`to_char(date_trunc('day', goal_met_at), 'YYYY-MM-DD')`.as('d'), sql<number>`count(*)`.as('c')])
+        .where('workflow_id', '=', workflowId)
+        .where('customer_id', '=', customerId)
+        .where('goal_met_at', 'is not', null)
+        .where(sql<boolean>`goal_met_at >= NOW() - INTERVAL '1 day' * ${timeseriesDays}`)
+        .groupBy('d')
+        .execute(),
+    ]);
+    const byDay = new Map<string, { date: string; started: number; finished: number; goals_met: number }>();
+    const day = (d: string) => {
+      let row = byDay.get(d);
+      if (!row) {
+        row = { date: d, started: 0, finished: 0, goals_met: 0 };
+        byDay.set(d, row);
+      }
+      return row;
+    };
+    for (const r of startedRows) day(r.d).started = Number(r.c);
+    for (const r of finishedRows) day(r.d).finished = Number(r.c);
+    for (const r of goalRows) day(r.d).goals_met = Number(r.c);
+    const timeseries = [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date));
+
     const runs: Record<string, number> = {};
     for (const r of runRows) runs[r.status] = Number(r.c);
-    return { runs, goal: { met: Number(goalRow?.c ?? 0) }, steps };
+    return { runs, goal: { met: Number(goalRow?.c ?? 0) }, steps, timeseries };
   });
 }
