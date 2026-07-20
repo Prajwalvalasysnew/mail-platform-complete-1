@@ -1133,6 +1133,20 @@ deliveries (`X-Workflow-Signature`).
 
 ---
 
+## DMARC monitoring
+
+Turn DMARC aggregate reports into a "who is sending as your domain" view.
+Scope: `domains`. See [DMARC Monitoring](./guides/dmarc-monitoring.md).
+
+```
+GET  /v1/dmarc/reporting-address   # the rua= address to publish in DNS
+POST /v1/dmarc/reports             # ingest a report (raw XML, .xml.gz, or .zip)
+GET  /v1/dmarc/summary?days=30     # pass-rate + disposition summary
+GET  /v1/dmarc/sources?days=30     # per-source-IP alignment; likely spoofers first
+```
+
+---
+
 ## Tools
 
 ### Domain deliverability scan

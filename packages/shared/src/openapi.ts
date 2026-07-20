@@ -401,6 +401,18 @@ export const openapiSpec = {
     '/subaccounts/templates/push': {
       post: { summary: 'Copy a parent template to sub-accounts (franchise model)', operationId: 'pushTemplateToSubaccounts', responses: { '200': { description: '{ pushed: [ids] }' } } },
     },
+    '/dmarc/reporting-address': {
+      get: { summary: 'Get the rua= address to publish for DMARC aggregate reporting', operationId: 'dmarcReportingAddress', responses: { '200': { description: 'rua_address + DNS hint' } } },
+    },
+    '/dmarc/reports': {
+      post: { summary: 'Ingest a DMARC aggregate report (raw XML, .xml.gz, or .zip body)', operationId: 'ingestDmarcReport', responses: { '201': { description: 'Ingested' }, '200': { description: 'Duplicate (no-op)' }, '422': { description: 'Unparseable/unsafe report' } } },
+    },
+    '/dmarc/summary': {
+      get: { summary: 'DMARC pass-rate + disposition summary over a window', operationId: 'dmarcSummary', parameters: [{ name: 'domain', in: 'query', schema: { type: 'string' } }, { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 365, default: 30 } }], responses: { '200': { description: 'OK' } } },
+    },
+    '/dmarc/sources': {
+      get: { summary: 'Who is sending as your domain — per-source-IP alignment, spoofers first', operationId: 'dmarcSources', parameters: [{ name: 'domain', in: 'query', schema: { type: 'string' } }, { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 365, default: 30 } }], responses: { '200': { description: 'OK' } } },
+    },
     '/tools/domain-scan': {
       post: {
         summary: 'Deliverability scan of any domain: SPF (lookup limit, includes, detected ESPs), DMARC grade, MX provider, DKIM selector probe, DNSBL listings, and copy-paste DNS fixes',

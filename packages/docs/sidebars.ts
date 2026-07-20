@@ -50,6 +50,7 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'guides/deliverability', label: 'Deliverability' },
         { type: 'doc', id: 'guides/dns-setup', label: 'Domain Authentication' },
+        { type: 'doc', id: 'guides/dmarc-monitoring', label: 'DMARC Monitoring' },
         { type: 'doc', id: 'guides/security-compliance', label: 'Security & Compliance' },
       ],
     },

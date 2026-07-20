@@ -35,6 +35,7 @@ import { workflowRoutes } from './routes/workflows.js';
 import { toolRoutes } from './routes/tools.js';
 import { sendgridCompatRoutes } from './routes/sendgrid-compat.js';
 import { subaccountRoutes } from './routes/subaccounts.js';
+import { dmarcRoutes } from './routes/dmarc.js';
 
 const PORT = Number(process.env.API_PORT ?? 3000);
 const HOST = process.env.API_HOST ?? '0.0.0.0';
@@ -222,6 +223,7 @@ await app.register(async (instance) => {
   await instance.register(workflowRoutes, { prefix: '/v1' });
   await instance.register(toolRoutes, { prefix: '/v1' });
   await instance.register(subaccountRoutes, { prefix: '/v1' });
+  await instance.register(dmarcRoutes, { prefix: '/v1' });
   // SendGrid v3 migration shim (absolute /v3 path; auth + all controls apply).
   await instance.register(sendgridCompatRoutes);
 });

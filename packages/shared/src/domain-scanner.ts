@@ -75,6 +75,8 @@ export interface DomainScanReport {
   esps_detected: string[];
   issues: DomainScanIssue[];
   fixes: DomainDnsFix[];
+  /** Staged DMARC rollout guidance (monitoring -> enforcement). */
+  remediation: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +452,36 @@ export async function scanDomain(
     }
   }
 
+  // ---- Compound finding: enforcement active but authentication broken -----
+  // The single most damaging real-world configuration (e.g. Vanda Pharma in
+  // the ICP corpus): DMARC set to quarantine/reject while SPF is missing or
+  // fails all senders. Every unaligned message is actively spam-foldered or
+  // rejected — worse than having no DMARC at all. Surface it as its own
+  // critical, above the individual findings.
+  const spfBroken = spfRecords.length === 0 || spfWalk.exceeded || spfRecords.length > 1;
+  if ((dmarcPolicy === 'quarantine' || dmarcPolicy === 'reject') && spfBroken) {
+    issues.unshift({
+      severity: 'critical',
+      code: 'dmarc_enforced_spf_broken',
+      message: `DMARC is enforcing (p=${dmarcPolicy}) but SPF is ${spfRecords.length === 0 ? 'missing' : 'broken'}. Any message that is not DKIM-aligned is being actively ${dmarcPolicy === 'reject' ? 'rejected' : 'sent to spam'} right now. Fix SPF/DKIM immediately or temporarily lower the policy to p=none.`,
+    });
+  }
+
+  // ---- Guided DMARC rollout plan ------------------------------------------
+  // Not just "publish a record" — a staged path from monitoring to enforcement,
+  // the exact journey the DMARC-monitoring product then supports.
+  const remediation: string[] = [];
+  if (!dmarcTxt) {
+    remediation.push('1. Publish DMARC at p=none with a rua= address to start collecting reports (monitoring only — nothing is blocked).');
+    remediation.push('2. Watch the aggregate reports for 1-2 weeks; confirm every legitimate sender is SPF- or DKIM-aligned.');
+    remediation.push('3. Move to p=quarantine, then p=reject once reports are clean.');
+  } else if (dmarcPolicy === 'none') {
+    remediation.push('Your DMARC is monitoring-only. Once your reports show all legitimate senders aligned, advance to p=quarantine, then p=reject.');
+    if (!hasRua) remediation.push('Add a rua= reporting address first so you can see who is sending as your domain before enforcing.');
+  } else if (spfBroken) {
+    remediation.push(`DMARC is enforcing but SPF is broken — fix SPF/DKIM before anything else (your legitimate mail is failing right now).`);
+  }
+
   // ---- Score --------------------------------------------------------------
   let score = 100;
   for (const i of issues) {
@@ -488,5 +520,6 @@ export async function scanDomain(
     esps_detected: espsDetected,
     issues,
     fixes,
+    remediation,
   };
 }

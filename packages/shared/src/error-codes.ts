@@ -154,6 +154,13 @@ export const ERROR_CODES = {
   invalid_on_behalf_of: { description: 'X-On-Behalf-Of must reference a sub-account of the authenticated org.', httpStatus: 403 },
   subaccount_suspended: { description: 'The referenced sub-account is suspended.', httpStatus: 403 },
 
+  // ── DMARC monitoring ─────────────────────────────────────────────────────────
+  empty_report: { description: 'The DMARC report body was empty.', httpStatus: 400 },
+  invalid_report: { description: 'The DMARC aggregate report could not be parsed.', httpStatus: 422 },
+  unsafe_xml: { description: 'The DMARC report contained a disallowed DOCTYPE/ENTITY declaration.', httpStatus: 422 },
+  report_too_large: { description: 'The DMARC report exceeds the size limit.', httpStatus: 422 },
+  unsupported_zip: { description: 'The DMARC report zip used an unsupported compression method.', httpStatus: 422 },
+
   // ── Attachments ────────────────────────────────────────────────────────────
   attachment_rejected: { description: 'An attachment was refused (blocked executable type, invalid base64, or too many attachments).', httpStatus: 422 },
   attachment_too_large: { description: 'An attachment (or the attachment total) exceeds the size limit.', httpStatus: 422 },
