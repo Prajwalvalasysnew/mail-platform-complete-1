@@ -29,6 +29,7 @@ import {
   drainSendOutbox,
   resolveSendLane,
   validateAttachments,
+  scanAttachmentsForMalware,
   checkQuotaThresholds,
   sendQuotaWarningEmail,
   injectTraceContext,
@@ -437,6 +438,19 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(422).send({ error: validated.error, message: validated.message });
       }
       storedAttachments = validated.attachments;
+      const malwareScan = await scanAttachmentsForMalware(storedAttachments);
+      if (!malwareScan.ok) {
+        await releaseQuota(auth.customer_id, toInsert.length);
+        if (malwareScan.error === 'attachment_malware_detected') {
+          messagesBlocked.inc({ reason: 'attachment_malware' });
+          return reply.code(422).send({
+            error: malwareScan.error,
+            message: `Attachment '${malwareScan.filename}' was rejected by malware scanning.`,
+          });
+        }
+        reply.header('Retry-After', '30');
+        return reply.code(503).send({ error: malwareScan.error, message: 'Attachment scanning is temporarily unavailable.' });
+      }
     }
 
     // Offload the body once (content-addressed) when a non-inline store is

@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import nodemailer from 'nodemailer';
 import { seedCustomer, seedVerifiedDomain, seedSuppression, type SeededCustomer } from './harness.js';
-import { db } from '@platform/shared';
+import { db, setAttachmentMalwareScanner } from '@platform/shared';
 
 let smtpServer: any;
 let port: number;
@@ -97,6 +97,26 @@ describe('SMTP gateway', () => {
         attachments: [{ filename: 'payload.exe', content: Buffer.from('MZ...') }],
       })
     ).rejects.toThrow(/not deliverable/i);
+  });
+
+  it('rejects malware detected through the SMTP attachment path', async () => {
+    try {
+      setAttachmentMalwareScanner({
+        name: 'smtp-e2e-av',
+        async scan() { return { clean: false, threat: 'Eicar-Test-Signature' }; },
+      });
+      await expect(
+        client(cust.apiKey).sendMail({
+          from: `billing@${domain}`,
+          to: 'malware@example.com',
+          subject: 'renamed malware',
+          text: 'x',
+          attachments: [{ filename: 'renamed.pdf', content: Buffer.from('%PDF-1.4 fake') }],
+        })
+      ).rejects.toThrow(/malware scanning/i);
+    } finally {
+      setAttachmentMalwareScanner(undefined);
+    }
   });
 
   it('rejects bad credentials and locks out after repeated failures', async () => {

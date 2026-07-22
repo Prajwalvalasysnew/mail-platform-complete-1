@@ -888,6 +888,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     review_queue_retention_days: z.number().int().min(0).max(3650).optional(),
     webhook_log_retention_days: z.number().int().min(0).max(3650).optional(),
     blocklist_retention_days: z.number().int().min(0).max(3650).optional(),
+    dmarc_retention_days: z.number().int().min(0).max(3650).optional(),
   });
 
   app.post('/retention/run', { preHandler: requireAdmin('operator') }, async (req, reply) => {
@@ -901,6 +902,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       reviewQueueRetentionDays: parsed.data.review_queue_retention_days,
       webhookLogRetentionDays: parsed.data.webhook_log_retention_days,
       blocklistRetentionDays: parsed.data.blocklist_retention_days,
+      dmarcRetentionDays: parsed.data.dmarc_retention_days,
     });
     await auditAdminAction(req.admin!, 'retention_run', 'platform', result as unknown as Record<string, unknown>);
     return reply.code(200).send({ ok: true, result });

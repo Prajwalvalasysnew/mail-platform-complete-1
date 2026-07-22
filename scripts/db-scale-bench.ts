@@ -8,19 +8,26 @@
 //      path — the CH rollup path is O(rollup) by construction)
 //   2. batched, hold-aware retention delete throughput (runRetention)
 //   3. partition DROP of a fully-populated month (the O(1) claim)
+//   4. batched deletion of a million-row DMARC source-record backlog
 //
 // Prints a table and exits. Cleans up the bench tenant unless KEEP=1.
 //
 // Usage:
-//   DATABASE_URL=postgres://... npx tsx scripts/db-scale-bench.ts [events] [messages]
-// Defaults: 2,000,000 events / 200,000 messages. Run against a
+//   DATABASE_URL=postgres://... npx tsx scripts/db-scale-bench.ts [events] [messages] [dmarc-records] [partition-rows]
+// Defaults: 2,000,000 events / 200,000 messages / 1,000,000 DMARC records /
+// 500,000 partition rows. Run against a
 // production-sized instance for numbers you can publish.
 
 import { sql } from 'kysely';
-import { db, closeDb, runRetention, ensureEventPartitions } from '../packages/shared/src/index.js';
+import { db, closeDb } from '../packages/shared/src/db.js';
+import { runRetention } from '../packages/shared/src/retention.js';
+import { ensureEventPartitions } from '../packages/shared/src/partitions.js';
+import { closeQueues } from '../packages/shared/src/queues.js';
 
 const EVENTS = Number(process.argv[2] ?? 2_000_000);
 const MESSAGES = Number(process.argv[3] ?? 200_000);
+const DMARC_RECORDS = Number(process.argv[4] ?? 1_000_000);
+const PARTITION_ROWS = Number(process.argv[5] ?? 500_000);
 
 function fmt(n: number): string {
   return n.toLocaleString('en-US');
@@ -49,6 +56,7 @@ async function main() {
     .returning('id')
     .executeTakeFirstOrThrow();
   const cid = customer.id as string;
+  const dmarcReportCount = Math.max(1, Math.ceil(DMARC_RECORDS / 10_000));
 
   // Make sure the current + recent month partitions exist for the spread.
   await ensureEventPartitions(3);
@@ -108,6 +116,8 @@ async function main() {
       webhookLogRetentionDays: 36_500,
       blocklistRetentionDays: 36_500,
       outboxRetentionDays: 36_500,
+      exportRetentionDays: 36_500,
+      dmarcRetentionDays: 36_500,
     }),
   );
   const purged = (del.result as { events_purged: number }).events_purged;
@@ -120,18 +130,75 @@ async function main() {
     CREATE TABLE IF NOT EXISTS events_part_201901 PARTITION OF events
     FOR VALUES FROM ('2019-01-01') TO ('2019-02-01')
   `.execute(db);
-  await timed(`seed 500,000 events into ancient partition`, () =>
+  await timed(`seed ${fmt(PARTITION_ROWS)} events into ancient partition`, () =>
     sql`
       INSERT INTO events (message_id, customer_id, event_type, payload, occurred_at)
       SELECT 'bench-old-' || g, ${cid}::uuid, 'delivered', '{}'::jsonb,
              timestamptz '2019-01-01' + (g % 2678400) * interval '1 second'
-      FROM generate_series(1, 500000) g
+      FROM generate_series(1, ${sql.lit(PARTITION_ROWS)}) g
     `.execute(db),
   );
-  await timed('DETACH + DROP ancient partition (500k rows)', async () => {
+  await timed(`DETACH + DROP ancient partition (${fmt(PARTITION_ROWS)} rows)`, async () => {
     await sql`ALTER TABLE events DETACH PARTITION events_part_201901`.execute(db);
     await sql`DROP TABLE events_part_201901`.execute(db);
   });
+
+  // ── 4. DMARC retention: many bounded parent reports, 1m child rows ─────
+  await timed(`seed ${fmt(dmarcReportCount)} expired DMARC reports`, () =>
+    sql`
+      INSERT INTO dmarc_reports (
+        customer_id, domain, org_name, report_id, date_range_begin,
+        date_range_end, total_messages, aligned_messages
+      )
+      SELECT ${cid}::uuid, 'bench.example', 'bench-reporter.example',
+             'bench-dmarc-' || ${cid} || '-' || g,
+             now() - interval '401 days', now() - interval '400 days',
+             10000, 10000
+      FROM generate_series(1, ${sql.lit(dmarcReportCount)}) g
+    `.execute(db),
+  );
+  await timed(`seed ${fmt(DMARC_RECORDS)} DMARC source records`, () =>
+    sql`
+      WITH reports AS (
+        SELECT id, row_number() OVER (ORDER BY report_id) AS rn
+        FROM dmarc_reports
+        WHERE customer_id = ${cid}::uuid AND report_id LIKE 'bench-dmarc-%'
+      )
+      INSERT INTO dmarc_report_records (
+        report_id, customer_id, domain, source_ip, message_count,
+        disposition, dkim_result, spf_result, header_from, dmarc_pass
+      )
+      SELECT r.id, ${cid}::uuid, 'bench.example',
+             '192.0.2.' || (1 + (g % 254)), 1,
+             'none', 'pass', 'pass', 'bench.example', true
+      FROM reports r
+      CROSS JOIN LATERAL generate_series(
+        1,
+        LEAST(10000, ${sql.lit(DMARC_RECORDS)} - ((r.rn - 1) * 10000))::int
+      ) g
+    `.execute(db),
+  );
+  await timed('ANALYZE dmarc_reports, dmarc_report_records', () =>
+    sql`ANALYZE dmarc_reports, dmarc_report_records`.execute(db),
+  );
+  const dmarcDelete = await timed('runRetention (DMARC >365d, batched)', () =>
+    runRetention({
+      dmarcRetentionDays: 365,
+      messageBodyRetentionDays: 36_500,
+      eventRetentionDays: 36_500,
+      messageRetentionDays: 36_500,
+      auditRetentionDays: 36_500,
+      reviewQueueRetentionDays: 36_500,
+      webhookLogRetentionDays: 36_500,
+      blocklistRetentionDays: 36_500,
+      outboxRetentionDays: 36_500,
+      exportRetentionDays: 36_500,
+    }),
+  );
+  console.log(
+    `  → purged ${fmt(dmarcDelete.result.dmarc_records_purged)} records + ${fmt(dmarcDelete.result.dmarc_reports_purged)} reports ` +
+    `(${Math.round(dmarcDelete.result.dmarc_records_purged / (dmarcDelete.ms / 1000)).toLocaleString()} records/s)`,
+  );
 
   // ── cleanup ──────────────────────────────────────────────────────────────
   if (process.env.KEEP !== '1') {
@@ -145,10 +212,13 @@ async function main() {
   }
 
   console.log('[bench] done');
+  await closeQueues();
   await closeDb();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(err);
+  await closeQueues().catch(() => {});
+  await closeDb().catch(() => {});
   process.exit(1);
 });

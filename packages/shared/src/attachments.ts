@@ -11,6 +11,9 @@
 //   - filenames are sanitized to a safe charset (no path separators, no
 //     control chars) so downstream MIME headers can never be smuggled
 
+import net from 'node:net';
+import { attachmentScans } from './metrics.js';
+
 export interface AttachmentInput {
   filename: string;
   /** Base64-encoded file content. */
@@ -31,6 +34,120 @@ export interface AttachmentMeta {
   size: number;
   /** Present only when BODY_STORAGE=inline (content rides in the row). */
   content_b64?: string;
+}
+
+export interface AttachmentMalwareScanner {
+  name: string;
+  scan(input: { filename: string; content_type: string; content: Buffer }): Promise<{ clean: boolean; threat?: string }>;
+}
+
+export type AttachmentScanResult =
+  | { ok: true; scanned: boolean }
+  | { ok: false; error: 'attachment_malware_detected'; filename: string; threat?: string }
+  | { ok: false; error: 'attachment_scan_unavailable'; message: string };
+
+let scannerOverride: AttachmentMalwareScanner | null | undefined;
+
+/** Test/deployment injection seam. undefined restores env configuration. */
+export function setAttachmentMalwareScanner(scanner?: AttachmentMalwareScanner | null): void {
+  scannerOverride = scanner;
+}
+
+/** Minimal clamd INSTREAM client; clamd owns archive recursion/decompression
+ * limits, signature updates, and malware identification. */
+export class ClamAvAttachmentScanner implements AttachmentMalwareScanner {
+  readonly name = 'clamav';
+
+  constructor(
+    private readonly host = process.env.CLAMAV_HOST ?? '127.0.0.1',
+    private readonly port = Number(process.env.CLAMAV_PORT ?? 3310),
+    private readonly timeoutMs = Number(process.env.ATTACHMENT_SCAN_TIMEOUT_MS ?? 10_000),
+  ) {}
+
+  scan(input: { filename: string; content_type: string; content: Buffer }): Promise<{ clean: boolean; threat?: string }> {
+    return new Promise((resolve, reject) => {
+      const socket = net.createConnection({ host: this.host, port: this.port });
+      let response = '';
+      let settled = false;
+      const finish = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        if (err) return reject(err);
+        const normalized = response.replace(/\0/g, '').trim();
+        if (/\bOK$/i.test(normalized)) return resolve({ clean: true });
+        const found = /:\s*(.+)\s+FOUND$/i.exec(normalized);
+        if (found) return resolve({ clean: false, threat: found[1]?.trim() });
+        reject(new Error(`Unexpected clamd response: ${normalized.slice(0, 200)}`));
+      };
+      socket.setTimeout(Number.isFinite(this.timeoutMs) && this.timeoutMs > 0 ? this.timeoutMs : 10_000);
+      socket.on('timeout', () => finish(new Error('ClamAV scan timed out')));
+      socket.on('error', (err) => finish(err));
+      socket.on('data', (chunk) => {
+        response += chunk.toString('utf8');
+        if (response.length > 4096) return finish(new Error('ClamAV response exceeded limit'));
+        if (response.includes('\0') || /(?:OK|FOUND)\s*$/i.test(response.trim())) finish();
+      });
+      socket.on('end', () => finish());
+      socket.on('connect', () => {
+        socket.write('zINSTREAM\0');
+        for (let offset = 0; offset < input.content.length; offset += 64 * 1024) {
+          const chunk = input.content.subarray(offset, offset + 64 * 1024);
+          const size = Buffer.allocUnsafe(4);
+          size.writeUInt32BE(chunk.length);
+          socket.write(size);
+          socket.write(chunk);
+        }
+        socket.write(Buffer.alloc(4));
+      });
+    });
+  }
+}
+
+function configuredScanner(): AttachmentMalwareScanner | null {
+  if (scannerOverride !== undefined) return scannerOverride;
+  const mode = (process.env.ATTACHMENT_SCANNER ?? 'off').toLowerCase();
+  return mode === 'clamav' ? new ClamAvAttachmentScanner() : null;
+}
+
+export async function scanAttachmentsForMalware(
+  attachments: ValidatedAttachment[],
+  opts: { required?: boolean; failurePolicy?: 'reject' | 'allow' } = {},
+): Promise<AttachmentScanResult> {
+  if (attachments.length === 0) return { ok: true, scanned: false };
+  const scanner = configuredScanner();
+  const required = opts.required ?? process.env.ATTACHMENT_SCAN_REQUIRED === 'true';
+  const failurePolicy = opts.failurePolicy ?? (process.env.ATTACHMENT_SCAN_FAILURE_POLICY === 'allow' ? 'allow' : 'reject');
+  if (!scanner) {
+    attachmentScans.inc({ scanner: 'none', outcome: 'skipped' }, attachments.length);
+    return required
+      ? { ok: false, error: 'attachment_scan_unavailable', message: 'Attachment scanning is required but no scanner is configured.' }
+      : { ok: true, scanned: false };
+  }
+
+  for (const attachment of attachments) {
+    try {
+      const result = await scanner.scan({
+        filename: attachment.filename,
+        content_type: attachment.content_type,
+        content: Buffer.from(attachment.content_b64, 'base64'),
+      });
+      if (!result.clean) {
+        attachmentScans.inc({ scanner: scanner.name, outcome: 'infected' });
+        return { ok: false, error: 'attachment_malware_detected', filename: attachment.filename, threat: result.threat };
+      }
+      attachmentScans.inc({ scanner: scanner.name, outcome: 'clean' });
+    } catch (err) {
+      attachmentScans.inc({ scanner: scanner.name, outcome: 'unavailable' });
+      if (failurePolicy === 'allow' && !required) continue;
+      return {
+        ok: false,
+        error: 'attachment_scan_unavailable',
+        message: err instanceof Error ? err.message : 'Attachment scanner unavailable',
+      };
+    }
+  }
+  return { ok: true, scanned: true };
 }
 
 export type AttachmentValidation =
@@ -121,6 +238,15 @@ export function validateAttachments(inputs: AttachmentInput[]): AttachmentValida
     // Decoded size from base64 length without materializing the buffer.
     const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
     const size = Math.floor((b64.length * 3) / 4) - padding;
+    const signature = Buffer.from(b64.slice(0, 128), 'base64');
+    if ((signature[0] === 0x4d && signature[1] === 0x5a)
+      || (signature[0] === 0x7f && signature.subarray(1, 4).toString('ascii') === 'ELF')) {
+      return {
+        ok: false,
+        error: 'attachment_rejected',
+        message: `Attachment '${filename}' contains an executable file signature regardless of its extension.`,
+      };
+    }
     if (size > MAX_BYTES_EACH) {
       return {
         ok: false,

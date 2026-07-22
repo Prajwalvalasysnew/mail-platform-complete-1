@@ -2,8 +2,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import zlib from 'node:zlib';
+import { randomUUID } from 'node:crypto';
 import { buildTestApp, seedCustomer, type SeededCustomer } from './harness.js';
-import { scanDomain, type ScanResolver } from '@platform/shared';
+import { db, placeLegalHold, releaseLegalHold, runRetention, scanDomain, type ScanResolver } from '@platform/shared';
 
 let app: FastifyInstance;
 let cust: SeededCustomer;
@@ -30,6 +31,42 @@ function report(reportId: string, domain = 'acme.com', p = 'quarantine') {
 
 function authed() {
   return { authorization: `Bearer ${cust.apiKey}`, 'content-type': 'application/xml' };
+}
+
+async function seedDmarcReport(customerId: string, daysAgo: number, recordCount = 2): Promise<string> {
+  const end = new Date(Date.now() - daysAgo * 86_400_000);
+  const row = await db.insertInto('dmarc_reports').values({
+    customer_id: customerId,
+    domain: 'retention.example',
+    org_name: 'retention-reporter.example',
+    report_id: `retention-${randomUUID()}`,
+    date_range_begin: new Date(end.getTime() - 86_400_000),
+    date_range_end: end,
+    policy_p: 'reject',
+    policy_sp: null,
+    policy_pct: 100,
+    policy_adkim: 'r',
+    policy_aspf: 'r',
+    total_messages: recordCount,
+    aligned_messages: recordCount,
+  }).returning('id').executeTakeFirstOrThrow();
+  await db.insertInto('dmarc_report_records').values(
+    Array.from({ length: recordCount }, (_, i) => ({
+      report_id: row.id,
+      customer_id: customerId,
+      domain: 'retention.example',
+      source_ip: `192.0.2.${i + 1}`,
+      message_count: 1,
+      disposition: 'none',
+      dkim_result: 'pass',
+      spf_result: 'pass',
+      header_from: 'retention.example',
+      spf_domain: 'retention.example',
+      dkim_domain: 'retention.example',
+      dmarc_pass: true,
+    })),
+  ).execute();
+  return row.id;
 }
 
 beforeAll(async () => {
@@ -102,6 +139,32 @@ describe('DMARC monitoring API', () => {
     const other = await seedCustomer();
     const summary = await app.inject({ method: 'GET', url: '/v1/dmarc/summary?days=30', headers: { authorization: `Bearer ${other.apiKey}` } });
     expect(summary.json().total_messages).toBe(0); // sees none of cust's reports
+  });
+
+  it('purges expired report records in bounded batches and keeps recent data', async () => {
+    const oldId = await seedDmarcReport(cust.customerId, 400, 3);
+    const recentId = await seedDmarcReport(cust.customerId, 30, 1);
+
+    const result = await runRetention({ dmarcRetentionDays: 365, batchSize: 1 });
+
+    expect(result.dmarc_records_purged).toBeGreaterThanOrEqual(3);
+    expect(result.dmarc_reports_purged).toBeGreaterThanOrEqual(1);
+    expect(await db.selectFrom('dmarc_reports').select('id').where('id', '=', oldId).executeTakeFirst()).toBeUndefined();
+    expect(await db.selectFrom('dmarc_report_records').select('id').where('report_id', '=', oldId).executeTakeFirst()).toBeUndefined();
+    expect(await db.selectFrom('dmarc_reports').select('id').where('id', '=', recentId).executeTakeFirst()).toBeTruthy();
+  });
+
+  it('preserves expired DMARC evidence under a tenant-wide legal hold', async () => {
+    const heldReportId = await seedDmarcReport(cust.customerId, 400, 1);
+    const hold = await placeLegalHold({ customerId: cust.customerId, scope: 'customer', reason: 'DMARC retention test' });
+
+    const heldResult = await runRetention({ dmarcRetentionDays: 365, batchSize: 1 });
+    expect(heldResult.held_rows_skipped).toBeGreaterThanOrEqual(2);
+    expect(await db.selectFrom('dmarc_reports').select('id').where('id', '=', heldReportId).executeTakeFirst()).toBeTruthy();
+
+    await releaseLegalHold(cust.customerId, hold.id, 'test');
+    await runRetention({ dmarcRetentionDays: 365, batchSize: 1 });
+    expect(await db.selectFrom('dmarc_reports').select('id').where('id', '=', heldReportId).executeTakeFirst()).toBeUndefined();
   });
 });
 

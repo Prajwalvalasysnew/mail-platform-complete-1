@@ -18,6 +18,8 @@ const ROLE_PW = 'rls_apptest_pw';
 let appUrl: string;
 let custA: string;
 let custB: string;
+let childA: string;
+let childB: string;
 
 function appRoleUrl(): string {
   const base = process.env.DATABASE_URL!;
@@ -38,14 +40,25 @@ describe.runIf(!!process.env.DATABASE_URL)('RLS tenant isolation', () => {
     const a = await db.insertInto('customers').values({ email: `rls-a-${Date.now()}@t.test`, name: 'A', status: 'active' } as any).returning('id').executeTakeFirstOrThrow();
     const b = await db.insertInto('customers').values({ email: `rls-b-${Date.now()}@t.test`, name: 'B', status: 'active' } as any).returning('id').executeTakeFirstOrThrow();
     custA = a.id; custB = b.id;
+    const ca = await db.insertInto('customers').values({ email: `rls-child-a-${Date.now()}@t.test`, name: 'A child', status: 'active', parent_customer_id: custA } as any).returning('id').executeTakeFirstOrThrow();
+    const cb = await db.insertInto('customers').values({ email: `rls-child-b-${Date.now()}@t.test`, name: 'B child', status: 'active', parent_customer_id: custB } as any).returning('id').executeTakeFirstOrThrow();
+    childA = ca.id; childB = cb.id;
     await db.insertInto('messages').values({ message_id: `rls-a-${Date.now()}`, customer_id: custA, from_address: 's@x.com', to_address: 'a@dest.com', subject: 's', status: 'queued' } as any).execute();
     await db.insertInto('messages').values({ message_id: `rls-b-${Date.now()}`, customer_id: custB, from_address: 's@x.com', to_address: 'b@dest.com', subject: 's', status: 'queued' } as any).execute();
+    const today = new Date().toISOString().slice(0, 10);
+    await db.insertInto('usage_daily').values([
+      { customer_id: childA, usage_date: today, sent: 7 },
+      { customer_id: childB, usage_date: today, sent: 11 },
+    ] as any).execute();
 
     appUrl = appRoleUrl();
   });
 
   afterAll(async () => {
     await db.deleteFrom('messages').where('customer_id', 'in', [custA, custB]).execute();
+    await db.deleteFrom('templates').where('customer_id', 'in', [childA, childB]).execute();
+    await db.deleteFrom('usage_daily').where('customer_id', 'in', [childA, childB]).execute();
+    await db.deleteFrom('customers').where('id', 'in', [childA, childB]).execute();
     await db.deleteFrom('customers').where('id', 'in', [custA, custB]).execute();
     // Role drop must come after its privileges are no longer needed.
     await sqlRaw(`REASSIGN OWNED BY ${ROLE} TO CURRENT_USER`).catch(() => {});
@@ -116,6 +129,40 @@ describe.runIf(!!process.env.DATABASE_URL)('RLS tenant isolation', () => {
         `INSERT INTO messages (message_id, customer_id, from_address, to_address, subject, status)
          VALUES ($1, $2, 's@x.com', 'blocked@dest.com', 'blocked', 'queued')`,
         [`rls-write-${Date.now()}`, custB]
+      )).rejects.toThrow(/row-level security policy/i);
+      await c.query('ROLLBACK');
+    } finally {
+      await c.end();
+    }
+  });
+
+  it('lets a parent aggregate direct-child usage but never a different parent family', async () => {
+    const c = new Client({ connectionString: appUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query(`SELECT set_config('app.customer_id', $1, true)`, [custA]);
+      const visible = await c.query(`SELECT customer_id, sent FROM usage_daily WHERE customer_id IN ($1,$2) ORDER BY customer_id`, [childA, childB]);
+      expect(visible.rows).toEqual([{ customer_id: childA, sent: 7 }]);
+      await c.query('COMMIT');
+    } finally {
+      await c.end();
+    }
+  });
+
+  it('lets a parent upsert templates only into its direct children', async () => {
+    const c = new Client({ connectionString: appUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query(`SELECT set_config('app.customer_id', $1, true)`, [custA]);
+      await expect(c.query(
+        `INSERT INTO templates (customer_id, name, subject) VALUES ($1, 'parent-push', 'allowed')`,
+        [childA],
+      )).resolves.toBeTruthy();
+      await expect(c.query(
+        `INSERT INTO templates (customer_id, name, subject) VALUES ($1, 'parent-push', 'blocked')`,
+        [childB],
       )).rejects.toThrow(/row-level security policy/i);
       await c.query('ROLLBACK');
     } finally {
