@@ -29,15 +29,30 @@ import {
   createSendOutboxRows,
   drainSendOutbox,
   validateAttachments,
+  scanAttachmentsForMalware,
   tierPriority,
   smtpGatewayMessages,
   smtpGatewayAuthFailures,
+  smtpGatewayThrottled,
   type AttachmentInput,
 } from '@platform/shared';
 
 const MAX_RECIPIENTS = Number(process.env.SMTP_MAX_RECIPIENTS ?? 100);
 const AUTH_FAILURE_LIMIT = Number(process.env.SMTP_AUTH_FAILURE_LIMIT ?? 10);
 const AUTH_FAILURE_WINDOW_S = Number(process.env.SMTP_AUTH_FAILURE_WINDOW_SECONDS ?? 900);
+
+const RATE_LIMIT_SCRIPT = `
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return current
+`;
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
 
 export interface SmtpAuthContext {
   customer_id: string;
@@ -57,6 +72,45 @@ export class SmtpReject extends Error {
   constructor(public responseCode: number, message: string) {
     super(message);
     this.name = 'SmtpReject';
+  }
+}
+
+/**
+ * Distributed fixed-window limiter shared by every SMTP gateway replica.
+ * Keys include a time bucket so an old key can never accidentally inherit a
+ * renewed TTL. Returns false once the configured allowance is exhausted.
+ */
+export async function consumeSmtpRateLimit(
+  scope: 'ipconn' | 'customer',
+  identity: string,
+  limit: number,
+  windowSeconds = 60,
+): Promise<boolean> {
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 1;
+  const safeWindow = Number.isFinite(windowSeconds) && windowSeconds > 0 ? Math.floor(windowSeconds) : 60;
+  const bucket = Math.floor(Date.now() / (safeWindow * 1000));
+  const key = `smtp:rate:${scope}:${identity}:${bucket}`;
+  const count = Number(await redis.eval(RATE_LIMIT_SCRIPT, 1, key, String(safeWindow + 1)));
+  return count <= safeLimit;
+}
+
+/** Plan-aware submission allowance. Daily/monthly quota still remains the
+ * authoritative billing cap; this protects short bursts and shared capacity. */
+export function smtpCustomerMessagesPerMinute(tier: string): number {
+  if (tier === 'enterprise') return positiveInt(process.env.SMTP_ENTERPRISE_MESSAGES_PER_MINUTE, 3000);
+  if (tier === 'paid') return positiveInt(process.env.SMTP_PAID_MESSAGES_PER_MINUTE, 600);
+  return positiveInt(process.env.SMTP_FREE_MESSAGES_PER_MINUTE, 60);
+}
+
+export async function enforceSmtpCustomerRate(auth: SmtpAuthContext): Promise<void> {
+  const allowed = await consumeSmtpRateLimit(
+    'customer',
+    auth.customer_id,
+    smtpCustomerMessagesPerMinute(auth.tier),
+  );
+  if (!allowed) {
+    smtpGatewayThrottled.inc({ reason: 'customer_message_rate' });
+    throw new SmtpReject(452, 'SMTP submission rate exceeded for this account. Retry shortly.');
   }
 }
 
@@ -185,6 +239,13 @@ export async function acceptSmtpMessage(
     const validated = validateAttachments(inputs);
     if (!validated.ok) throw new SmtpReject(554, validated.message);
     storedAttachments = validated.attachments;
+    const malwareScan = await scanAttachmentsForMalware(storedAttachments);
+    if (!malwareScan.ok) {
+      if (malwareScan.error === 'attachment_malware_detected') {
+        throw new SmtpReject(554, `Attachment '${malwareScan.filename}' rejected by malware scanning`);
+      }
+      throw new SmtpReject(451, 'Attachment scanning is temporarily unavailable. Retry later.');
+    }
   }
 
   const fromName = parsed.from?.value?.[0]?.name || null;

@@ -76,7 +76,12 @@ export interface Harness {
 }
 
 export async function buildTestApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false, trustProxy: true, bodyLimit: 10 * 1024 * 1024 });
+  const app = Fastify({
+    logger: false,
+    trustProxy: true,
+    bodyLimit: 10 * 1024 * 1024,
+    routerOptions: { maxParamLength: 512 },
+  });
   await app.register(errorEnvelope);
   await app.register(sensible);
 

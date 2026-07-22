@@ -187,6 +187,33 @@ export const smtpGatewayAuthFailures = new Counter({
   registers: [registry],
 });
 
+export const dmarcRetentionPurged = new Counter({
+  name: 'mp_dmarc_retention_purged_total',
+  help: 'DMARC reports and source records removed by retention',
+  labelNames: ['kind'], // report | record
+  registers: [registry],
+});
+
+export const smtpGatewayThrottled = new Counter({
+  name: 'mp_smtp_gateway_throttled_total',
+  help: 'SMTP connections or submissions rejected by resource-protection limits',
+  labelNames: ['reason'], // ip_connection_rate | customer_message_rate | connection_message_cap | recipient_cap | limiter_unavailable
+  registers: [registry],
+});
+
+export const smtpGatewayActiveConnections = new Gauge({
+  name: 'mp_smtp_gateway_active_connections',
+  help: 'Currently active SMTP gateway connections in this process',
+  registers: [registry],
+});
+
+export const attachmentScans = new Counter({
+  name: 'mp_attachment_scans_total',
+  help: 'Attachment malware scan outcomes',
+  labelNames: ['scanner', 'outcome'], // clean | infected | unavailable | skipped
+  registers: [registry],
+});
+
 export const acceptToHandoffSeconds = new Histogram({
   name: 'mp_accept_to_handoff_seconds',
   help: 'Latency from API accept (queued_at) to transport handoff, by priority lane',
@@ -220,6 +247,19 @@ export const workflowSweepRecovered = new Counter({
   name: 'mp_workflow_sweep_recovered_total',
   help: 'Workflow runs re-armed by durability sweeps (lost Redis jobs)',
   labelNames: ['kind'], // overdue_wake | stuck_running
+  registers: [registry],
+});
+
+export const workflowDefinitionCacheEvents = new Counter({
+  name: 'mp_workflow_definition_cache_events_total',
+  help: 'Workflow definition cache hits, misses, and evictions',
+  labelNames: ['event'], // hit | miss | eviction
+  registers: [registry],
+});
+
+export const workflowDefinitionCacheSize = new Gauge({
+  name: 'mp_workflow_definition_cache_size',
+  help: 'Parsed immutable workflow versions currently held in this process',
   registers: [registry],
 });
 

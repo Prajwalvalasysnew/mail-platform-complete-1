@@ -213,6 +213,34 @@ class SandboxTransport implements Transport {
   async close(): Promise<void> {}
 }
 
+// Local live-key sink. Unlike SandboxTransport this is selected by explicit
+// environment configuration (`DELIVERY_TRANSPORT=log|capture`) rather than by
+// an mp_test_ API key. It lets development and E2E environments exercise the
+// complete live-key queue/worker lifecycle without opening an SMTP connection
+// or affecting sender reputation.
+class LocalSinkTransport implements Transport {
+  readonly name: string;
+
+  constructor(kind: 'log' | 'capture') {
+    this.name = kind;
+  }
+
+  async send(msg: DeliveryMessage): Promise<DeliveryResult> {
+    return {
+      provider_message_id: `${this.name}-${msg.messageId.replace(/[<>]/g, '')}`,
+      response: `250 2.0.0 OK ${this.name} transport (no external delivery)`,
+      accepted: [msg.to],
+      rejected: [],
+    };
+  }
+
+  async verify(): Promise<boolean> {
+    return true;
+  }
+
+  async close(): Promise<void> {}
+}
+
 let cachedSandbox: SandboxTransport | null = null;
 export function getSandboxTransport(): Transport {
   if (!cachedSandbox) cachedSandbox = new SandboxTransport();
@@ -220,10 +248,17 @@ export function getSandboxTransport(): Transport {
 }
 
 let cached: Transport | null = null;
+let cachedKind: string | null = null;
 
 export function getTransport(): Transport {
-  if (cached) return cached;
   const kind = (process.env.DELIVERY_TRANSPORT ?? 'haraka').toLowerCase();
-  cached = kind === 'ses' ? new SesSmtpTransport() : new HarakaSmtpTransport();
+  if (cached && cachedKind === kind) return cached;
+
+  cached = kind === 'ses'
+    ? new SesSmtpTransport()
+    : kind === 'log' || kind === 'capture'
+      ? new LocalSinkTransport(kind)
+      : new HarakaSmtpTransport();
+  cachedKind = kind;
   return cached;
 }

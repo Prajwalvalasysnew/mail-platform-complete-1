@@ -1,238 +1,464 @@
 # Mail Platform
 
-A self-hosted, multi-tenant transactional email platform — a SendGrid-style
-service you can run yourself. Node.js, TypeScript, Fastify, Haraka, BullMQ,
-PostgreSQL, Redis, and ClickHouse.
+A self-hosted, multi-tenant transactional email platform with REST, SMTP, and
+SendGrid-compatible sending; background delivery workers; tracking; billing;
+automation; customer and admin APIs; and operational tooling.
 
-> **Status:** the codebase is production-grade and CI-green — **719 tests across
-> 112 suites**, 0 high/critical dependency CVEs, container image scans clean, and
-> 61 tracked migrations. What remains before it is *operationally* equivalent to
-> a hosted ESP is real-world evidence that can only be earned on live
-> infrastructure: sending-IP warmup and reputation history, disaster-recovery
-> drills with measured RPO/RTO, and external security/compliance attestation.
-> See [`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md) and
-> [`docs/OPERATIONAL_DRILLS.md`](docs/OPERATIONAL_DRILLS.md).
+The repository is a TypeScript monorepo built with Fastify, PostgreSQL, Redis,
+BullMQ, Haraka, ClickHouse, React, and Docker.
 
----
+## Current validation status
 
-## What's in the box
+- 927 automated tests: 545 unit/integration and 382 end-to-end.
+- Free, Paid Pro, and Enterprise persona journeys are covered.
+- 73 PostgreSQL migration files are tracked; the latest is `074`
+  (the historical sequence intentionally has no `036` file).
+- Production workspace builds pass.
+- Production dependency audit reports no high/critical vulnerabilities.
+- CI scans production container images with Trivy.
+- A focused privacy/security regression run passed 110/110 tests across 20
+  files on 2026-07-22; this is technical validation, not compliance evidence.
 
-| Area | Highlights | Where |
-|---|---|---|
-| **Send pipeline** | Transactional send outbox, atomic daily+monthly quota reservation, idempotency keys, per-recipient fan-out, template rendering, click/open injection | `packages/api/src/routes/send.ts`, `packages/worker/src/send-worker.ts`, `packages/shared/src/{quota,outbox,templates}.ts` |
-| **Multi-tenant isolation** | Fail-closed Postgres **row-level security** with per-request tenant context; non-superuser app role that cannot bypass RLS | migration `043_rls_fail_closed`, `packages/shared/src/tenant-context.ts` |
-| **Deliverability** | Reputation guard (auto-throttle/pause), blocklist monitor, per-IP **warmup** schedule, DKIM selector rotation wired to the live Haraka signer, DSN/ARF parsing, failure taxonomy, open/click **bot detection** (Apple MPP / scanners / prefetch) | `packages/shared/src/{reputation,warmup,dkim-rotation,dsn,failure-taxonomy,bot-detection}.ts` |
-| **Billing** | Governed plan catalog + entitlements, dunning, invoices with line items + **tax** + **credit notes/refunds**, Stripe-native proration, plan-change lifecycle with missing-webhook reconciliation; Stripe / official-PayPal / Cashfree webhook verification | `packages/shared/src/billing.ts`, `packages/api/src/routes/{billing,account-billing}.ts` |
-| **Privacy / GDPR** | Durable erasure across Postgres, body storage, ClickHouse and BullMQ/DLQ; worker **tombstones**; legal hold; consent ledger | `packages/shared/src/{privacy-erasure,legal-hold,suppression}.ts` |
-| **Tamper-evident audit** | Per-tenant hash chain, retention-safe archive, and **Ed25519-signed checkpoints exported to a WORM sink** | `packages/shared/src/{audit,audit-worm}.ts` |
-| **Enterprise identity** | Admin RBAC + OIDC + TOTP, SCIM 2.0 provisioning, **customer SSO enforcement**, **JIT admin elevation + break-glass**, **WebAuthn / passkeys** | `packages/shared/src/{admin,admin-jit,scim,sso,webauthn}.ts` |
-| **Analytics** | Event firehose to ClickHouse with **exactly-once dedup** (ReplacingMergeTree keyed on a shared idempotency key + `uniqExact` rollup) and durable watermark reconciliation | `packages/shared/src/{clickhouse,clickhouse-reconcile}.ts`, `infra/clickhouse/init.sql` |
-| **Observability & safety** | `mp_`-prefixed Prometheus metrics, Grafana dashboard, Alertmanager rules, central log + trace redaction | `infra/{prometheus,grafana,alertmanager}` |
-| **Ops tooling** | Docker prod compose, Helm chart, and *runnable* drills: Helm render check, Redis failover, Postgres backup/restore (with RTO), k6 load scenarios | `docker-compose.production.yml`, `infra/helm/`, `scripts/`, `infra/loadtest/` |
-| **Developer surface** | OpenAPI 3.1 spec with route-parity + breaking-change guards, a typed SDK, stable error-code registry | `GET /openapi.json`, `packages/sdk`, `packages/shared/src/error-codes.ts` |
+This describes code-level readiness. Production operation still requires live
+IP/domain warmup, reputation evidence, backup and failover drills on the target
+infrastructure, production load testing, ClamAV deployment, and an independent
+security/compliance assessment. See [Production checklist](docs/PRODUCTION_CHECKLIST.md)
+and [Operational drills](docs/OPERATIONAL_DRILLS.md).
 
-Run everything with `npm test`, or just the HTTP end-to-end layer with
-`npm run test:e2e`. See [`docs/TESTING.md`](docs/TESTING.md).
+## Feature catalogue
 
----
+| Area | Implemented capabilities |
+| --- | --- |
+| Sending channels | Native REST send and batch send, authenticated SMTP submission, SendGrid v3 compatibility, and typed SDK |
+| Message creation | Text/HTML content, templates and variables, per-recipient fan-out, custom headers, reply-to, attachments, scheduling, cancellation, and idempotency keys |
+| Delivery pipeline | Transactional outbox, BullMQ workers, atomic claiming, retry/failure taxonomy, priority lanes, quota reservation/refund, VERP return paths, and Haraka or SES transport |
+| Attachment security | Size/type validation, PE and ELF signature blocking despite renamed extensions, and optional ClamAV streaming scans with configurable failure policy |
+| Sender identity | Sending-domain lifecycle, SPF/DKIM/DMARC verification state, DKIM selector rotation, reporting addresses, and domain scanner |
+| Deliverability | Suppression enforcement, hard-bounce/complaint suppression, DSN and ARF parsing, reputation guard, IP pools, warmup schedules, blocklist scanning, and TLS-required sending |
+| Engagement | Open pixels, click redirects, RFC 8058 one-click unsubscribe, unsubscribe groups, consent history, and bot/prefetch/Apple MPP classification |
+| Messages and analytics | Message list/detail/activity, event history, usage/quota/stats, ClickHouse analytics, idempotent event processing, and reconciliation watermarks |
+| Webhooks | Customer webhook lifecycle, HMAC signatures, secret rotation, delivery history, retries, SSRF protection, and replay tooling |
+| Workflows | Draft validation, publishing, immutable versions, restore, simulation, single/bulk triggers, waits, event triggers, branching, A/B splits, goals, runs, cancellation, stats, and bounded definition caching |
+| Authentication | Customer registration, email verification, login/logout, password reset, session/device management, organization switching, TOTP MFA, and WebAuthn/passkeys |
+| Team and enterprise identity | Team invitations, role/capability enforcement, SSO policy, SCIM token management, SCIM 2.0 provisioning, admin OIDC, and JIT/break-glass elevation |
+| API credentials | Scoped live/test API keys, key creation/list/rotation/revocation, SMTP scope, and on-behalf-of authorization |
+| Multi-tenancy | Fail-closed PostgreSQL row-level security, non-bypass application role, parent/child isolation, subaccounts, child keys, usage rollups, and bulk template push |
+| Billing | Free/Pro/Enterprise plans, quotas, priority entitlements, checkout/portal, invoices, tax, credit notes/refunds, Stripe/PayPal/Cashfree webhooks, plan-change lifecycle, dunning, and reconciliation |
+| Privacy controls | Recipient export/erasure, downloadable exports, body/object-store and attachment deletion, queue tombstones, legal holds, per-plan retention sweeps, DMARC retention, consent ledger, and tenant-safe deletion |
+| Audit | Tenant hash chains, integrity verification, retention-safe archive, Ed25519 checkpoints, WORM export, and admin mutation audit records |
+| Support and trust | Customer support tickets/messages/CSAT, admin support inbox, notes, SLA/triage helpers, abuse review queue, KYC decisions, customer suspension, and DLQ replay/purge |
+| Admin console | Fleet overview, tenant management, deliverability/IP pools, support, abuse, KYC, audit, billing events, payment gateways, platform settings, retention controls, and admin team management |
+| Observability | Health/readiness endpoints, `mp_` Prometheus metrics, Grafana dashboards, Alertmanager rules, Jaeger/OpenTelemetry integration, and sensitive-data log/trace redaction |
+| Deployment and operations | Development and production Compose files, Helm chart, migration job, backup/restore and Redis failover drills, k6 scenarios, SBOM generation, dependency audit, and Trivy image scanning |
+| Developer experience | OpenAPI 3.1 document, route-parity and breaking-change guards, stable error registry, typed SDK, testkit, isolated test stack, and local Mailpit |
 
-## Architecture at a glance
+## Plans and persona behavior
 
+Plan tier currently controls quota, billing state, normal send priority, and
+eligibility for the requested critical lane. Most features are authorized by
+API-key scope or human membership capability rather than being hidden by plan.
+
+| Contract | Free | Paid Pro | Enterprise |
+| --- | ---: | ---: | ---: |
+| Daily quota used by persona tests | 100 | 50,000 | 1,000,000 |
+| Monthly quota used by persona tests | 3,000 | 1,000,000 | 50,000,000 |
+| Standard send priority | 10 | 5 | 1 |
+| Requested critical lane | Downgraded | Eligible | Eligible |
+| Billing plan | `free` | `pro` | `enterprise` |
+
+The authoritative feature-by-tier contract is the
+[Persona E2E feature matrix](docs/testing/PERSONA_FEATURE_MATRIX.md).
+
+## End-to-end feature coverage
+
+The E2E suite starts the real Fastify routes and BullMQ send worker against an
+isolated PostgreSQL and Redis stack. It verifies HTTP responses, tenant-owned
+database state, queue completion, event history, usage accounting, authorization
+denials, idempotency, and cross-tenant isolation.
+
+### Persona journeys
+
+| Journey | What is exercised end to end |
+| --- | --- |
+| Free developer | Signup, verification, API key, sender setup, first delivery, quota protection, and free-priority behavior |
+| Paid SaaS | Subscription activation, production sends, priority behavior, usage, invoices, and tenant-safe billing views |
+| Enterprise organization | Team access, child accounts, on-behalf-of operations, child keys, template distribution, priority sends, quotas, and audit integrity |
+| Account lifecycle | Registration, verification, login, active sessions, session revocation, password reset, organization switching, and logout |
+| Credentials and domains | Scoped key lifecycle, customer and API domain surfaces, verification, DMARC reporting, and domain scanning |
+| Content and delivery | Template CRUD/rendering, attachments, scheduling, cancellation, retries, idempotency, messages, events, usage, stats, and analytics |
+| Channel parity | REST/SMTP/SendGrid/SDK submission paths entering the same tenant delivery pipeline |
+| Consent and integrations | Suppressions, consent history, unsubscribe groups, webhooks, secret rotation, retries, and SSRF controls |
+| Automation, privacy, and support | Workflow lifecycle/execution, data exports, recipient erasure, legal holds, support conversation, resolution, and CSAT |
+| Governance and resilience | Team RBAC, SSO, SCIM, audit verification, admin fleet visibility, parent/child isolation, suspended access, and fail-safe behavior |
+
+Additional suites cover billing providers, DKIM rotation, DMARC retention,
+attachment malware scanning, SMTP rate limits, RLS, crash consistency, event
+idempotency, retention, privacy tombstones, bot detection, security headers,
+admin MFA/JIT, audit WORM checkpoints, ClickHouse reconciliation, and more.
+
+These are API/service E2E tests using real infrastructure. The admin console has
+build/type checks and its backend flows are covered, but a separate browser
+Playwright suite is not currently claimed.
+
+## Compliance posture
+
+The repository implements compliance-supporting technical controls; it is not
+evidence that a deployed organization is certified or compliant with HIPAA,
+GDPR/CCPA, PCI DSS, SOC 2, FERPA, SEC 17a-4, or another framework. Compliance
+also depends on the production architecture, configuration, contracts,
+policies, people, risk assessment, incident response, and retained operational
+evidence.
+
+| Control | Code/E2E status | Important boundary |
+| --- | --- | --- |
+| Recipient access and portability | Implemented: recipient JSON export plus asynchronous downloadable event/message-metadata exports | The customer must verify the requester, choose the lawful scope, and meet applicable deadlines |
+| Recipient erasure | Implemented: tenant-scoped database deletion, inline/offloaded body and attachment deletion, ClickHouse cleanup, workflow cleanup, BullMQ cleanup, durable tombstones, retry tracking, and consent attribution | Active legal holds correctly block erasure; historical backups are not selectively rewritten |
+| Legal holds | Implemented for tenant-wide and recipient-specific scopes; erasure and retention honor active holds | Hold authorization, matter management, notices, and release approval remain organizational processes |
+| Retention | Implemented in bounded batches for bodies, events, message metadata, links, exports, operational logs, and DMARC data; plan/tenant windows are supported | Production values, scheduler health, backup lifecycle, and regulatory schedules must be approved and monitored by the operator |
+| Consent and suppression | Implemented: append-only consent events, suppression enforcement, one-click/group unsubscribe, bounce and complaint attribution | The sender remains responsible for lawful basis, consent capture, notices, and campaign content |
+| Tenant isolation and access | Implemented: fail-closed PostgreSQL RLS, scoped keys, team RBAC, MFA, SSO/SCIM, admin roles, and audited privilege changes | Production IdP policy, access reviews, offboarding, and separation of duties are deployment/operations responsibilities |
+| Audit integrity | Implemented: tenant hash chains, verification, archive-before-purge, Ed25519 checkpoints, and WORM-style export | External immutable storage, key custody, review cadence, and evidence retention must be configured operationally |
+| Encryption and transport | Partial: selected secrets use AES-256-GCM with pluggable KMS; API/SMTP TLS deployment manifests exist; outbound delivery records TLS evidence | Message bodies/database volumes/backups require infrastructure encryption; `tls_required` currently records policy/evidence but does not itself prevent every clear-text downstream SMTP delivery |
+| Data residency and backup erasure | Not implemented as an application guarantee | Region pinning and backup-expiry/erasure depend on the selected database, object store, analytics, and backup topology |
+
+### HIPAA
+
+HIPAA is **not fully implemented or certified by this repository**. The code
+provides useful technical building blocks—access controls, audit integrity,
+tenant isolation, retention/erasure, selected-secret encryption, and transport
+evidence—but a HIPAA deployment still needs, at minimum, an applicability and
+ePHI data-flow review, an organization-wide risk analysis and risk-management
+plan, administrative and physical safeguards, policies and workforce training,
+incident/breach procedures, contingency and restore evidence, production
+encryption/key-management validation, and required Business Associate
+Agreements (including applicable subcontractors). No BAA offering is asserted
+by this repository.
+
+See the detailed, evidence-linked [Compliance posture](docs/COMPLIANCE_POSTURE.md)
+and [Security and compliance guide](docs/guides/security-compliance.md). This is
+technical documentation, not legal advice.
+
+## Architecture
+
+```text
+REST / SMTP / SendGrid / SDK
+             |
+             v
+      Fastify API gateway
+             |
+     PostgreSQL + Redis/BullMQ
+             |
+             v
+        Send workers ------> SES or Haraka outbound ------> recipient MX
+             |                         |
+             |                         v
+             |                  delivery events
+             v
+  Webhook/event workers ------> customer webhooks
+             |
+             +------> ClickHouse analytics
+
+Recipient actions -----------> Tracker (open/click/unsubscribe)
+DSN/ARF mail ----------------> Haraka inbound (bounce/complaint)
+Operators -------------------> React admin console -> /admin API
 ```
-┌─────────────┐    ┌──────────────┐    ┌──────────────┐
-│  REST API   │───▶│   BullMQ     │───▶│  Haraka      │───▶ Internet
-│ (Fastify)   │    │  (Redis)     │    │  (outbound)  │      (direct MX
-└─────────────┘    └──────────────┘    └──────────────┘       or relay)
-       │                  ▲                    ▲
-       ▼                  │                    │
-┌─────────────┐    ┌──────────────┐    ┌──────────────┐
-│ PostgreSQL  │◀───│   Workers    │◀───│   Haraka     │
-│  (+ RLS)    │    │ send/events/ │    │  (inbound:   │
-└─────────────┘    │  webhooks    │    │   bounces +  │
-       │           └──────────────┘    │   FBLs)      │
-       ▼                                └──────────────┘
-┌─────────────┐    ┌──────────────┐
-│  ClickHouse │◀───│   Tracker    │  opens / clicks / unsubscribe
-│ (analytics) │    │              │
-└─────────────┘    └──────────────┘
-```
 
-One repo, these packages:
+PostgreSQL is the source of truth. Redis carries queues, rate limits, caches,
+and short-lived coordination. ClickHouse is an analytics projection with
+idempotent ingestion and reconciliation. Tenant access is enforced by both
+application authorization and PostgreSQL RLS.
 
-| Package | What it does |
-|---|---|
-| `packages/api` | Fastify REST API — auth, send, domains, suppressions, messages, webhooks, billing, admin, privacy, support |
-| `packages/worker` | BullMQ workers — send (queue → Haraka), events (status + suppression), webhooks (HMAC-signed delivery), plus scheduler jobs (retention, warmup, reputation, audit checkpoints, billing dunning/reconcile) |
-| `packages/tracker` | Open pixel, click redirect, RFC 8058 one-click unsubscribe, bot detection |
-| `packages/haraka-outbound` | Outbound MTA — per-customer DKIM signing, event emission, internal-header cleanup |
-| `packages/haraka-inbound` | Inbound MTA — parses DSNs (bounces) and ARF (FBL complaints) |
-| `packages/shared` | DB (Kysely), queues, Redis, crypto, billing, audit, identity, analytics, storage — the domain core |
-| `packages/sdk` | Typed client SDK (used by the e2e suite and consumers) |
-| `packages/tests` | Unit + HTTP end-to-end suites |
+## Repository layout
 
----
+| Path | Responsibility |
+| --- | --- |
+| `packages/api` | Customer, public, compatibility, and admin Fastify APIs |
+| `packages/worker` | Send, event, webhook, retention, billing, reputation, and scheduler workers |
+| `packages/smtp-gateway` | Authenticated customer SMTP submission with connection/IP/recipient/message/tier limits |
+| `packages/tracker` | Open, click, unsubscribe, and engagement classification endpoints |
+| `packages/haraka-outbound` | DKIM signing, outbound delivery, event emission, and internal-header cleanup |
+| `packages/haraka-inbound` | DSN bounce and ARF complaint ingestion |
+| `packages/shared` | Database, queues, security, billing, workflows, privacy, audit, analytics, storage, and domain services |
+| `packages/admin-console` | React/Vite internal operator console |
+| `packages/sdk` | Typed client SDK |
+| `packages/docs` | Docusaurus documentation site and generated OpenAPI reference |
+| `packages/tests` | Unit, integration, RLS, and E2E suites |
+| `infra/migrations` | Ordered PostgreSQL migrations |
+| `infra/helm` | Kubernetes deployment chart and migration job |
+| `infra/loadtest` | k6 performance scenarios |
+| `scripts` | Seeding, replay, verification, backup, failover, scale, and readiness tools |
 
 ## Prerequisites
 
-- Docker + Docker Compose
-- Node.js 20+ (only needed if running outside Docker)
-- For real sending: a host that allows outbound **port 25** and lets you set
-  **reverse DNS (PTR)**, plus DNS control. (Most big clouds block port 25 — see
-  [`docs/ENTERPRISE_DEPLOYMENT.md`](docs/ENTERPRISE_DEPLOYMENT.md).)
+- Docker Desktop or Docker Engine with Compose.
+- Node.js 20+ and npm for local development and tests.
+- For real direct-to-MX sending: DNS control, an allowed outbound port 25, and
+  reverse DNS/PTR control.
+- For production attachment scanning: a reachable ClamAV `clamd` service.
 
----
-
-## Quick start (local development)
+## Quick start with Docker
 
 ```bash
-# 1. Copy environment template
+# Copy configuration and set at least METRICS_TOKEN.
 cp .env.example .env
 
-# 2. Boot the full stack
+# Install local tooling and start the application stack.
+npm ci
 docker compose up -d --build
 
-# 3. Wait for Postgres + migrations to settle, then check health
+# Confirm API health and migration completion.
 curl http://localhost:3000/health
+docker compose ps
+```
 
-# 4. Create a customer and API key via signup
+PowerShell equivalent for the first step:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+The Compose `migrate` service is the single migration runner. To apply newly
+pulled migrations again:
+
+```bash
+docker compose run --rm migrate
+```
+
+Do not run migrations concurrently from every application replica.
+
+## Local URLs and ports
+
+| Service | Local address | Purpose |
+| --- | --- | --- |
+| API | <http://localhost:3000> | REST/admin APIs, health, and OpenAPI |
+| OpenAPI | <http://localhost:3000/openapi.json> | Generated OpenAPI 3.1 document |
+| Tracker | <http://localhost:4000> | Opens, clicks, and unsubscribe |
+| Admin console | <http://localhost:5174> | Internal React console; start separately with npm |
+| Mailpit | <http://localhost:8025> | Captured development/test mailbox |
+| Mailpit SMTP | `localhost:1025` | Direct SMTP capture endpoint |
+| Customer SMTP gateway | `localhost:587` | Authenticated platform SMTP submission |
+| Haraka outbound | `localhost:2525` | Worker-to-MTA handoff |
+| Haraka inbound | `localhost:2526` | Bounce/complaint ingestion in development |
+| PostgreSQL | `localhost:5432` | Development database |
+| Redis | `localhost:6379` | Queues, cache, and rate limits |
+| Worker metrics | <http://localhost:9100> | Prometheus metrics |
+| SMTP metrics | <http://localhost:9102> | SMTP gateway metrics/health |
+| Prometheus | <http://localhost:9090> | Metrics, monitoring profile |
+| Grafana | <http://localhost:3002> | Dashboards, monitoring profile |
+| Alertmanager | <http://localhost:9093> | Alert routing, monitoring profile |
+| Jaeger | <http://localhost:16686> | Trace UI, monitoring profile |
+| ClickHouse HTTP | `localhost:8123` | Analytics, analytics profile |
+
+Start optional monitoring/analytics services with the applicable Compose
+profiles defined in `docker-compose.yml`.
+
+## Admin console
+
+The admin console is intentionally not bundled into the core development
+Compose stack. Start it locally after the API is healthy:
+
+```bash
+npm run dev:admin
+```
+
+Open <http://localhost:5174>. There is no universal default admin password.
+Bootstrap or rotate a local superadmin explicitly:
+
+```bash
+ADMIN_PASSWORD='use-a-long-local-password' \
+  npm run create-admin -- admin@localhost.test superadmin "Local Admin"
+```
+
+PowerShell:
+
+```powershell
+$env:ADMIN_PASSWORD = 'use-a-long-local-password'
+npm run create-admin -- admin@localhost.test superadmin "Local Admin"
+Remove-Item Env:ADMIN_PASSWORD
+```
+
+The console supports fleet overview, tenants, deliverability, IP pools, support,
+abuse review, KYC, audit, billing, payment gateways, settings, retention, DLQ,
+and admin team/elevation management. See [Admin API](docs/ADMIN.md) and the
+[admin-console README](packages/admin-console/README.md).
+
+### Seed rich admin demo data
+
+The SQL seed is idempotent and intended only for the local Compose database:
+
+```bash
+docker exec -i mail-postgres psql -U mail -d mail_platform < scripts/seed-admin-demo.sql
+```
+
+PowerShell:
+
+```powershell
+Get-Content scripts/seed-admin-demo.sql -Raw |
+  docker exec -i mail-postgres psql -U mail -d mail_platform
+```
+
+Refresh the admin console after seeding.
+
+## Send a message through the API
+
+Create a customer and API key:
+
+```bash
 curl -X POST http://localhost:3000/v1/signup \
   -H "Content-Type: application/json" \
-  -d '{"email": "you@example.com", "name": "Test"}'
+  -d '{"email":"developer@example.com","name":"Local Developer"}'
+```
 
-# 5. Register a sending domain (returns DNS records to add)
+Register and verify a domain, then send:
+
+```bash
 curl -X POST http://localhost:3000/v1/domains \
   -H "Authorization: Bearer mp_live_YOUR_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"domain": "send.yourdomain.com"}'
+  -d '{"domain":"send.example.com"}'
 
-# 6. Add the returned DNS records, wait for propagation, then verify
 curl -X POST http://localhost:3000/v1/domains/DOMAIN_ID/verify \
   -H "Authorization: Bearer mp_live_YOUR_KEY"
 
-# 7. Send
 curl -X POST http://localhost:3000/v1/send \
   -H "Authorization: Bearer mp_live_YOUR_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "from": "hello@send.yourdomain.com",
-    "to": "recipient@example.com",
-    "subject": "Hello from your own email platform",
-    "html": "<h1>It works!</h1>"
+    "from":"hello@send.example.com",
+    "to":"recipient@example.com",
+    "subject":"Hello from Mail Platform",
+    "html":"<h1>It works</h1>"
   }'
 ```
 
----
+For safe automated local messages and Mailpit visibility, use the development
+persona replay below. Direct Haraka delivery is not automatically redirected to
+Mailpit unless you configure Haraka/transport as a local capture sink.
 
-## Services and ports
+## Replay Free, Paid, and Enterprise activity locally
 
-| Service | URL / Port | Purpose |
-|---|---|---|
-| API | `http://localhost:3000` | REST API |
-| Tracker | `http://localhost:4000` | Opens, clicks, unsubscribes |
-| Haraka outbound | `localhost:2525` | SMTP relay for the worker |
-| Haraka inbound | `localhost:2526` (→ 25) | Bounce / FBL ingestion |
-| Postgres | `localhost:5432` | Database (RLS-enforced) |
-| Redis | `localhost:6379` | Queues, cache, rate limit |
-| Prometheus | `http://localhost:9090` | Metrics (`--profile monitoring`) |
-| Grafana | `http://localhost:3001` | Dashboards, `admin`/`admin` (`--profile monitoring`) |
-
-Start with monitoring: `docker compose --profile monitoring up -d --build`.
-All app metrics are prefixed `mp_` (e.g. `mp_messages_delivered_total`,
-`mp_engagement_events_total{verdict="bot"}`). Alert rules live in
-`infra/prometheus/alerts.yml`.
-
----
-
-## Deploying for real
-
-- **Direct-send (own IPs):** run the API/DB/workers anywhere, but run Haraka on a
-  host that allows port 25 + rDNS (e.g. Hetzner). Warm your IPs, enroll in Google
-  Postmaster / Microsoft SNDS / Yahoo FBL (ingestion is built in), and tighten
-  DMARC. Use `docker-compose.production.yml` for a single node or the Helm chart
-  under `infra/helm/` at scale.
-- **Relay:** point Haraka at an SMTP smarthost, or set `DELIVERY_TRANSPORT=ses`
-  for a shared-pool relay with managed reputation.
-- Reproducible reliability drills: `scripts/helm-render-check.sh`,
-  `scripts/redis-failover-drill.sh`, `scripts/backup-restore-drill.sh`, and the
-  k6 scenarios in `infra/loadtest/`. See [`docs/OPERATIONAL_DRILLS.md`](docs/OPERATIONAL_DRILLS.md).
-
-Start with [`docs/ENTERPRISE_DEPLOYMENT.md`](docs/ENTERPRISE_DEPLOYMENT.md) and
-the [`docs/`](docs/) set (billing, audit, ClickHouse durability, RLS rollout,
-SCIM, storage, and more).
-
----
-
-## How email flows
-
-**Sending:** `POST /v1/send` → validate (key→customer, domain verified, not
-suppressed, quota reserved atomically, idempotency) → persist + enqueue → send
-worker renders tracking/VERP/List-Unsubscribe and hands off to Haraka →
-`customer_dkim` signs → `header_cleanup` strips internal `X-MP-*` headers →
-delivery → `event_emitter` pushes delivered/deferred/bounce → event worker
-updates status, fans out to webhooks, dual-writes analytics to ClickHouse.
-
-**Bounces:** recipient MX returns a DSN to the signed VERP return-path → Haraka
-inbound parses it → hard bounces auto-suppress.
-
-**Complaints (FBL):** ISP sends an ARF report to your feedback address → parsed →
-recipient auto-suppressed.
-
----
-
-## Development without Docker
+The replay is additive, generates unique tenants, refuses non-local and test
+databases, and requires an explicit confirmation flag:
 
 ```bash
-docker compose up -d postgres redis haraka-outbound haraka-inbound
-DATABASE_URL=postgresql://mail:mailpass@localhost:5432/mail_platform npm run migrate
-npm install
-npm run build --workspace=@platform/shared
-npm run dev:api      # + dev:worker, dev:tracker in other terminals
+DEV_REPLAY_CONFIRM=1 npx tsx scripts/replay-personas-dev.ts
+npx tsx scripts/verify-personas-dev.ts
 ```
 
----
+PowerShell:
 
-## Project layout
-
-```
-mail-platform/
-├── docker-compose.yml               # dev stack
-├── docker-compose.production.yml    # single-node production
-├── infra/
-│   ├── migrations/                  # 61 tracked SQL migrations (001…061)
-│   ├── clickhouse/init.sql          # analytics schema (dedup engine)
-│   ├── helm/mail-platform/          # Kubernetes chart (HPA, PDB, network policies)
-│   ├── prometheus/ · grafana/ · alertmanager/
-│   └── loadtest/                    # k6 scenarios (send, tracker)
-├── packages/
-│   ├── shared/ api/ worker/ tracker/ sdk/ tests/
-│   ├── haraka-outbound/ · haraka-inbound/
-├── scripts/                         # DKIM gen, backup/restore, redis-failover, helm-render drills
-└── docs/                            # architecture, billing, audit, SCIM, deployment, drills, …
+```powershell
+$env:DEV_REPLAY_CONFIRM = '1'
+npx tsx scripts/replay-personas-dev.ts
+npx tsx scripts/verify-personas-dev.ts
+Remove-Item Env:DEV_REPLAY_CONFIRM
 ```
 
----
+The replay creates Free, Paid, and Enterprise activity that is visible in the
+development database/admin APIs and verifies matching Mailpit messages where
+the local capture transport is configured.
 
-## Honest assessment
+## Testing
 
-The **code and tooling** are strong and fully tested; the gap to a
-production-operated ESP is not more code but **live operational and compliance
-evidence** that has to be earned on real infrastructure:
+Start the isolated test infrastructure:
 
-- **Deliverability history** — 30–90 days of IP/domain warmup, sender reputation,
-  complaint/bounce data, and inbox-placement results.
-- **HA / DR proof** — automatic Postgres/Redis failover and restore drills with
-  measured RPO/RTO on production-sized data (drill scripts are included and run
-  locally; the numbers must be produced against your infra).
-- **Security & compliance** — external penetration test and SOC 2 evidence;
-  WebAuthn attestation-chain trust; SCIM interoperability certification with real
-  IdPs.
+```bash
+docker compose -f docker-compose.test.yml up -d
+```
 
-Everything above is enumerated in
-[`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md) and
-[`docs/OPERATIONAL_DRILLS.md`](docs/OPERATIONAL_DRILLS.md).
+Run the suites:
 
----
+```bash
+npm test                                      # complete suite
+npm run test:e2e                              # all E2E tests
+npm run test:unit --workspace=@platform/tests # unit/integration tests
+```
+
+The test stack uses PostgreSQL `5434`, Redis `6380`, Mailpit SMTP `1026`, and
+Mailpit UI `8026`. `.env.test` selects the non-delivering `log` transport so
+live-key persona tests exercise queue/worker completion without contacting an
+external SMTP server.
+
+See [Testing](docs/TESTING.md), [Test infrastructure](docs/TEST_INFRA_SETUP.md),
+and the [Persona feature matrix](docs/testing/PERSONA_FEATURE_MATRIX.md).
+
+## Security and tenant boundaries
+
+- PostgreSQL RLS is fail-closed and tested with a non-superuser,
+  non-`BYPASSRLS` role.
+- Customer API keys are hashed, scoped, typed as live/test, and isolated from
+  admin sessions.
+- Admin roles are `support < operator < admin < superadmin`; privileged
+  mutations are audited.
+- Cookie-authenticated admin mutations enforce CSRF, Origin, and fetch-metadata
+  checks; bearer sessions remain available for operations tooling.
+- Webhooks use HMAC signatures, rotation, SSRF controls, and retry history.
+- SMTP submission has bounded clients, recipients, messages/connection,
+  source-IP limits, and plan-aware distributed customer limits.
+- Attachment validation blocks executable signatures and can require ClamAV.
+- Retention and privacy jobs use bounded batches and honor legal holds.
+- CI runs production dependency auditing, SBOM generation, SQL ordering checks,
+  and HIGH/CRITICAL Trivy image scans.
+
+Development defaults are intentionally not production secrets. Replace every
+credential and enable the production controls described in
+`.env.production.example` before deployment.
+
+## Build and production checks
+
+```bash
+npm run build --workspaces --if-present
+npm run prod:check
+```
+
+Deployment options:
+
+- `docker-compose.production.yml` for a single-node deployment.
+- `infra/helm/mail-platform` for Kubernetes.
+- `DELIVERY_TRANSPORT=ses` for managed SMTP reputation.
+- Haraka direct-to-MX or smarthost operation when you control port 25, PTR,
+  warmup, and reputation.
+
+Start with [Enterprise deployment](docs/ENTERPRISE_DEPLOYMENT.md),
+[Architecture](docs/ARCHITECTURE.md), [DNS setup](docs/DNS_SETUP.md), and
+[HA/DR](docs/HA_DR.md).
+
+## Documentation index
+
+- [API guide](docs/API.md) and [API reference](docs/api-reference.md)
+- [SDK](docs/SDK.md)
+- [Workflows](docs/WORKFLOWS.md)
+- [Billing](docs/BILLING.md)
+- [Support](docs/SUPPORT.md)
+- [SCIM](docs/SCIM.md)
+- [Consent ledger](docs/CONSENT_LEDGER.md)
+- [Legal holds](docs/LEGAL_HOLD.md)
+- [Compliance posture and evidence](docs/COMPLIANCE_POSTURE.md)
+- [Security and compliance guide](docs/guides/security-compliance.md)
+- [Storage](docs/STORAGE.md)
+- [Audit hash chain](docs/AUDIT_HASH_CHAIN.md)
+- [ClickHouse durability](docs/CLICKHOUSE_DURABILITY.md)
+- [Failure taxonomy](docs/FAILURE_TAXONOMY.md)
+- [SMTP relay guide](docs/guides/smtp-relay.md)
+
+## Honest production assessment
+
+The repository implements and tests the application controls described above.
+It cannot manufacture real-world operational evidence. Before public production
+traffic, complete these external steps:
+
+1. Run production-sized load, retention, and million-row scale benchmarks.
+2. Deploy and monitor ClamAV with signature updates and fail-closed policy.
+3. Warm sending domains and IPs and collect 30-90 days of reputation,
+   complaint, bounce, and inbox-placement evidence.
+4. Exercise PostgreSQL/Redis failover and restore with measured RPO/RTO.
+5. Complete penetration testing and required SOC 2/privacy evidence.
+6. Validate SCIM/SSO and WebAuthn behavior with the selected production IdPs.
+7. For ePHI, complete a HIPAA risk analysis, execute all required BAAs, validate
+   production safeguards, and establish breach, access-review, training, and
+   contingency procedures before using the platform for PHI.
 
 ## License
 
-Released as a reference implementation. Use, modify, and ship it however you want.
+Released as a reference implementation. Use, modify, and ship it according to
+your organization's legal and compliance requirements.

@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildTestApp, seedCustomer, seedVerifiedDomain, type SeededCustomer } from './harness.js';
-import { db, loadMessageBody } from '@platform/shared';
+import { db, loadMessageBody, setAttachmentMalwareScanner } from '@platform/shared';
 
 let app: FastifyInstance;
 let cust: SeededCustomer;
@@ -79,6 +79,29 @@ describe('send with attachments', () => {
     });
     expect(res.statusCode).toBe(422);
     expect(res.json().error).toBe('attachment_rejected');
+  });
+
+  it('rejects malware and returns a retryable failure when required scanning is unavailable', async () => {
+    try {
+      setAttachmentMalwareScanner({
+        name: 'e2e-av',
+        async scan() { return { clean: false, threat: 'Eicar-Test-Signature' }; },
+      });
+      const infected = await send({ attachments: [{ filename: 'renamed.pdf', content: PDF_B64 }] });
+      expect(infected.statusCode).toBe(422);
+      expect(infected.json().error).toBe('attachment_malware_detected');
+
+      setAttachmentMalwareScanner({
+        name: 'e2e-offline-av',
+        async scan() { throw new Error('scanner offline'); },
+      });
+      const unavailable = await send({ attachments: [{ filename: 'invoice.pdf', content: PDF_B64 }] });
+      expect(unavailable.statusCode).toBe(503);
+      expect(unavailable.headers['retry-after']).toBe('30');
+      expect(unavailable.json().error).toBe('attachment_scan_unavailable');
+    } finally {
+      setAttachmentMalwareScanner(undefined);
+    }
   });
 
   it('refuses invalid base64 and sanitizes hostile filenames', async () => {

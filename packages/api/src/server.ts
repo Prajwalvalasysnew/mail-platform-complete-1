@@ -58,6 +58,10 @@ const app = Fastify({
   },
   trustProxy: true,
   bodyLimit: 10 * 1024 * 1024,
+  // Message IDs include the verified sender domain and can legitimately exceed
+  // Fastify's 100-character default route-parameter limit. DNS names can be up
+  // to 253 characters, so leave room for the random local part and encoding.
+  routerOptions: { maxParamLength: 512 },
 });
 
 await app.register(errorEnvelope);

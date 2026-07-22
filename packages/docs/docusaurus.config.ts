@@ -64,6 +64,7 @@ const config: Config = {
             'api-reference.md',
             'api-versioning.md',
             'SDK.md',
+            'COMPLIANCE_POSTURE.md',
             'guides/**/*.{md,mdx}',
           ],
         },

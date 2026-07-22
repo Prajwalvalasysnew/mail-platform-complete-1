@@ -350,6 +350,30 @@ export const accountRoutes: FastifyPluginAsync = async (app) => {
     if (!parsed.success) return reply.code(400).send({ error: 'validation_failed' });
     const consumed = await consumeUserToken('email_verify', parsed.data.token);
     if (!consumed) return reply.code(400).send({ error: 'invalid_or_expired_token' });
+
+    // The first organization created during self-serve registration uses the
+    // owner's email address. Live API keys authenticate against the customer
+    // record (rather than the human user record), so carry the same proof of
+    // ownership across to matching organizations the user belongs to. Without
+    // this, the owner can verify successfully in the console but every live
+    // send remains permanently blocked as `email_not_verified`.
+    const user = await db.selectFrom('users')
+      .select('email')
+      .where('id', '=', consumed.user_id)
+      .executeTakeFirst();
+    const memberships = await db.selectFrom('memberships')
+      .select('customer_id')
+      .where('user_id', '=', consumed.user_id)
+      .execute();
+    const customerIds = memberships.map((membership) => membership.customer_id);
+    if (user && customerIds.length > 0) {
+      await db.updateTable('customers')
+        .set({ email_verified_at: new Date() })
+        .where('id', 'in', customerIds)
+        .where('email', '=', user.email)
+        .where('email_verified_at', 'is', null)
+        .execute();
+    }
     return { ok: true };
   });
 

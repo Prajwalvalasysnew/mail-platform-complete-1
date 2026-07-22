@@ -62,6 +62,9 @@ STARTTLS on, username `apikey`, password = your key.
   executable types rejected.
 - **Limits** — up to 100 recipients per message, 15 MB raw message size;
   repeated authentication failures lock the source IP out temporarily.
+  Global connections, connections per source IP, messages per connection, and
+  per-account messages per minute are also bounded. A `421` or `452` response
+  is temporary; retry with exponential backoff.
 - **Tracking** — relay mail is machine-generated, so open/click tracking
   pixels and link rewriting are **not** applied.
 - Messages appear in [Activity](./activity-analytics.md) tagged `smtp`, and

@@ -162,40 +162,44 @@ export async function subaccountUsageRollup(
   children: Array<{ id: string; name: string | null; sent: number; delivered: number; bounced: number; complained: number }>;
   totals: { sent: number; delivered: number; bounced: number; complained: number };
 }> {
-  const children = await listSubaccounts(parentId);
-  const out: Array<{ id: string; name: string | null; sent: number; delivered: number; bounced: number; complained: number }> = [];
-  const totals = { sent: 0, delivered: 0, bounced: 0, complained: 0 };
   const window = Math.max(1, Math.min(days, 90));
-
-  // usage_daily is RLS-forced per tenant; read each child inside its own
-  // tenant scope (authorization = the parent linkage checked above).
-  for (const child of children) {
-    const row = await withTenant(child.id, (trx) =>
-      trx
-        .selectFrom('usage_daily')
-        .select([
-          sql<number>`COALESCE(SUM(sent), 0)`.as('sent'),
-          sql<number>`COALESCE(SUM(delivered), 0)`.as('delivered'),
-          sql<number>`COALESCE(SUM(bounced), 0)`.as('bounced'),
-          sql<number>`COALESCE(SUM(complained), 0)`.as('complained'),
-        ])
-        .where('customer_id', '=', child.id)
-        .where(sql<boolean>`usage_date >= CURRENT_DATE - (${window} * INTERVAL '1 day')`)
-        .executeTakeFirst()
-    );
-    const entry = {
-      id: child.id,
-      name: child.name,
-      sent: Number(row?.sent ?? 0),
-      delivered: Number(row?.delivered ?? 0),
-      bounced: Number(row?.bounced ?? 0),
-      complained: Number(row?.complained ?? 0),
-    };
+  // The usage_daily_parent_select policy grants this parent-scoped
+  // transaction SELECT access to direct children only. This turns the former
+  // one-transaction-per-child loop into a single grouped query without using
+  // the service BYPASSRLS role or weakening unrelated-tenant isolation.
+  const rows = await withTenant(parentId, (trx) =>
+    trx
+      .selectFrom('customers as child')
+      .leftJoin('usage_daily as usage', (join) => join
+        .onRef('usage.customer_id', '=', 'child.id')
+        .on(sql<boolean>`usage.usage_date >= CURRENT_DATE - (${window} * INTERVAL '1 day')`))
+      .select([
+        'child.id as id',
+        'child.name as name',
+        sql<number>`COALESCE(SUM(usage.sent), 0)`.as('sent'),
+        sql<number>`COALESCE(SUM(usage.delivered), 0)`.as('delivered'),
+        sql<number>`COALESCE(SUM(usage.bounced), 0)`.as('bounced'),
+        sql<number>`COALESCE(SUM(usage.complained), 0)`.as('complained'),
+      ])
+      .where('child.parent_customer_id', '=', parentId)
+      .groupBy(['child.id', 'child.name'])
+      .orderBy('child.created_at', 'desc')
+      .execute()
+  );
+  const out = rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    sent: Number(row.sent),
+    delivered: Number(row.delivered),
+    bounced: Number(row.bounced),
+    complained: Number(row.complained),
+  }));
+  const totals = { sent: 0, delivered: 0, bounced: 0, complained: 0 };
+  for (const entry of out) {
     totals.sent += entry.sent;
     totals.delivered += entry.delivered;
     totals.bounced += entry.bounced;
     totals.complained += entry.complained;
-    out.push(entry);
   }
   return { children: out, totals };
 }
@@ -210,54 +214,43 @@ export async function pushTemplateToSubaccounts(
   templateId: string,
   childIds: string[] | 'all'
 ): Promise<{ pushed: string[] }> {
-  const template = await withTenant(parentId, (trx) =>
-    trx
+  return withTenant(parentId, async (trx) => {
+    const template = await trx
       .selectFrom('templates')
       .select(['name', 'subject', 'html_body', 'text_body'])
       .where('id', '=', templateId)
       .where('customer_id', '=', parentId)
-      .executeTakeFirst()
-  );
-  if (!template) throw new SubaccountError('template_not_found', 'Template not found on the parent account.');
+      .executeTakeFirst();
+    if (!template) throw new SubaccountError('template_not_found', 'Template not found on the parent account.');
 
-  const children = await listSubaccounts(parentId);
-  const targets =
-    childIds === 'all'
-      ? children
-      : children.filter((c) => childIds.includes(c.id));
-  if (childIds !== 'all' && targets.length !== childIds.length) {
-    throw new SubaccountError('not_a_subaccount', 'One or more target ids are not sub-accounts of this org.');
-  }
+    const children = await trx
+      .selectFrom('customers')
+      .select('id')
+      .where('parent_customer_id', '=', parentId)
+      .$if(childIds !== 'all', (q) => q.where('id', 'in', childIds as string[]))
+      .execute();
+    if (childIds !== 'all' && children.length !== childIds.length) {
+      throw new SubaccountError('not_a_subaccount', 'One or more target ids are not sub-accounts of this org.');
+    }
 
-  const pushed: string[] = [];
-  for (const child of targets) {
-    await withTenant(child.id, async (trx) => {
-      const existing = await trx
-        .selectFrom('templates')
-        .select('id')
-        .where('customer_id', '=', child.id)
-        .where('name', '=', template.name)
-        .executeTakeFirst();
-      if (existing) {
-        await trx
-          .updateTable('templates')
-          .set({ subject: template.subject, html_body: template.html_body, text_body: template.text_body })
-          .where('id', '=', existing.id)
-          .execute();
-      } else {
-        await trx
-          .insertInto('templates')
-          .values({
-            customer_id: child.id,
+    const pushed = children.map((child) => child.id);
+    if (pushed.length > 0) {
+      await trx
+        .insertInto('templates')
+        .values(pushed.map((customerId) => ({
+            customer_id: customerId,
             name: template.name,
             subject: template.subject,
             html_body: template.html_body,
             text_body: template.text_body,
-          })
-          .execute();
-      }
-    });
-    pushed.push(child.id);
-  }
-  return { pushed };
+          })))
+        .onConflict((oc) => oc.columns(['customer_id', 'name']).doUpdateSet((eb) => ({
+          subject: eb.ref('excluded.subject'),
+          html_body: eb.ref('excluded.html_body'),
+          text_body: eb.ref('excluded.text_body'),
+        })))
+        .execute();
+    }
+    return { pushed };
+  });
 }

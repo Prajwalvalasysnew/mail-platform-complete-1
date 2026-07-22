@@ -4,6 +4,7 @@ import {
   db,
   listMessageActivity,
   normalizeMessageActivityQuery,
+  releaseQuota,
   resolveTenantRetention,
   retentionVisibilityCutoff,
 } from '@platform/shared';
@@ -208,6 +209,11 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         .where('customer_id', '=', auth.customer_id)
         .execute()
     );
+
+    // /send reserves one quota unit per recipient before creating each
+    // scheduled message. Once cancellation wins the outbox race, that unit
+    // can no longer result in a delivery and must be returned to the tenant.
+    await releaseQuota(auth.customer_id, 1);
 
     return reply.code(200).send({ cancelled: messageId });
   });

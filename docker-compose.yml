@@ -38,6 +38,7 @@ services:
     ports:
       - "2525:2525"
     environment:
+      NODE_ENV: development
       REDIS_HOST: redis
       REDIS_PORT: 6379
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
@@ -60,6 +61,7 @@ services:
     ports:
       - "2526:2526"
     environment:
+      NODE_ENV: development
       REDIS_HOST: redis
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
       VERP_SECRET: dev-verp-secret-change-me-min-16
@@ -94,6 +96,7 @@ services:
     ports:
       - "3000:3000"
     environment:
+      NODE_ENV: development
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -127,6 +130,7 @@ services:
     ports:
       - "9100:9100"
     environment:
+      NODE_ENV: development
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -173,6 +177,7 @@ services:
     ports:
       - "587:587"
     environment:
+      NODE_ENV: development
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -196,6 +201,7 @@ services:
     ports:
       - "4000:4000"
     environment:
+      NODE_ENV: development
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
       REDIS_HOST: redis
       REDIS_PORT: 6379

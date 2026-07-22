@@ -164,14 +164,26 @@ const { deliveries } = await mp.webhooks.deliveries(id, { limit: 50 });
 
 ### Privacy / GDPR
 
-```ts
-// Delete all data for a recipient
-const result = await mp.privacy.deleteRecipient('user@example.com');
-console.log(`Deleted ${result.deleted.messages} messages`);
+The current SDK does not expose a typed `privacy` resource. Call the REST API
+directly with the same API key until that resource is added:
 
-// Export data for a recipient (Art. 15 access request)
-const data = await mp.privacy.exportRecipient('user@example.com');
+```ts
+const response = await fetch(`${baseUrl}/privacy/delete-recipient`, {
+  method: 'POST',
+  headers: {
+    authorization: `Bearer ${apiKey}`,
+    'content-type': 'application/json',
+  },
+  body: JSON.stringify({ recipient: 'user@example.com', requested_by: 'dsar-1234' }),
+});
+
+if (!response.ok) throw new Error(`Privacy request failed: ${response.status}`);
+const result = await response.json();
+console.log(result.request_id, result.status);
 ```
+
+See the [Privacy and GDPR guide](guides/privacy-gdpr.md) for export, legal-hold,
+pending-deletion, and retention behavior.
 
 ---
 

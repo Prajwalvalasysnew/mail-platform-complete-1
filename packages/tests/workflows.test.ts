@@ -7,6 +7,9 @@ import {
   evaluateRule,
   splitBranchForKey,
   isRetryableWebhookFailure,
+  cachedWorkflowDefinition,
+  clearWorkflowDefinitionCache,
+  getWorkflowDefinitionCacheSize,
 } from '@platform/shared';
 
 const TEMPLATE_ID = '4f0b17a6-52b3-4c1d-9e59-1af2cbb7e001';
@@ -94,6 +97,34 @@ describe('workflow definition validation', () => {
     const v = validateWorkflowDefinition(def);
     expect(v.valid).toBe(false);
     expect(v.errors[0]!.code).toBe('schema');
+  });
+});
+
+describe('workflow definition runtime cache', () => {
+  it('reuses an immutable parsed version by id', () => {
+    clearWorkflowDefinitionCache();
+    const first = cachedWorkflowDefinition('version-a', welcomeSeries());
+    const second = cachedWorkflowDefinition('version-a', { invalid: 'ignored on cache hit' });
+    expect(second).toBe(first);
+    expect(getWorkflowDefinitionCacheSize()).toBe(1);
+  });
+
+  it('evicts the least-recently-used version at the configured bound', () => {
+    const previous = process.env.WORKFLOW_DEFINITION_CACHE_MAX;
+    process.env.WORKFLOW_DEFINITION_CACHE_MAX = '2';
+    clearWorkflowDefinitionCache();
+    try {
+      const a = cachedWorkflowDefinition('version-a', welcomeSeries());
+      cachedWorkflowDefinition('version-b', welcomeSeries());
+      expect(cachedWorkflowDefinition('version-a', welcomeSeries())).toBe(a); // refresh A
+      cachedWorkflowDefinition('version-c', welcomeSeries()); // evicts B
+      expect(getWorkflowDefinitionCacheSize()).toBe(2);
+      expect(() => cachedWorkflowDefinition('version-b', { invalid: true })).toThrow();
+    } finally {
+      clearWorkflowDefinitionCache();
+      if (previous === undefined) delete process.env.WORKFLOW_DEFINITION_CACHE_MAX;
+      else process.env.WORKFLOW_DEFINITION_CACHE_MAX = previous;
+    }
   });
 });
 

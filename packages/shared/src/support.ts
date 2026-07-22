@@ -386,6 +386,9 @@ export async function getSupportTicket(ticketId: string, opts: { customerId?: st
       'support_tickets.ai_triaged_at',
       'support_tickets.last_message_at',
       'support_tickets.resolved_at',
+      'support_tickets.satisfaction_rating',
+      'support_tickets.satisfaction_comment',
+      'support_tickets.rated_at',
       'support_tickets.created_at',
       'support_tickets.updated_at',
     ])

@@ -8,6 +8,7 @@
 //   - tracked_links older than the body retention window
 //   - webhook_delivery_log rows older than RETENTION_WEBHOOK_LOG_DAYS (default 30)
 //   - blocklist_checks older than RETENTION_BLOCKLIST_DAYS (default 180)
+//   - DMARC aggregate reports/records older than RETENTION_DMARC_DAYS (default 365)
 //   - audit_log rows older than RETENTION_AUDIT_DAYS (default 365) — archived
 //     to audit_log_archive, never destroyed, so legal holds do not gate this
 //   - resolved/rejected review_queue rows older than RETENTION_REVIEW_QUEUE_DAYS (default 30)
@@ -33,6 +34,7 @@ import { db } from './db.js';
 import { getBodyStore } from './storage.js';
 import { tenantRetentionWindowsSql } from './retention-policy.js';
 import { purgeExpiredExports } from './data-exports.js';
+import { dmarcRetentionPurged } from './metrics.js';
 
 export interface RetentionOptions {
   /** Days to keep message bodies. Default: RETENTION_BODY_DAYS env or 90. */
@@ -53,6 +55,8 @@ export interface RetentionOptions {
   outboxRetentionDays?: number;
   /** Days to keep export artifacts. Default: RETENTION_EXPORT_DAYS env or 7. */
   exportRetentionDays?: number;
+  /** Days to keep DMARC reports and source records. Default: RETENTION_DMARC_DAYS env or 365. */
+  dmarcRetentionDays?: number;
   /** Max rows per delete/update batch. Default: RETENTION_BATCH_SIZE env or 10_000. */
   batchSize?: number;
 }
@@ -67,6 +71,8 @@ export interface RetentionResult {
   blocklist_checks_purged: number;
   send_outbox_purged: number;
   exports_purged: number;
+  dmarc_reports_purged: number;
+  dmarc_records_purged: number;
   audit_purged: number;
   review_queue_purged: number;
   /** Rows matching a retention cutoff but preserved by an active legal hold. */
@@ -114,6 +120,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     blocklistRetentionDays = Number(process.env.RETENTION_BLOCKLIST_DAYS ?? 180),
     outboxRetentionDays = Number(process.env.RETENTION_OUTBOX_DAYS ?? 30),
     exportRetentionDays = Number(process.env.RETENTION_EXPORT_DAYS ?? 7),
+    dmarcRetentionDays = Number(process.env.RETENTION_DMARC_DAYS ?? 365),
     batchSize = Number(process.env.RETENTION_BATCH_SIZE ?? 10_000),
   } = opts;
 
@@ -136,6 +143,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   const webhookLogCutoff = new Date(Date.now() - webhookLogRetentionDays * 86_400_000);
   const blocklistCutoff = new Date(Date.now() - blocklistRetentionDays * 86_400_000);
   const outboxCutoff = new Date(Date.now() - outboxRetentionDays * 86_400_000);
+  const dmarcCutoff = new Date(Date.now() - dmarcRetentionDays * 86_400_000);
 
   let heldSkipped = 0;
 
@@ -392,6 +400,73 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     return Number(res.rows[0]?.count ?? 0);
   });
 
+  // --- 7b. Purge DMARC records, then their empty parent reports -----------
+  // A single aggregate report may contain up to 100k source records. Delete
+  // child records in independently bounded batches before deleting reports,
+  // rather than relying on an unbounded ON DELETE CASCADE transaction.
+  // Tenant-wide legal holds preserve the aggregate evidence; recipient holds
+  // do not apply because DMARC rows contain no recipient identity.
+  const dmarcRecordsPurged = await drainBatches(batchSize, async (limit) => {
+    const res = await sql<{ count: string }>`
+      WITH batch AS (
+        SELECT rec.id FROM dmarc_report_records rec
+        JOIN dmarc_reports rep ON rep.id = rec.report_id
+        WHERE rep.date_range_end < ${dmarcCutoff}
+          AND NOT EXISTS (
+            SELECT 1 FROM legal_holds h
+            WHERE h.customer_id = rep.customer_id
+              AND h.scope = 'customer'
+              AND h.released_at IS NULL
+          )
+        ORDER BY rep.date_range_end, rec.id
+        LIMIT ${limit}
+      ), deleted AS (
+        DELETE FROM dmarc_report_records rec USING batch WHERE rec.id = batch.id
+        RETURNING rec.id
+      )
+      SELECT COUNT(*)::text AS count FROM deleted
+    `.execute(db);
+    return Number(res.rows[0]?.count ?? 0);
+  });
+
+  const dmarcReportsPurged = await drainBatches(batchSize, async (limit) => {
+    const res = await sql<{ count: string }>`
+      WITH batch AS (
+        SELECT rep.id FROM dmarc_reports rep
+        WHERE rep.date_range_end < ${dmarcCutoff}
+          AND NOT EXISTS (
+            SELECT 1 FROM legal_holds h
+            WHERE h.customer_id = rep.customer_id
+              AND h.scope = 'customer'
+              AND h.released_at IS NULL
+          )
+        ORDER BY rep.date_range_end, rep.id
+        LIMIT ${limit}
+      ), deleted AS (
+        DELETE FROM dmarc_reports rep USING batch WHERE rep.id = batch.id
+        RETURNING rep.id
+      )
+      SELECT COUNT(*)::text AS count FROM deleted
+    `.execute(db);
+    return Number(res.rows[0]?.count ?? 0);
+  });
+
+  const heldDmarc = await sql<{ count: string }>`
+    SELECT (
+      (SELECT COUNT(*) FROM dmarc_reports rep
+       WHERE rep.date_range_end < ${dmarcCutoff}
+         AND EXISTS (SELECT 1 FROM legal_holds h WHERE h.customer_id = rep.customer_id AND h.scope = 'customer' AND h.released_at IS NULL))
+      +
+      (SELECT COUNT(*) FROM dmarc_report_records rec
+       JOIN dmarc_reports rep ON rep.id = rec.report_id
+       WHERE rep.date_range_end < ${dmarcCutoff}
+         AND EXISTS (SELECT 1 FROM legal_holds h WHERE h.customer_id = rep.customer_id AND h.scope = 'customer' AND h.released_at IS NULL))
+    )::text AS count
+  `.execute(db);
+  heldSkipped += Number(heldDmarc.rows[0]?.count ?? 0);
+  if (dmarcRecordsPurged) dmarcRetentionPurged.inc({ kind: 'record' }, dmarcRecordsPurged);
+  if (dmarcReportsPurged) dmarcRetentionPurged.inc({ kind: 'report' }, dmarcReportsPurged);
+
   // --- 8. Archive + purge old audit log (not hold-gated: rows are moved to
   // audit_log_archive with their hash-chain fields, never destroyed) -------
   const auditResult = await sql<{ count: string }>`
@@ -444,6 +519,8 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     blocklist_checks_purged: blocklistPurged,
     send_outbox_purged: sendOutboxPurged,
     exports_purged: exportsPurged,
+    dmarc_reports_purged: dmarcReportsPurged,
+    dmarc_records_purged: dmarcRecordsPurged,
     audit_purged: auditPurged,
     review_queue_purged: reviewQueuePurged,
     held_rows_skipped: heldSkipped,

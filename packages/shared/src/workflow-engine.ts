@@ -40,6 +40,8 @@ import {
   workflowRunsFinished,
   workflowStepsExecuted,
   workflowSweepRecovered,
+  workflowDefinitionCacheEvents,
+  workflowDefinitionCacheSize,
 } from './metrics.js';
 import {
   WorkflowDefinitionSchema,
@@ -89,6 +91,50 @@ function parseDefinition(raw: unknown): WorkflowDefinition {
   // Stored definitions were validated at write time; parse (not safeParse) so
   // corruption fails loudly instead of executing a half-understood graph.
   return WorkflowDefinitionSchema.parse(raw);
+}
+
+// Published workflow versions are immutable. Cache their validated runtime
+// representation by version id so engagement events do not repeatedly run a
+// full Zod graph parse. The insertion-ordered Map is a small dependency-free
+// LRU; the cap prevents a high-cardinality multi-tenant workload from growing
+// process memory without bound.
+const parsedDefinitionCache = new Map<string, WorkflowDefinition>();
+
+function workflowDefinitionCacheMax(): number {
+  const configured = Number(process.env.WORKFLOW_DEFINITION_CACHE_MAX ?? 10_000);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 10_000;
+}
+
+export function cachedWorkflowDefinition(versionId: string, raw: unknown): WorkflowDefinition {
+  const cached = parsedDefinitionCache.get(versionId);
+  if (cached) {
+    parsedDefinitionCache.delete(versionId);
+    parsedDefinitionCache.set(versionId, cached);
+    workflowDefinitionCacheEvents.inc({ event: 'hit' });
+    return cached;
+  }
+
+  workflowDefinitionCacheEvents.inc({ event: 'miss' });
+  const parsed = parseDefinition(raw);
+  const max = workflowDefinitionCacheMax();
+  while (parsedDefinitionCache.size >= max) {
+    const oldest = parsedDefinitionCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    parsedDefinitionCache.delete(oldest);
+    workflowDefinitionCacheEvents.inc({ event: 'eviction' });
+  }
+  parsedDefinitionCache.set(versionId, parsed);
+  workflowDefinitionCacheSize.set(parsedDefinitionCache.size);
+  return parsed;
+}
+
+export function clearWorkflowDefinitionCache(): void {
+  parsedDefinitionCache.clear();
+  workflowDefinitionCacheSize.set(0);
+}
+
+export function getWorkflowDefinitionCacheSize(): number {
+  return parsedDefinitionCache.size;
 }
 
 function stepById(def: WorkflowDefinition, id: string | null): WorkflowStep | null {
@@ -175,7 +221,7 @@ export async function triggerWorkflowRun(
     .select(['id', 'version', 'definition'])
     .where('id', '=', wf.published_version_id)
     .executeTakeFirstOrThrow();
-  const def = parseDefinition(version.definition);
+  const def = cachedWorkflowDefinition(version.id, version.definition);
   if (!def.entry_step_id) return { started: false, skipped_reason: 'not_published' };
 
   // Re-entry policy. The partial unique index is the authoritative guard for
@@ -324,7 +370,7 @@ export async function triggerWorkflowRunsBulk(
     .select(['id', 'version', 'definition'])
     .where('id', '=', wf.published_version_id)
     .executeTakeFirstOrThrow();
-  const def = parseDefinition(version.definition);
+  const def = cachedWorkflowDefinition(version.id, version.definition);
   if (!def.entry_step_id) return skipAll('not_published');
 
   // Re-entry screening: latest run per subject in one DISTINCT ON query.
@@ -498,11 +544,11 @@ export async function advanceWorkflowRun(runId: string): Promise<void> {
   // Versions are immutable — load the definition once per job, not per step.
   const versionRow = await db
     .selectFrom('workflow_versions')
-    .select('definition')
+    .select(['id', 'definition'])
     .where('id', '=', runMeta.version_id)
     .executeTakeFirst();
   if (!versionRow) return;
-  const def = parseDefinition(versionRow.definition);
+  const def = cachedWorkflowDefinition(versionRow.id, versionRow.definition);
 
   for (let i = 0; i < STEP_BUDGET_PER_JOB; i++) {
     const outcome = await advanceOneStep(runId, def);
@@ -1119,11 +1165,11 @@ export async function handleWorkflowTimeout(runId: string, stepId?: string): Pro
 
   const versionRow = await db
     .selectFrom('workflow_versions')
-    .select('definition')
+    .select(['id', 'definition'])
     .where('id', '=', run.version_id)
     .executeTakeFirst();
   if (!versionRow) return;
-  const def = parseDefinition(versionRow.definition);
+  const def = cachedWorkflowDefinition(versionRow.id, versionRow.definition);
   const step = stepById(def, run.current_step_id);
   if (!step || step.type !== 'wait_for_event') return;
 
@@ -1215,6 +1261,7 @@ export async function dispatchWorkflowEvent(input: WorkflowEventInput): Promise<
       'workflows.status as status',
       'workflows.trigger_type',
       'workflows.trigger_event_type',
+      'workflows.published_version_id as version_id',
       'workflow_versions.definition as definition',
     ])
     .where('workflows.customer_id', '=', input.customerId)
@@ -1223,7 +1270,7 @@ export async function dispatchWorkflowEvent(input: WorkflowEventInput): Promise<
   const parsedDefs = new Map<string, WorkflowDefinition>();
   for (const wf of workflows) {
     try {
-      parsedDefs.set(wf.id, parseDefinition(wf.definition));
+      if (wf.version_id) parsedDefs.set(wf.id, cachedWorkflowDefinition(wf.version_id, wf.definition));
     } catch {
       /* skip corrupt definitions */
     }
@@ -1274,7 +1321,7 @@ export async function dispatchWorkflowEvent(input: WorkflowEventInput): Promise<
       .select(['id', 'definition'])
       .where('id', 'in', versionIds)
       .execute();
-    const defs = new Map(versions.map((v) => [v.id, parseDefinition(v.definition)]));
+    const defs = new Map(versions.map((v) => [v.id, cachedWorkflowDefinition(v.id, v.definition)]));
 
     for (const raw of matchingWaits) {
       const run = raw as unknown as RunRow;
