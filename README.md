@@ -16,6 +16,8 @@ BullMQ, Haraka, ClickHouse, React, and Docker.
 - Production workspace builds pass.
 - Production dependency audit reports no high/critical vulnerabilities.
 - CI scans production container images with Trivy.
+- A focused privacy/security regression run passed 110/110 tests across 20
+  files on 2026-07-22; this is technical validation, not compliance evidence.
 
 This describes code-level readiness. Production operation still requires live
 IP/domain warmup, reputation evidence, backup and failover drills on the target
@@ -42,7 +44,7 @@ and [Operational drills](docs/OPERATIONAL_DRILLS.md).
 | API credentials | Scoped live/test API keys, key creation/list/rotation/revocation, SMTP scope, and on-behalf-of authorization |
 | Multi-tenancy | Fail-closed PostgreSQL row-level security, non-bypass application role, parent/child isolation, subaccounts, child keys, usage rollups, and bulk template push |
 | Billing | Free/Pro/Enterprise plans, quotas, priority entitlements, checkout/portal, invoices, tax, credit notes/refunds, Stripe/PayPal/Cashfree webhooks, plan-change lifecycle, dunning, and reconciliation |
-| Privacy and compliance | Recipient export/erasure, downloadable exports, body/object-store deletion, queue tombstones, legal holds, retention sweeps, DMARC retention, consent ledger, and tenant-safe deletion |
+| Privacy controls | Recipient export/erasure, downloadable exports, body/object-store and attachment deletion, queue tombstones, legal holds, per-plan retention sweeps, DMARC retention, consent ledger, and tenant-safe deletion |
 | Audit | Tenant hash chains, integrity verification, retention-safe archive, Ed25519 checkpoints, WORM export, and admin mutation audit records |
 | Support and trust | Customer support tickets/messages/CSAT, admin support inbox, notes, SLA/triage helpers, abuse review queue, KYC decisions, customer suspension, and DLQ replay/purge |
 | Admin console | Fleet overview, tenant management, deliverability/IP pools, support, abuse, KYC, audit, billing events, payment gateways, platform settings, retention controls, and admin team management |
@@ -97,6 +99,44 @@ admin MFA/JIT, audit WORM checkpoints, ClickHouse reconciliation, and more.
 These are API/service E2E tests using real infrastructure. The admin console has
 build/type checks and its backend flows are covered, but a separate browser
 Playwright suite is not currently claimed.
+
+## Compliance posture
+
+The repository implements compliance-supporting technical controls; it is not
+evidence that a deployed organization is certified or compliant with HIPAA,
+GDPR/CCPA, PCI DSS, SOC 2, FERPA, SEC 17a-4, or another framework. Compliance
+also depends on the production architecture, configuration, contracts,
+policies, people, risk assessment, incident response, and retained operational
+evidence.
+
+| Control | Code/E2E status | Important boundary |
+| --- | --- | --- |
+| Recipient access and portability | Implemented: recipient JSON export plus asynchronous downloadable event/message-metadata exports | The customer must verify the requester, choose the lawful scope, and meet applicable deadlines |
+| Recipient erasure | Implemented: tenant-scoped database deletion, inline/offloaded body and attachment deletion, ClickHouse cleanup, workflow cleanup, BullMQ cleanup, durable tombstones, retry tracking, and consent attribution | Active legal holds correctly block erasure; historical backups are not selectively rewritten |
+| Legal holds | Implemented for tenant-wide and recipient-specific scopes; erasure and retention honor active holds | Hold authorization, matter management, notices, and release approval remain organizational processes |
+| Retention | Implemented in bounded batches for bodies, events, message metadata, links, exports, operational logs, and DMARC data; plan/tenant windows are supported | Production values, scheduler health, backup lifecycle, and regulatory schedules must be approved and monitored by the operator |
+| Consent and suppression | Implemented: append-only consent events, suppression enforcement, one-click/group unsubscribe, bounce and complaint attribution | The sender remains responsible for lawful basis, consent capture, notices, and campaign content |
+| Tenant isolation and access | Implemented: fail-closed PostgreSQL RLS, scoped keys, team RBAC, MFA, SSO/SCIM, admin roles, and audited privilege changes | Production IdP policy, access reviews, offboarding, and separation of duties are deployment/operations responsibilities |
+| Audit integrity | Implemented: tenant hash chains, verification, archive-before-purge, Ed25519 checkpoints, and WORM-style export | External immutable storage, key custody, review cadence, and evidence retention must be configured operationally |
+| Encryption and transport | Partial: selected secrets use AES-256-GCM with pluggable KMS; API/SMTP TLS deployment manifests exist; outbound delivery records TLS evidence | Message bodies/database volumes/backups require infrastructure encryption; `tls_required` currently records policy/evidence but does not itself prevent every clear-text downstream SMTP delivery |
+| Data residency and backup erasure | Not implemented as an application guarantee | Region pinning and backup-expiry/erasure depend on the selected database, object store, analytics, and backup topology |
+
+### HIPAA
+
+HIPAA is **not fully implemented or certified by this repository**. The code
+provides useful technical building blocks—access controls, audit integrity,
+tenant isolation, retention/erasure, selected-secret encryption, and transport
+evidence—but a HIPAA deployment still needs, at minimum, an applicability and
+ePHI data-flow review, an organization-wide risk analysis and risk-management
+plan, administrative and physical safeguards, policies and workforce training,
+incident/breach procedures, contingency and restore evidence, production
+encryption/key-management validation, and required Business Associate
+Agreements (including applicable subcontractors). No BAA offering is asserted
+by this repository.
+
+See the detailed, evidence-linked [Compliance posture](docs/COMPLIANCE_POSTURE.md)
+and [Security and compliance guide](docs/guides/security-compliance.md). This is
+technical documentation, not legal advice.
 
 ## Architecture
 
@@ -393,6 +433,8 @@ Start with [Enterprise deployment](docs/ENTERPRISE_DEPLOYMENT.md),
 - [SCIM](docs/SCIM.md)
 - [Consent ledger](docs/CONSENT_LEDGER.md)
 - [Legal holds](docs/LEGAL_HOLD.md)
+- [Compliance posture and evidence](docs/COMPLIANCE_POSTURE.md)
+- [Security and compliance guide](docs/guides/security-compliance.md)
 - [Storage](docs/STORAGE.md)
 - [Audit hash chain](docs/AUDIT_HASH_CHAIN.md)
 - [ClickHouse durability](docs/CLICKHOUSE_DURABILITY.md)
@@ -412,6 +454,9 @@ traffic, complete these external steps:
 4. Exercise PostgreSQL/Redis failover and restore with measured RPO/RTO.
 5. Complete penetration testing and required SOC 2/privacy evidence.
 6. Validate SCIM/SSO and WebAuthn behavior with the selected production IdPs.
+7. For ePHI, complete a HIPAA risk analysis, execute all required BAAs, validate
+   production safeguards, and establish breach, access-review, training, and
+   contingency procedures before using the platform for PHI.
 
 ## License
 

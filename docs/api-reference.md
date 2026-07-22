@@ -880,29 +880,37 @@ Rate-limited to 5 calls/minute. Delivers a synthetic `ping` event to verify your
 ```
 POST /v1/privacy/delete-recipient
 ```
-Scope: `suppressions`
+Scope: `messages`
 
-Permanently deletes all data associated with a recipient address: messages, events, tracked links, soft-bounce history. An audit record is retained. Irreversible.
+Starts tenant-scoped erasure for a recipient address. This removes matching
+messages, events, links, inline content, soft-bounce state, suppression state,
+and workflow journeys. Unreferenced offloaded bodies/attachments, analytics
+events, and queued payloads are deleted and tracked through retryable work
+items. An active legal hold returns `409` before any deletion.
 
 **Body**
 
 | Field | Type | Notes |
 |---|---|---|
-| `email` | string | Required. |
+| `recipient` | string | Required recipient email address. |
+| `requested_by` | string | Optional case/request identifier, max 200 characters. |
 
 **Response `200`**
 ```json
 {
-  "email": "user@example.com",
-  "deleted": {
-    "messages": 12,
-    "events": 47,
-    "tracked_links": 8,
-    "soft_bounces": 1
-  },
-  "audit_id": "audit_..."
+  "recipient": "user@example.com",
+  "status": "completed",
+  "request_id": "00000000-0000-0000-0000-000000000000",
+  "messages_deleted": 12,
+  "events_deleted": 47,
+  "bodies_deleted": 3,
+  "objects_pending": 0
 }
 ```
+
+The endpoint returns `202` with `status: "pending"` when external object,
+analytics, or queue deletion still needs retry. `GET /v1/privacy/deletions`
+lists the latest deletion requests for the tenant.
 
 ---
 
@@ -910,17 +918,18 @@ Permanently deletes all data associated with a recipient address: messages, even
 ```
 GET /v1/privacy/export-recipient?email=user%40example.com
 ```
-Scope: `suppressions`
+Scope: `messages`
 
 Returns all stored data for a recipient address. Use this to fulfill GDPR Article 15 access requests.
 
 **Response `200`**
 ```json
 {
-  "email": "user@example.com",
+  "recipient": "user@example.com",
+  "exported_at": "2026-07-22T12:00:00.000Z",
   "messages": [ ... ],
   "events": [ ... ],
-  "suppression": { "reason": "unsubscribe", "created_at": "..." }
+  "suppressed": { "reason": "unsubscribe", "since": "..." }
 }
 ```
 

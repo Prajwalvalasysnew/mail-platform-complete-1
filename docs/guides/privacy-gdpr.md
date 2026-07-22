@@ -1,6 +1,11 @@
 # Privacy & GDPR
 
-The platform provides endpoints to fulfill data subject rights under the GDPR (General Data Protection Regulation), CCPA (California Consumer Privacy Act), and similar privacy regulations. These endpoints are for use when one of your users exercises their right to erasure or right of access.
+The platform provides technical endpoints that can help fulfill data-subject
+access, portability, and erasure workflows under GDPR, CCPA, and similar laws.
+Using these endpoints does not by itself establish legal compliance; the
+controller must verify the requester, determine scope, apply exceptions and
+legal holds, and meet applicable deadlines. See
+[Compliance posture and evidence](../COMPLIANCE_POSTURE.md).
 
 ---
 
@@ -14,40 +19,52 @@ When a user of your application asks you to delete or export their data, you are
 
 ## Delete recipient data (right to erasure)
 
-`POST /v1/privacy/delete-recipient` permanently erases all stored data for a recipient address:
+`POST /v1/privacy/delete-recipient` starts tenant-scoped erasure for a recipient
+address:
 
-- All messages sent to that address (message records, headers, metadata)
+- All messages sent to that address (message records, headers, metadata,
+  inline bodies, and inline attachments)
 - All tracking events (delivered, opened, clicked, bounced)
 - All tracked links
 - Soft-bounce history
 - The suppression entry (if present)
+- Workflow runs and step ledgers for the recipient
+- Offloaded body/attachment objects when no surviving message references them
+- ClickHouse event data and queued BullMQ payloads when enabled
 
-An audit record is retained internally for compliance purposes. The deletion itself is irreversible.
+The operation retains a deletion request, per-object completion state, and an
+append-only consent event without retaining the deleted message content.
+External object, analytics, or queue cleanup failures return a pending result
+and are retried by the worker scheduler. Online deletion is irreversible, but
+the application does not selectively rewrite historical backups.
 
 ```bash
 curl -X POST https://api.mailplatform.example/v1/privacy/delete-recipient \
   -H "Authorization: Bearer $MAILPLATFORM_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{ "email": "alice@example.com" }'
+  -d '{ "recipient": "alice@example.com", "requested_by": "dsar-1234" }'
 ```
 
 **Response `200`**
 ```json
 {
-  "email": "alice@example.com",
-  "deleted": {
-    "messages": 12,
-    "events": 47,
-    "tracked_links": 8,
-    "soft_bounces": 1
-  },
-  "audit_id": "audit_01ABCDEF"
+  "recipient": "alice@example.com",
+  "status": "completed",
+  "request_id": "00000000-0000-0000-0000-000000000000",
+  "messages_deleted": 12,
+  "events_deleted": 47,
+  "bodies_deleted": 3,
+  "objects_pending": 0
 }
 ```
 
-Retain the `audit_id` in your records to demonstrate compliance if audited.
+Retain the `request_id` in your case-management records and monitor
+the request until its status is `completed`.
 
-If the address has no data (never sent to), the call still returns `200` with all counts as `0` (idempotent).
+If an active tenant or recipient legal hold applies, the endpoint returns
+`409 legal_hold_active` before deleting anything. If external cleanup is still
+pending, it returns `202`; otherwise it returns `200`. Repeated requests remain
+safe, but each accepted request creates its own deletion audit record.
 
 ---
 
@@ -101,7 +118,20 @@ When a user re-subscribes (providing fresh, documented consent), remove the supp
 
 ## Data retention
 
-Message records, events, and tracking data are retained for the duration your account is active. If you need to enforce a shorter retention window (e.g. delete all data older than 12 months), use the [delete recipient endpoint](#delete-recipient-data-right-to-erasure) or contact support to discuss bulk data purges.
+Retention runs in bounded scheduled sweeps. The effective body and event
+windows resolve from a customer override, then the active plan, then platform
+defaults. Catalog defaults are currently 7 days for Free, 30 for Starter, 90
+for Pro, and Enterprise defaults of 365 days for events and 90 days for bodies.
+Platform physical ceilings can shorten those values. Message metadata and
+operational tables have separate environment-configured windows.
+
+Active legal holds preserve applicable recipient/tenant data. DMARC evidence is
+covered by tenant-wide holds. Audit rows that leave the hot table are archived
+with their hash-chain fields instead of being destroyed.
+
+Historical backups are outside the application erasure path. Operators must
+define backup expiration or cryptographic-erasure policy and ensure restore
+procedures reapply deletion tombstones before restored data is used.
 
 ---
 
@@ -122,7 +152,11 @@ The address is automatically appended to the footer of every outgoing email. Liv
 
 ## Best practices
 
-- **Sync erasure requests promptly.** GDPR allows up to 30 days to fulfill a right-to-erasure request. The API endpoint is immediate — integrate it into your user-delete flow so erasure happens automatically.
+- **Sync erasure requests promptly.** Integrate the endpoint into your approved
+  request workflow and monitor asynchronous cleanup to completion. Confirm the
+  deadline and any extension/exception with counsel for the applicable law.
 - **Do not re-add erased emails.** After deleting a recipient's data, do not import the address back from a CRM sync without a fresh, documented opt-in.
-- **Log `audit_id`.** The audit record retained on our side + your logged `audit_id` together constitute evidence that the erasure was performed. Keep it in your own records.
+- **Log `request_id`.** Keep the case identifier and completion status
+  in your own records; an accepted request alone is not proof that all external
+  deletion items completed.
 - **Check your Privacy Policy.** If you collect email addresses, your privacy policy should disclose that you use a third-party email delivery service (this platform) and describe how recipient data is handled.
