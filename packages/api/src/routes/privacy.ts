@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -386,6 +386,141 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       soft_bounce: data.softBounce ?? null,
       erasure_requests: data.deletionRequests,
     };
+  });
+
+  // ─── Privacy case management (BASE-05) ────────────────────────────────────
+  // Data-subject requests as tracked cases with statutory deadlines, identity
+  // verification, extension, denial/exception, artifacts, and closure
+  // evidence. Errors from the shared state machine map to 4xx codes here.
+  const CreateCaseSchema = z.object({
+    subject_kind: z.enum(['recipient', 'account_user']).optional(),
+    subject_identifier: z.string().min(3).max(320),
+    intake_source: z.enum(['api', 'email', 'web_form', 'support', 'authorized_agent', 'postal']),
+    request_types: z.array(z.enum(['access', 'erasure', 'rectification', 'restriction', 'objection', 'portability', 'opt_out', 'limit_sensitive_pi'])).min(1),
+    jurisdiction: z.enum(['gdpr', 'ccpa', 'other', 'unknown']).optional(),
+  });
+  const caseErrorReply = (reply: any, err: unknown) => {
+    if (err instanceof PrivacyCaseError) {
+      const status = err.code === 'case_not_found' ? 404 : err.code === 'invalid_transition' ? 409 : 422;
+      return reply.code(status).send({ error: err.code, message: err.message });
+    }
+    throw err;
+  };
+
+  app.post('/privacy/cases', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = CreateCaseSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    const row = await tenantScoped(req, (trx) => createPrivacyCase({
+      customerId: auth.customer_id,
+      subjectKind: parsed.data.subject_kind,
+      subjectIdentifier: parsed.data.subject_identifier,
+      intakeSource: parsed.data.intake_source,
+      requestTypes: parsed.data.request_types,
+      jurisdiction: parsed.data.jurisdiction,
+      createdBy: auth.api_key_id ?? 'api',
+    }, trx));
+    return reply.code(201).send({ case: row });
+  });
+
+  app.get('/privacy/cases', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { status, overdue, limit, offset } = req.query as Record<string, string | undefined>;
+    const cases = await tenantScoped(req, (trx) => listPrivacyCases(auth.customer_id, {
+      status: status as never,
+      overdueOnly: overdue === 'true',
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    }, trx));
+    return { cases };
+  });
+
+  app.get('/privacy/cases/:id', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const row = await tenantScoped(req, (trx) => getPrivacyCaseWithEvents(auth.customer_id, id, trx));
+    if (!row) return reply.code(404).send({ error: 'not_found' });
+    return { case: row };
+  });
+
+  const VerifySchema = z.object({ method: z.string().min(1).max(200) });
+  app.post('/privacy/cases/:id/verify', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = VerifySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    try {
+      const row = await tenantScoped(req, (trx) =>
+        verifyPrivacyCaseIdentity(auth.customer_id, id, parsed.data.method, auth.api_key_id ?? 'api', trx));
+      return { case: row };
+    } catch (err) { return caseErrorReply(reply, err); }
+  });
+
+  const TransitionSchema = z.object({
+    status: z.enum(['verifying', 'in_progress', 'waiting_on_subject', 'fulfilled', 'denied', 'closed']),
+    denial_reason: z.string().min(1).max(2000).optional(),
+    approved_by: z.string().min(1).max(200).optional(),
+  });
+  app.post('/privacy/cases/:id/transition', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = TransitionSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    try {
+      const row = await tenantScoped(req, (trx) => transitionPrivacyCase(auth.customer_id, id, parsed.data.status, {
+        actor: auth.api_key_id ?? 'api',
+        denialReason: parsed.data.denial_reason,
+        approvedBy: parsed.data.approved_by,
+      }, trx));
+      return { case: row };
+    } catch (err) { return caseErrorReply(reply, err); }
+  });
+
+  const ExtendSchema = z.object({ reason: z.string().min(1).max(2000) });
+  app.post('/privacy/cases/:id/extend', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = ExtendSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    try {
+      const row = await tenantScoped(req, (trx) =>
+        extendPrivacyCase(auth.customer_id, id, parsed.data.reason, auth.api_key_id ?? 'api', trx));
+      return { case: row };
+    } catch (err) { return caseErrorReply(reply, err); }
+  });
+
+  const ArtifactSchema = z.object({
+    kind: z.string().min(1).max(100),
+    ref: z.string().min(1).max(500),
+    note: z.string().max(1000).optional(),
+  });
+  app.post('/privacy/cases/:id/artifacts', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = ArtifactSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    try {
+      const row = await tenantScoped(req, (trx) =>
+        attachPrivacyCaseArtifact(auth.customer_id, id, parsed.data, auth.api_key_id ?? 'api', trx));
+      return { case: row };
+    } catch (err) { return caseErrorReply(reply, err); }
+  });
+
+  const CommunicationSchema = z.object({
+    direction: z.enum(['inbound', 'outbound']),
+    channel: z.string().min(1).max(100),
+    summary: z.string().max(1000).optional(),
+  });
+  app.post('/privacy/cases/:id/communications', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = CommunicationSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    try {
+      await tenantScoped(req, (trx) =>
+        recordPrivacyCaseCommunication(auth.customer_id, id, parsed.data, auth.api_key_id ?? 'api', trx));
+      return { recorded: true };
+    } catch (err) { return caseErrorReply(reply, err); }
   });
 
   // ─── Legal holds (gap analysis #19) ────────────────────────────────────────

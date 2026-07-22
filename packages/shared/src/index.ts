@@ -69,6 +69,7 @@ export * from './legal-hold.js';
 export * from './clickhouse-reconcile.js';
 export * from './privacy-erasure.js';
 export * from './privacy-pseudonym.js';
+export * from './privacy-cases.js';
 export * from './logging.js';
 export * from './workflow-definition.js';
 export * from './workflows.js';

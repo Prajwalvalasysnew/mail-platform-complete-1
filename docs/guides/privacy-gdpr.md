@@ -131,6 +131,36 @@ retained (pseudonymized) erasure evidence for the address.
 
 ---
 
+## Privacy case management (data-subject requests)
+
+Data-subject requests are deadline-bound legal obligations, not fire-and-forget
+API calls. The `/v1/privacy/cases` endpoints track each request as a case:
+
+- `POST /v1/privacy/cases` opens a case with intake source, request types
+  (access, erasure, rectification, restriction, objection, portability,
+  opt-out, limit-sensitive-PI), and jurisdiction. The statutory due date is
+  computed automatically: GDPR one month (extendable by two further months),
+  CCPA 45 days (extendable by 45).
+- `POST /v1/privacy/cases/:id/verify` records identity verification — a case
+  cannot be fulfilled without it.
+- `POST /v1/privacy/cases/:id/transition` moves the case through
+  `received → verifying → in_progress → fulfilled/denied → closed`. Denial
+  requires a documented reason.
+- `POST /v1/privacy/cases/:id/extend` applies the single statutory extension
+  with a documented reason.
+- `POST /v1/privacy/cases/:id/artifacts` and `/communications` attach
+  fulfillment evidence references and communication summaries.
+- `GET /v1/privacy/cases?overdue=true` surfaces cases past their effective
+  deadline for monitoring.
+
+Every action is recorded in an append-only per-case event ledger (closure
+evidence). The ledger and logs never carry the subject's identifier — only
+case ids — and when a case that included erasure closes, the case record's
+own subject identifier is replaced with the same keyed pseudonym the erasure
+uses.
+
+---
+
 ## Suppression as consent management
 
 The suppression list is also your unsubscribe ledger. When a user opts out:

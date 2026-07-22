@@ -301,6 +301,8 @@ export interface Database {
   webhook_delivery_log: WebhookDeliveryLogTable;
   unsubscribe_groups: UnsubscribeGroupsTable;
   unsubscribe_group_members: UnsubscribeGroupMembersTable;
+  privacy_cases: PrivacyCasesTable;
+  privacy_case_events: PrivacyCaseEventsTable;
   workflows: WorkflowsTable;
   workflow_versions: WorkflowVersionsTable;
   workflow_runs: WorkflowRunsTable;
@@ -1032,6 +1034,64 @@ export interface UnsubscribeGroupMembersTable {
   customer_id: string;
   email: string;
   unsubscribed_at: Generated<Timestamp>;
+}
+
+// =====================================================
+// Migration 076 tables (privacy case management, BASE-05)
+// =====================================================
+
+export type PrivacyCaseStatus =
+  | 'received'
+  | 'verifying'
+  | 'in_progress'
+  | 'waiting_on_subject'
+  | 'fulfilled'
+  | 'denied'
+  | 'closed';
+export type PrivacyCaseJurisdiction = 'gdpr' | 'ccpa' | 'other' | 'unknown';
+export type PrivacyCaseIntakeSource = 'api' | 'email' | 'web_form' | 'support' | 'authorized_agent' | 'postal';
+export type PrivacyCaseRequestType =
+  | 'access'
+  | 'erasure'
+  | 'rectification'
+  | 'restriction'
+  | 'objection'
+  | 'portability'
+  | 'opt_out'
+  | 'limit_sensitive_pi';
+
+export interface PrivacyCasesTable {
+  id: Generated<string>;
+  customer_id: string;
+  subject_kind: Generated<'recipient' | 'account_user'>;
+  subject_identifier: string;
+  subject_pseudonymized_at: Timestamp | null;
+  intake_source: PrivacyCaseIntakeSource;
+  request_types: PrivacyCaseRequestType[];
+  jurisdiction: Generated<PrivacyCaseJurisdiction>;
+  status: Generated<PrivacyCaseStatus>;
+  received_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  due_at: Timestamp;
+  extended_until: Timestamp | null;
+  extension_reason: string | null;
+  identity_verified_at: Timestamp | null;
+  verification_method: string | null;
+  denial_reason: string | null;
+  approved_by: string | null;
+  closed_at: Timestamp | null;
+  artifacts: Generated<Array<Record<string, unknown>>>;
+  created_by: string | null;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+export interface PrivacyCaseEventsTable {
+  id: Generated<string>;
+  case_id: string;
+  customer_id: string;
+  event: 'created' | 'verified' | 'status_changed' | 'extended' | 'communication' | 'artifact_attached' | 'denied' | 'closed';
+  detail: Generated<Record<string, unknown>>;
+  actor: string | null;
+  created_at: Generated<Timestamp>;
 }
 
 // =====================================================

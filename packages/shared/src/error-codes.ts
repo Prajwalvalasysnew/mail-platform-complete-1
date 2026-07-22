@@ -128,6 +128,11 @@ export const ERROR_CODES = {
   // ── Privacy / legal hold ───────────────────────────────────────────────────
   legal_hold_active: { description: 'Erasure is blocked because the recipient is under an active legal hold.', httpStatus: 409 },
   confirmation_required: { description: 'The request must include the explicit confirmation phrase to proceed.', httpStatus: 400 },
+  invalid_transition: { description: 'The privacy case cannot move from its current status to the requested one.', httpStatus: 409 },
+  case_not_found: { description: 'No such privacy case exists for this tenant.', httpStatus: 404 },
+  verification_required: { description: 'The data subject\'s identity must be verified before the case can be fulfilled.', httpStatus: 422 },
+  already_extended: { description: 'The privacy case has already used its statutory deadline extension.', httpStatus: 422 },
+  denial_reason_required: { description: 'Denying a privacy case requires a documented reason.', httpStatus: 422 },
   sole_owner: { description: 'Account deletion is blocked: the caller is the sole owner of one or more organizations.', httpStatus: 409 },
 
   // ── Idempotency ────────────────────────────────────────────────────────────
