@@ -31,9 +31,17 @@ address:
 - Workflow runs and step ledgers for the recipient
 - Offloaded body/attachment objects when no surviving message references them
 - ClickHouse event data and queued BullMQ payloads when enabled
+- Unsubscribe-group memberships for the recipient
 
 The operation retains a deletion request, per-object completion state, and an
 append-only consent event without retaining the deleted message content.
+The records that survive erasure as compliance evidence — the deletion
+request itself and the consent ledger — do not keep the recipient's email
+address: it is replaced by a keyed HMAC pseudonym (`erased:<hex>`, computed
+with `PRIVACY_PSEUDONYM_SECRET`, falling back to `ENCRYPTION_KEY`), and
+free-text consent notes are cleared. With the key, the same address always
+recomputes the same pseudonym, so opt-out and erasure evidence remains
+verifiable without storing the identifier.
 External object, analytics, or queue cleanup failures return a pending result
 and are retried by the worker scheduler. Online deletion is irreversible, but
 the application does not selectively rewrite historical backups.
@@ -54,7 +62,9 @@ curl -X POST https://api.mailplatform.example/v1/privacy/delete-recipient \
   "messages_deleted": 12,
   "events_deleted": 47,
   "bodies_deleted": 3,
-  "objects_pending": 0
+  "objects_pending": 0,
+  "consent_events_pseudonymized": 2,
+  "group_memberships_deleted": 1
 }
 ```
 
@@ -98,9 +108,26 @@ curl "https://api.mailplatform.example/v1/privacy/export-recipient?email=alice%4
   "suppression": {
     "reason": "unsubscribe",
     "created_at": "2026-06-15T08:00:00.000Z"
-  }
+  },
+  "tracked_links": [
+    { "message_id": "msg_abc@mail.yourcompany.com", "original_url": "https://example.com/receipt", "label": null }
+  ],
+  "consent_history": [
+    { "action": "suppress", "reason": "unsubscribe", "source": "one_click_unsubscribe", "created_at": "2026-06-15T08:00:00.000Z" }
+  ],
+  "unsubscribe_group_memberships": [
+    { "group_id": "00000000-0000-0000-0000-000000000000", "group_name": "Newsletter", "unsubscribed_at": "2026-06-15T08:00:00.000Z" }
+  ],
+  "workflow_runs": [],
+  "soft_bounce": null,
+  "erasure_requests": []
 }
 ```
+
+The export covers every recipient-linked record class the platform holds:
+messages, events, tracked links, suppression state, the full consent history,
+unsubscribe-group memberships, workflow journey runs, soft-bounce state, and
+retained (pseudonymized) erasure evidence for the address.
 
 ---
 

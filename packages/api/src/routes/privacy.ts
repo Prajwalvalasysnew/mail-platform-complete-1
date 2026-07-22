@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -118,11 +118,16 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
         orphanKeys = candidateKeys.filter((k) => !liveKeys.has(k));
       }
 
+      // BASE-03: the erasure evidence record itself must not retain the
+      // direct identifier — store the keyed pseudonym from the start, so the
+      // erasure never writes the plaintext address it is meant to remove.
+      const pseudonym = erasedRecipientPseudonym(auth.customer_id, recipient);
       const log = await trx
         .insertInto('deletion_requests')
         .values({
           customer_id: auth.customer_id,
-          recipient,
+          recipient: pseudonym,
+          pseudonymized_at: new Date(),
           requested_by: parsed.data.requested_by ?? null,
           messages_deleted: Number(msgDel.numDeletedRows ?? 0),
           events_deleted: eventsDeleted,
@@ -166,7 +171,15 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       // clear it performs is a separate side effect that is safe either way.
       await removeSuppression(auth.customer_id, recipient, trx, { source: 'gdpr_erasure', reason: 'erasure' });
 
+      // BASE-03: strip the recipient's direct identifiers from the stores
+      // that survive erasure — the consent ledger (including the unsuppress
+      // row removeSuppression just appended), prior deletion requests, and
+      // unsubscribe-group memberships. Runs last inside the transaction so
+      // every plaintext row written above is covered.
+      const pseudonymized = await pseudonymizeErasedRecipient(auth.customer_id, recipient, trx);
+
       return {
+        pseudonymized,
         request_id: log.id,
         messages_deleted: Number(msgDel.numDeletedRows ?? 0),
         events_deleted: eventsDeleted,
@@ -248,6 +261,8 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       events_deleted: result.events_deleted,
       bodies_deleted: bodiesDeleted,
       objects_pending: Number(outstanding.count),
+      consent_events_pseudonymized: result.pseudonymized.consentEventsPseudonymized,
+      group_memberships_deleted: result.pseudonymized.groupMembershipsDeleted,
     });
   });
 
@@ -274,7 +289,12 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
     if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
     const recipient = parsed.data.email.toLowerCase();
 
-    const { messages, events, suppression } = await tenantScoped(req, async (trx) => {
+    // BASE-02 (compliance implementation plan): the export must cover every
+    // recipient-linked record class, not only messages/events/suppression —
+    // tracked links, full consent history, unsubscribe-group memberships,
+    // workflow journey data, soft-bounce state, and retained (pseudonymous)
+    // erasure evidence are all returned below.
+    const data = await tenantScoped(req, async (trx) => {
       const messages = await trx
         .selectFrom('messages')
         .select(['message_id', 'subject', 'status', 'queued_at', 'delivered_at', 'bounced_at', 'opened_at', 'first_clicked_at'])
@@ -303,15 +323,68 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
         .where('email', '=', recipient)
         .executeTakeFirst();
 
-      return { messages, events, suppression };
+      const trackedLinks = messageIds.length > 0
+        ? await trx
+            .selectFrom('tracked_links')
+            .select(['message_id', 'original_url', 'label', 'created_at'])
+            .where('message_id', 'in', messageIds)
+            .orderBy('created_at', 'desc')
+            .limit(5000)
+            .execute()
+        : [];
+
+      const consentHistory = await getConsentHistory(auth.customer_id, recipient, trx, 1000);
+
+      const groupMemberships = await trx
+        .selectFrom('unsubscribe_group_members')
+        .innerJoin('unsubscribe_groups', 'unsubscribe_groups.id', 'unsubscribe_group_members.group_id')
+        .select(['unsubscribe_group_members.group_id', 'unsubscribe_groups.name as group_name', 'unsubscribe_group_members.unsubscribed_at'])
+        .where('unsubscribe_group_members.customer_id', '=', auth.customer_id)
+        .where('unsubscribe_group_members.email', '=', recipient)
+        .execute();
+
+      const workflowRuns = await trx
+        .selectFrom('workflow_runs')
+        .select(['id', 'workflow_id', 'version', 'status', 'trigger_source', 'steps_executed', 'started_at', 'finished_at'])
+        .where('customer_id', '=', auth.customer_id)
+        .where('subject_email', '=', recipient)
+        .orderBy('started_at', 'desc')
+        .limit(1000)
+        .execute();
+
+      const softBounce = await trx
+        .selectFrom('soft_bounce_tracker')
+        .select(['count', 'first_seen', 'last_seen'])
+        .where('customer_id', '=', auth.customer_id)
+        .where('email', '=', recipient)
+        .executeTakeFirst();
+
+      // Retained erasure evidence: prior requests are stored under the keyed
+      // pseudonym (BASE-03), so match both the plaintext (legacy rows) and
+      // the recomputed pseudonym.
+      const deletionRequests = await trx
+        .selectFrom('deletion_requests')
+        .select(['id', 'status', 'messages_deleted', 'events_deleted', 'pseudonymized_at', 'created_at'])
+        .where('customer_id', '=', auth.customer_id)
+        .where('recipient', 'in', [recipient, erasedRecipientPseudonym(auth.customer_id, recipient)])
+        .orderBy('created_at', 'desc')
+        .execute();
+
+      return { messages, events, suppression, trackedLinks, consentHistory, groupMemberships, workflowRuns, softBounce, deletionRequests };
     });
 
     return {
       recipient,
       exported_at: new Date().toISOString(),
-      messages,
-      events,
-      suppressed: suppression ? { reason: suppression.reason, since: suppression.created_at } : null,
+      messages: data.messages,
+      events: data.events,
+      suppressed: data.suppression ? { reason: data.suppression.reason, since: data.suppression.created_at } : null,
+      tracked_links: data.trackedLinks,
+      consent_history: data.consentHistory,
+      unsubscribe_group_memberships: data.groupMemberships,
+      workflow_runs: data.workflowRuns,
+      soft_bounce: data.softBounce ?? null,
+      erasure_requests: data.deletionRequests,
     };
   });
 

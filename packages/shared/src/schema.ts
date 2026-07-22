@@ -197,6 +197,7 @@ export interface ConsentEventsTable {
   source: Generated<string>;
   notes: string | null;
   message_id: string | null;
+  pseudonymized_at: Timestamp | null;
   created_at: Generated<Timestamp>;
 }
 
@@ -737,6 +738,7 @@ export interface DeletionRequestsTable {
   messages_deleted: Generated<number>;
   events_deleted: Generated<number>;
   status: Generated<'pending' | 'completed' | 'failed'>;
+  pseudonymized_at: Timestamp | null;
   created_at: Generated<Timestamp>;
 }
 
