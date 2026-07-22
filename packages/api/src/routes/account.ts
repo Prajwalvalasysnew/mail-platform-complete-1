@@ -32,6 +32,7 @@ import {
   registerPasskey,
   listPasskeys,
   deletePasskey,
+  erasedRecipientPseudonym,
 } from '@platform/shared';
 import { requireUser, requireFullUser, requireCapability } from '../plugins/session-auth.js';
 
@@ -217,6 +218,111 @@ export const accountRoutes: FastifyPluginAsync = async (app) => {
       current_role: u.current_role,
       memberships: u.memberships,
     };
+  });
+
+  // ---- Account-holder data-subject workflows (BASE-04) ----
+  // GDPR Article 15 / CCPA access for the AUTHENTICATED USER's own account
+  // data, independent of the recipient-email privacy endpoints (which cover
+  // the customer's audience, not the platform's own users).
+  app.get('/auth/me/export', { preHandler: requireFullUser }, async (req) => {
+    const userId = req.user!.user_id;
+    const user = await db.selectFrom('users')
+      .select(['id', 'email', 'name', 'status', 'email_verified_at', 'mfa_enabled', 'last_login_at', 'created_at', 'updated_at'])
+      .where('id', '=', userId).executeTakeFirstOrThrow();
+    const memberships = await db.selectFrom('memberships')
+      .innerJoin('customers', 'customers.id', 'memberships.customer_id')
+      .select(['memberships.customer_id', 'customers.name as org_name', 'memberships.role', 'memberships.created_at'])
+      .where('memberships.user_id', '=', userId).execute();
+    const sessions = await listUserSessions(userId);
+    const mfaFactors = await db.selectFrom('mfa_factors')
+      .select(['type', 'confirmed_at', 'created_at'])
+      .where('user_id', '=', userId).execute();
+    const passkeys = (await listPasskeys(userId)).map((p) => ({
+      id: p.id, name: p.name, created_at: p.created_at, last_used_at: p.last_used_at,
+    }));
+    return {
+      exported_at: new Date().toISOString(),
+      user,
+      memberships,
+      sessions,
+      mfa_factors: mfaFactors,
+      passkeys,
+      // Documented exclusions (BASE-04): records retained under other legal
+      // bases and not returned here.
+      exclusions: [
+        'credential secrets (password hashes, TOTP secrets, passkey key material)',
+        'org-scoped audit log entries (retained for security under the org account)',
+        'billing, invoicing, and tax records (retained under the org account)',
+      ],
+    };
+  });
+
+  // Self-service account deletion. Anonymizes the user record and removes all
+  // credentials, sessions, tokens, and memberships. Explicit exceptions:
+  // - Sole owners must first transfer ownership or delete the org (409).
+  // - Org-scoped audit/billing records are retained under the org, keyed to a
+  //   pseudonymous actor id rather than the user's email.
+  const DeleteMeSchema = z.object({ confirm: z.literal('delete my account') });
+  app.delete('/auth/me', { preHandler: requireFullUser }, async (req, reply) => {
+    const parsed = DeleteMeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: 'confirmation_required',
+        message: 'Pass { "confirm": "delete my account" } to delete your account.',
+      });
+    }
+    const userId = req.user!.user_id;
+
+    // Sole-owner gate: an org must never be left ownerless.
+    const owned = await db.selectFrom('memberships').select('customer_id')
+      .where('user_id', '=', userId).where('role', '=', 'owner').execute();
+    const blocking: string[] = [];
+    for (const m of owned) {
+      const otherOwner = await db.selectFrom('memberships').select('id')
+        .where('customer_id', '=', m.customer_id)
+        .where('role', '=', 'owner')
+        .where('user_id', '!=', userId)
+        .executeTakeFirst();
+      if (!otherOwner) blocking.push(m.customer_id);
+    }
+    if (blocking.length > 0) {
+      return reply.code(409).send({
+        error: 'sole_owner',
+        message: 'Transfer ownership of these organizations (or delete them) before deleting your account.',
+        customer_ids: blocking,
+      });
+    }
+
+    const orgId = await primaryOrgId(userId);
+    // Keyed pseudonym (same scheme as recipient erasure, BASE-03) so the
+    // disabled row keeps a unique, non-identifying address.
+    const pseudonym = erasedRecipientPseudonym(`user:${userId}`, req.user!.email);
+    const erasedEmail = `${pseudonym.replace(':', '-')}@erased.invalid`;
+
+    await db.transaction().execute(async (trx) => {
+      await trx.deleteFrom('mfa_factors').where('user_id', '=', userId).execute();
+      await trx.deleteFrom('mfa_recovery_codes').where('user_id', '=', userId).execute();
+      await trx.deleteFrom('webauthn_credentials').where('user_id', '=', userId).execute();
+      await trx.deleteFrom('user_tokens').where('user_id', '=', userId).execute();
+      await trx.deleteFrom('user_sessions').where('user_id', '=', userId).execute();
+      await trx.deleteFrom('memberships').where('user_id', '=', userId).execute();
+      await trx.updateTable('users').set({
+        email: erasedEmail,
+        name: null,
+        password_hash: null,
+        status: 'disabled',
+        mfa_enabled: false,
+        scim_external_id: null,
+        scim_managed: false,
+        updated_at: new Date(),
+      }).where('id', '=', userId).execute();
+    });
+
+    recordAuditSafe({
+      customerId: orgId, actorType: 'user', actorId: userId, actorLabel: erasedEmail,
+      action: 'user.account_deleted', resource: userId, ip: req.ip,
+    });
+    return { deleted: true };
   });
 
   // ---- Switch active org ----

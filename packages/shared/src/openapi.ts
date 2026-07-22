@@ -807,6 +807,29 @@ export const openapiSpec = {
         },
       },
     },
+    '/auth/me/export': {
+      get: {
+        summary: 'Export the authenticated user\'s own account data (GDPR/CCPA access)',
+        operationId: 'exportOwnAccountData',
+        security: [{ userSessionAuth: [] }],
+        responses: {
+          '200': { description: 'Account data export: user record, memberships, sessions, MFA/passkey metadata, and documented exclusions. Never includes credential secrets.' },
+          '401': { description: 'Session required', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/auth/me': {
+      delete: {
+        summary: 'Delete the authenticated user\'s own account (self-service erasure)',
+        operationId: 'deleteOwnAccount',
+        security: [{ userSessionAuth: [] }],
+        responses: {
+          '200': { description: 'Account anonymized; credentials, sessions, tokens, and memberships removed' },
+          '400': { description: 'Missing confirmation phrase', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '409': { description: 'Caller is the sole owner of one or more organizations; transfer ownership first', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
     '/auth/sessions': {
       get: {
         summary: 'List the current user\'s active sessions (devices)',

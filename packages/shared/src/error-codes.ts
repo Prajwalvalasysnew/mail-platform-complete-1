@@ -127,6 +127,8 @@ export const ERROR_CODES = {
 
   // ── Privacy / legal hold ───────────────────────────────────────────────────
   legal_hold_active: { description: 'Erasure is blocked because the recipient is under an active legal hold.', httpStatus: 409 },
+  confirmation_required: { description: 'The request must include the explicit confirmation phrase to proceed.', httpStatus: 400 },
+  sole_owner: { description: 'Account deletion is blocked: the caller is the sole owner of one or more organizations.', httpStatus: 409 },
 
   // ── Idempotency ────────────────────────────────────────────────────────────
   invalid_idempotency_key: { description: 'The idempotency key is malformed.', httpStatus: 400 },
