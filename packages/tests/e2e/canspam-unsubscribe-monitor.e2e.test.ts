@@ -55,7 +55,9 @@ describe('CAN-SPAM synthetic unsubscribe monitoring', () => {
       .where('message_id', '=', mid).execute();
     await sendCommercial(cust, domain, `monitor-b-${Date.now()}@example.com`);
 
-    const result = await runUnsubscribeMonitor();
+    // Scoped to this test's tenant: parallel suites on the shared test DB
+    // erase their own messages mid-run, which would otherwise race the sample.
+    const result = await runUnsubscribeMonitor({ customerId: cust.customerId });
     expect(result.failures).toBe(0);
     expect(result.chainChecks).toBeGreaterThanOrEqual(2);
     expect(result.oldestMessageAgeDays).toBeGreaterThanOrEqual(28);
@@ -89,14 +91,14 @@ describe('CAN-SPAM synthetic unsubscribe monitoring', () => {
       reason: 'unsubscribe', source: 'one_click_unsubscribe', notes: null, message_id: null,
     }).execute();
 
-    const result = await runUnsubscribeMonitor();
+    const result = await runUnsubscribeMonitor({ customerId: cust.customerId });
     expect(result.slaViolations).toBeGreaterThanOrEqual(1);
 
     // Repair (suppress for real) and the violation clears.
     await db.insertInto('suppressions').values({
       customer_id: cust.customerId, email: victim, reason: 'unsubscribe', notes: null,
     }).execute();
-    const after = await runUnsubscribeMonitor();
+    const after = await runUnsubscribeMonitor({ customerId: cust.customerId });
     expect(after.slaViolations).toBe(0);
   });
 

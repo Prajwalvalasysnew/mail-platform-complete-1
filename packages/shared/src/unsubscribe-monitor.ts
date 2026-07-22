@@ -128,10 +128,10 @@ async function oneClickSynthetic(customerId: string): Promise<RunRow> {
 }
 
 /** Every unsubscribe consent event in the window must map to an enforced suppression. */
-async function slaScan(windowDays: number): Promise<RunRow> {
+async function slaScan(windowDays: number, customerId?: string): Promise<RunRow> {
   const since = new Date(Date.now() - windowDays * 86_400_000);
   try {
-    const violations = await db.selectFrom('consent_events as ce')
+    let q = db.selectFrom('consent_events as ce')
       .select(({ fn }) => fn.countAll<number>().as('count'))
       .where('ce.action', '=', 'suppress')
       .where('ce.reason', '=', 'unsubscribe')
@@ -150,8 +150,9 @@ async function slaScan(windowDays: number): Promise<RunRow> {
           .whereRef('later.email', '=', 'ce.email')
           .where('later.action', '=', 'unsuppress')
           .whereRef('later.created_at', '>=', 'ce.created_at')
-      )))
-      .executeTakeFirstOrThrow();
+      )));
+    if (customerId) q = q.where('ce.customer_id', '=', customerId);
+    const violations = await q.executeTakeFirstOrThrow();
     const count = Number(violations.count);
     return { kind: 'sla_scan', ok: count === 0, detail: { violations: count, window_days: windowDays } };
   } catch (err) {
@@ -172,24 +173,26 @@ export interface UnsubscribeMonitorResult {
  * messages spread across the last 30 days — always including the oldest and
  * newest — validates each chain, exercises one synthetic one-click write per
  * distinct sampled tenant (capped at 3), and runs the SLA scan.
+ *
+ * Pass `customerId` to scope every check to one tenant (per-tenant runs, and
+ * hermetic tests on a shared database); the scheduler runs platform-wide.
  */
-export async function runUnsubscribeMonitor(options: { sampleSize?: number; windowDays?: number } = {}): Promise<UnsubscribeMonitorResult> {
+export async function runUnsubscribeMonitor(options: { sampleSize?: number; windowDays?: number; customerId?: string } = {}): Promise<UnsubscribeMonitorResult> {
   const windowDays = options.windowDays ?? 30;
   const sampleSize = Math.max(2, Math.min(options.sampleSize ?? 6, 50));
   const since = new Date(Date.now() - windowDays * 86_400_000);
 
-  const oldest = await db.selectFrom('messages')
-    .select(['message_id', 'customer_id', 'queued_at'])
-    .where('message_class', '=', 'commercial')
-    .where('queued_at', '>=', since as never)
-    .where('to_address', 'not like', `%@${SYNTHETIC_UNSUB_DOMAIN}`)
-    .orderBy('queued_at', 'asc').limit(Math.ceil(sampleSize / 2)).execute();
-  const newest = await db.selectFrom('messages')
-    .select(['message_id', 'customer_id', 'queued_at'])
-    .where('message_class', '=', 'commercial')
-    .where('queued_at', '>=', since as never)
-    .where('to_address', 'not like', `%@${SYNTHETIC_UNSUB_DOMAIN}`)
-    .orderBy('queued_at', 'desc').limit(Math.floor(sampleSize / 2)).execute();
+  const baseSample = () => {
+    let q = db.selectFrom('messages')
+      .select(['message_id', 'customer_id', 'queued_at'])
+      .where('message_class', '=', 'commercial')
+      .where('queued_at', '>=', since as never)
+      .where('to_address', 'not like', `%@${SYNTHETIC_UNSUB_DOMAIN}`);
+    if (options.customerId) q = q.where('customer_id', '=', options.customerId);
+    return q;
+  };
+  const oldest = await baseSample().orderBy('queued_at', 'asc').limit(Math.ceil(sampleSize / 2)).execute();
+  const newest = await baseSample().orderBy('queued_at', 'desc').limit(Math.floor(sampleSize / 2)).execute();
 
   const seen = new Set<string>();
   const sample = [...oldest, ...newest].filter((m) => !seen.has(m.message_id) && seen.add(m.message_id));
@@ -202,7 +205,7 @@ export async function runUnsubscribeMonitor(options: { sampleSize?: number; wind
   for (const customerId of tenants) {
     results.push(await oneClickSynthetic(customerId));
   }
-  results.push(await slaScan(windowDays));
+  results.push(await slaScan(windowDays, options.customerId));
 
   for (const row of results) await record(row);
 
