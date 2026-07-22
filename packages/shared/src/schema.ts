@@ -104,6 +104,7 @@ export interface MessagesTable {
   template_id: string | null;
   provider_message_id: string | null;
   risk_score: Generated<number>;
+  message_class: Generated<'transactional' | 'relationship' | 'commercial'>;
   body_storage: Generated<'inline' | 'fs' | 's3'>;
   body_object_key: string | null;
   body_size: number | null;

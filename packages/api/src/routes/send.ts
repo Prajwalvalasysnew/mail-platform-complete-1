@@ -75,6 +75,10 @@ const SendSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
   tracking: z.object({ opens: z.boolean().default(true), clicks: z.boolean().default(true) }).optional(),
   ip_pool: z.enum(['transactional', 'marketing', 'quarantine']).optional(),
+  // CANSPAM-01: legal message classification. Defaults to 'commercial' (the
+  // safe class — full CAN-SPAM treatment). Declaring 'transactional' or
+  // 'relationship' requires the 'classify' scope and is audit-logged.
+  message_class: z.enum(['transactional', 'relationship', 'commercial']).optional(),
   send_at: z.string().datetime().optional(),
   unsubscribe_group_id: z.string().uuid().optional(),
   // 'critical' puts the message at the head of the queue (OTPs, fraud/outage
@@ -167,6 +171,18 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
     }
     const body = parsed.data;
+
+    // CANSPAM-01: only keys holding the 'classify' scope may declare a
+    // non-commercial class; everyone else gets the safe default. Rejected
+    // loudly (not silently downgraded) so misclassification attempts are
+    // visible to the integrator and in the audit trail.
+    const messageClass = body.message_class ?? 'commercial';
+    if (messageClass !== 'commercial' && !auth.scopes.includes('classify') && !auth.scopes.includes('admin')) {
+      return reply.code(403).send({
+        error: 'classification_not_authorized',
+        message: `Declaring message_class '${messageClass}' requires the 'classify' scope.`,
+      });
+    }
 
     // Resolve content — either inline or from a template
     let subject = body.subject;
@@ -506,6 +522,7 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
             tracking_opens: body.tracking?.opens ?? true,
             tracking_clicks: body.tracking?.clicks ?? true,
             ip_pool: ipPool,
+            message_class: messageClass,
             template_id: templateId,
             risk_score: combinedScore,
             send_at: sendAt,
@@ -515,6 +532,20 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         )
         .returning(['message_id'])
         .execute();
+
+      // CANSPAM-01 audit trail: an accepted non-commercial declaration is a
+      // legal-classification decision — record who made it and for which
+      // messages.
+      if (messageClass !== 'commercial') {
+        await trx.insertInto('audit_log').values({
+          customer_id: auth.customer_id,
+          api_key_id: auth.api_key_id,
+          action: 'message_class_declared',
+          resource: messageClass,
+          ip: req.ip,
+          metadata: { message_ids: rows.map((r) => r.message_id), message_class: messageClass },
+        }).execute();
+      }
 
       if (needsReview) {
         await trx.insertInto('review_queue').values(
@@ -724,6 +755,7 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         text: string | null;
         templateId: string | null;
         ipPool: string;
+        messageClass: 'transactional' | 'relationship' | 'commercial';
         needsReview: boolean;
         combinedScore: number;
         combinedReasons: string[];
@@ -739,6 +771,15 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         let html = msg.html;
         let text = msg.text;
         let templateId: string | null = null;
+
+        // CANSPAM-01: same classification authorization as single /send,
+        // rejected per-entry so the rest of the batch proceeds.
+        const messageClass = msg.message_class ?? 'commercial';
+        if (messageClass !== 'commercial' && !auth.scopes.includes('classify') && !auth.scopes.includes('admin')) {
+          results.push({ index: i, accepted: false, error: 'classification_not_authorized' });
+          refundCount++;
+          continue;
+        }
 
         if (msg.template_id) {
           const tpl = await tenantScoped(req, (trx) =>
@@ -824,7 +865,7 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
           if (optedOut) { results.push({ index: i, accepted: false, suppressed: true }); refundCount++; continue; }
         }
 
-        toCommit.push({ msg, message_id, subject, html: html ?? null, text: text ?? null, templateId, ipPool, needsReview: action === 'review', combinedScore, combinedReasons, sendAt, unsubscribeGroupId });
+        toCommit.push({ msg, message_id, subject, html: html ?? null, text: text ?? null, templateId, ipPool, messageClass, needsReview: action === 'review', combinedScore, combinedReasons, sendAt, unsubscribeGroupId });
         results.push({ index: i, message_id, accepted: true, held_for_review: action === 'review', ...(sendAt && sendAt.getTime() > Date.now() + 1000 ? { scheduled_for: sendAt.toISOString() } : {}) });
       }
 
@@ -890,6 +931,7 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
               tracking_opens: c.msg.tracking?.opens ?? true,
               tracking_clicks: c.msg.tracking?.clicks ?? true,
               ip_pool: c.ipPool,
+              message_class: c.messageClass,
               template_id: c.templateId,
               risk_score: c.combinedScore,
               send_at: c.sendAt,
@@ -898,6 +940,22 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
               });
             })
           ).returning(['message_id']).execute();
+
+          // CANSPAM-01 audit trail (parity with single /send).
+          const declared = toCommit.filter((c) => c.messageClass !== 'commercial');
+          if (declared.length) {
+            await trx.insertInto('audit_log').values({
+              customer_id: auth.customer_id,
+              api_key_id: auth.api_key_id,
+              action: 'message_class_declared',
+              resource: 'batch',
+              ip: req.ip,
+              metadata: {
+                message_ids: declared.map((c) => c.message_id),
+                classes: Object.fromEntries(declared.map((c) => [c.message_id, c.messageClass])),
+              },
+            }).execute();
+          }
 
           const reviewItems = toCommit.filter((c) => c.needsReview);
           const sendItems = toCommit.filter((c) => !c.needsReview);

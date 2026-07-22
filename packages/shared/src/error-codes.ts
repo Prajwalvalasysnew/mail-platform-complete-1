@@ -133,6 +133,7 @@ export const ERROR_CODES = {
   verification_required: { description: 'The data subject\'s identity must be verified before the case can be fulfilled.', httpStatus: 422 },
   already_extended: { description: 'The privacy case has already used its statutory deadline extension.', httpStatus: 422 },
   denial_reason_required: { description: 'Denying a privacy case requires a documented reason.', httpStatus: 422 },
+  classification_not_authorized: { description: 'Declaring a non-commercial message class requires the classify scope.', httpStatus: 403 },
   sole_owner: { description: 'Account deletion is blocked: the caller is the sole owner of one or more organizations.', httpStatus: 409 },
 
   // ── Idempotency ────────────────────────────────────────────────────────────
