@@ -71,6 +71,7 @@ export * from './privacy-erasure.js';
 export * from './privacy-pseudonym.js';
 export * from './privacy-cases.js';
 export * from './unsubscribe-monitor.js';
+export * from './canspam-footer.js';
 export * from './logging.js';
 export * from './workflow-definition.js';
 export * from './workflows.js';

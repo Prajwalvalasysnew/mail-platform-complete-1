@@ -53,6 +53,9 @@ curl -X POST https://api.mailplatform.example/v1/send \
 | `metadata` | object | Arbitrary key/value stored with the message. Max 50 keys. |
 | `ip_pool` | string | Force a specific IP pool. Contact support to configure dedicated pools. |
 | `message_class` | string | CAN-SPAM legal classification: `transactional`, `relationship`, or `commercial`. Defaults to `commercial` (full CAN-SPAM treatment). Declaring a non-commercial class requires an API key with the `classify` scope and is audit-logged; without the scope the request is rejected with `403 classification_not_authorized`. |
+| `ad_identified` | boolean | CAN-SPAM attestation that a commercial message is identified as an advertisement where legally required. Recorded in message metadata as compliance evidence. |
+
+**Sender-identity rules (CAN-SPAM):** custom `headers` may not set identity, routing, or opt-out headers (`From`, `Reply-To`, `Return-Path`, `List-Unsubscribe`, `X-MP-*`, …) — those are platform-controlled and rejected with `422 reserved_header`. A `from_name` that embeds an email address is only accepted when that address's domain is one of your verified sending domains (`422 from_name_spoofing` otherwise). Subjects, display names, and header values must not contain line breaks. The physical-address + unsubscribe footer is appended by the platform after template rendering and cannot be removed or overridden by message content.
 
 **Request headers**
 

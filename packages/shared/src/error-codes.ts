@@ -134,6 +134,8 @@ export const ERROR_CODES = {
   already_extended: { description: 'The privacy case has already used its statutory deadline extension.', httpStatus: 422 },
   denial_reason_required: { description: 'Denying a privacy case requires a documented reason.', httpStatus: 422 },
   classification_not_authorized: { description: 'Declaring a non-commercial message class requires the classify scope.', httpStatus: 403 },
+  reserved_header: { description: 'The custom header overrides an identity, routing, or opt-out header the platform controls.', httpStatus: 422 },
+  from_name_spoofing: { description: 'The display name embeds an address at a domain the account has not verified.', httpStatus: 422 },
   sole_owner: { description: 'Account deletion is blocked: the caller is the sole owner of one or more organizations.', httpStatus: 409 },
 
   // ── Idempotency ────────────────────────────────────────────────────────────
