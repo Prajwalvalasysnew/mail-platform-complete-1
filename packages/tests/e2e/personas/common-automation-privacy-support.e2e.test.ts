@@ -1,7 +1,7 @@
 // Tier-parameterized workflow, privacy/export, and support journeys.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { getWorkflowRun, runDataExport } from '@platform/shared';
+import { getWorkflowRun, runDataExport, erasedRecipientPseudonym } from '@platform/shared';
 import { startWorkflowWorker } from '@platform/worker/workflow-worker.js';
 import {
   countMessagesTo,
@@ -241,8 +241,13 @@ describe.each(PERSONA_TIERS)('common automation, privacy, and support: %s', (tie
       method: 'GET', url: '/v1/privacy/deletions', headers: apiHeaders(persona.apiKey),
     });
     expect(deletions.statusCode).toBe(200);
+    // BASE-03: the deletion record retains a keyed pseudonym, never the
+    // plaintext recipient address.
     expect(deletions.json().deletions).toEqual(expect.arrayContaining([
-      expect.objectContaining({ recipient: recipient.toLowerCase(), messages_deleted: 1 }),
+      expect.objectContaining({
+        recipient: erasedRecipientPseudonym(persona.customerId, recipient),
+        messages_deleted: 1,
+      }),
     ]));
   });
 

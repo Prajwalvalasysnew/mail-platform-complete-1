@@ -42,12 +42,40 @@ import { tenantScoped } from '../lib/tenant.js';
 
 const BACKPRESSURE_THRESHOLD = Number(process.env.SEND_QUEUE_BACKPRESSURE ?? 100_000);
 
+// CANSPAM-02: header/identity fields must not smuggle CR/LF/NUL (header
+// injection) — enforced at the schema so both send paths inherit it.
+const NO_HEADER_INJECTION = /^[^\r\n\0]*$/;
+
+// CANSPAM-02: custom headers must not override identity, routing, or opt-out
+// headers the platform is legally responsible for.
+const RESERVED_HEADERS = new Set([
+  'from', 'sender', 'reply-to', 'return-path', 'to', 'cc', 'bcc', 'subject',
+  'date', 'message-id', 'received', 'dkim-signature',
+  'list-unsubscribe', 'list-unsubscribe-post',
+]);
+export function findReservedHeader(headers: Record<string, string> | undefined): string | null {
+  for (const name of Object.keys(headers ?? {})) {
+    const lower = name.toLowerCase();
+    if (RESERVED_HEADERS.has(lower) || lower.startsWith('x-mp-')) return name;
+  }
+  return null;
+}
+
+// CANSPAM-02: display-name spoofing — a from_name that embeds an email-like
+// string (e.g. "support@paypal.com") whose domain is not one of the tenant's
+// verified sending domains impersonates a third party.
+const EMAIL_IN_NAME = /[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/;
+export function embeddedNameDomain(fromName: string | undefined): string | null {
+  const m = fromName?.match(EMAIL_IN_NAME);
+  return m ? m[1]!.toLowerCase() : null;
+}
+
 const SendSchema = z.object({
   from: z.string().email(),
-  from_name: z.string().max(100).optional(),
+  from_name: z.string().max(100).regex(NO_HEADER_INJECTION, 'from_name must not contain line breaks').optional(),
   to: z.union([z.string().email(), z.array(z.string().email()).min(1).max(1000)]),
   reply_to: z.string().email().optional(),
-  subject: z.string().max(998).optional(),
+  subject: z.string().max(998).regex(NO_HEADER_INJECTION, 'subject must not contain line breaks').optional(),
   // Cap inline bodies. The ingress allows 10MB total, but per-field limits stop
   // a single pathological body from driving render/DB cost and protect multi-
   // tenant fairness. ~1MB of HTML is already very large for an email.
@@ -63,7 +91,7 @@ const SendSchema = z.object({
   headers: z
     .record(
       z.string().regex(/^[a-zA-Z0-9\-]+$/, 'header name must be alphanumeric/hyphen only').max(64),
-      z.string().max(2048, 'individual header value too long')
+      z.string().max(2048, 'individual header value too long').regex(NO_HEADER_INJECTION, 'header values must not contain line breaks')
     )
     .optional()
     .refine((h) => !h || Object.keys(h).length <= 50, 'maximum 50 custom headers')
@@ -75,6 +103,14 @@ const SendSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
   tracking: z.object({ opens: z.boolean().default(true), clicks: z.boolean().default(true) }).optional(),
   ip_pool: z.enum(['transactional', 'marketing', 'quarantine']).optional(),
+  // CANSPAM-01: legal message classification. Defaults to 'commercial' (the
+  // safe class — full CAN-SPAM treatment). Declaring 'transactional' or
+  // 'relationship' requires the 'classify' scope and is audit-logged.
+  message_class: z.enum(['transactional', 'relationship', 'commercial']).optional(),
+  // CANSPAM-03: sender attestation that a commercial message is identified as
+  // an advertisement where legally required (recorded as compliance evidence
+  // in message metadata; part of the campaign checklist, not a content scan).
+  ad_identified: z.boolean().optional(),
   send_at: z.string().datetime().optional(),
   unsubscribe_group_id: z.string().uuid().optional(),
   // 'critical' puts the message at the head of the queue (OTPs, fraud/outage
@@ -168,6 +204,28 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     }
     const body = parsed.data;
 
+    // CANSPAM-01: only keys holding the 'classify' scope may declare a
+    // non-commercial class; everyone else gets the safe default. Rejected
+    // loudly (not silently downgraded) so misclassification attempts are
+    // visible to the integrator and in the audit trail.
+    const messageClass = body.message_class ?? 'commercial';
+    if (messageClass !== 'commercial' && !auth.scopes.includes('classify') && !auth.scopes.includes('admin')) {
+      return reply.code(403).send({
+        error: 'classification_not_authorized',
+        message: `Declaring message_class '${messageClass}' requires the 'classify' scope.`,
+      });
+    }
+
+    // CANSPAM-02: custom headers must not override identity/routing/opt-out
+    // headers the platform controls.
+    const reservedHeader = findReservedHeader(body.headers);
+    if (reservedHeader) {
+      return reply.code(422).send({
+        error: 'reserved_header',
+        message: `Header '${reservedHeader}' is set by the platform and cannot be overridden.`,
+      });
+    }
+
     // Resolve content — either inline or from a template
     let subject = body.subject;
     let html = body.html;
@@ -227,6 +285,26 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     if (!domain) return reply.code(403).send({ error: 'domain_not_registered', message: `Register ${fromDomain} via POST /v1/domains.` });
     if (!domain.verified_at || !domain.dkim_verified) {
       return reply.code(403).send({ error: 'domain_not_verified', message: `Verify ${fromDomain} first.` });
+    }
+
+    // CANSPAM-02: display-name spoofing guard. A from_name that embeds an
+    // email-like string (e.g. 'support@paypal.com') may only reference a
+    // domain this tenant has verified — anything else impersonates a third
+    // party in the most visible header a recipient sees.
+    const nameDomain = embeddedNameDomain(body.from_name);
+    if (nameDomain) {
+      const owned = await tenantScoped(req, (trx) => trx
+        .selectFrom('sending_domains').select('id')
+        .where('customer_id', '=', auth.customer_id)
+        .where('domain', '=', nameDomain)
+        .where('verified_at', 'is not', null)
+        .executeTakeFirst());
+      if (!owned) {
+        return reply.code(422).send({
+          error: 'from_name_spoofing',
+          message: `from_name embeds an address at '${nameDomain}', which is not a verified sending domain of this account.`,
+        });
+      }
     }
 
     // Require email verification before real delivery. Checked after domain so
@@ -502,10 +580,15 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
             attachments: attachmentsColumn ? (JSON.stringify(attachmentsColumn) as any) : null,
             headers: body.headers ?? {},
             tags: body.tags ?? [],
-            metadata: { ...(body.metadata ?? {}), ...(auth.test_mode ? { _test_mode: true } : {}) },
+            metadata: {
+              ...(body.metadata ?? {}),
+              ...(auth.test_mode ? { _test_mode: true } : {}),
+              ...(body.ad_identified !== undefined ? { _ad_identified: body.ad_identified } : {}),
+            },
             tracking_opens: body.tracking?.opens ?? true,
             tracking_clicks: body.tracking?.clicks ?? true,
             ip_pool: ipPool,
+            message_class: messageClass,
             template_id: templateId,
             risk_score: combinedScore,
             send_at: sendAt,
@@ -515,6 +598,20 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         )
         .returning(['message_id'])
         .execute();
+
+      // CANSPAM-01 audit trail: an accepted non-commercial declaration is a
+      // legal-classification decision — record who made it and for which
+      // messages.
+      if (messageClass !== 'commercial') {
+        await trx.insertInto('audit_log').values({
+          customer_id: auth.customer_id,
+          api_key_id: auth.api_key_id,
+          action: 'message_class_declared',
+          resource: messageClass,
+          ip: req.ip,
+          metadata: { message_ids: rows.map((r) => r.message_id), message_class: messageClass },
+        }).execute();
+      }
 
       if (needsReview) {
         await trx.insertInto('review_queue').values(
@@ -724,6 +821,7 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         text: string | null;
         templateId: string | null;
         ipPool: string;
+        messageClass: 'transactional' | 'relationship' | 'commercial';
         needsReview: boolean;
         combinedScore: number;
         combinedReasons: string[];
@@ -739,6 +837,37 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         let html = msg.html;
         let text = msg.text;
         let templateId: string | null = null;
+
+        // CANSPAM-01: same classification authorization as single /send,
+        // rejected per-entry so the rest of the batch proceeds.
+        const messageClass = msg.message_class ?? 'commercial';
+        if (messageClass !== 'commercial' && !auth.scopes.includes('classify') && !auth.scopes.includes('admin')) {
+          results.push({ index: i, accepted: false, error: 'classification_not_authorized' });
+          refundCount++;
+          continue;
+        }
+
+        // CANSPAM-02 (parity with single /send): reserved headers and
+        // display-name spoofing, rejected per-entry.
+        if (findReservedHeader(msg.headers)) {
+          results.push({ index: i, accepted: false, error: 'reserved_header' });
+          refundCount++;
+          continue;
+        }
+        const nameDomain = embeddedNameDomain(msg.from_name);
+        if (nameDomain) {
+          const owned = await tenantScoped(req, (trx) => trx
+            .selectFrom('sending_domains').select('id')
+            .where('customer_id', '=', auth.customer_id)
+            .where('domain', '=', nameDomain)
+            .where('verified_at', 'is not', null)
+            .executeTakeFirst());
+          if (!owned) {
+            results.push({ index: i, accepted: false, error: 'from_name_spoofing' });
+            refundCount++;
+            continue;
+          }
+        }
 
         if (msg.template_id) {
           const tpl = await tenantScoped(req, (trx) =>
@@ -824,7 +953,7 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
           if (optedOut) { results.push({ index: i, accepted: false, suppressed: true }); refundCount++; continue; }
         }
 
-        toCommit.push({ msg, message_id, subject, html: html ?? null, text: text ?? null, templateId, ipPool, needsReview: action === 'review', combinedScore, combinedReasons, sendAt, unsubscribeGroupId });
+        toCommit.push({ msg, message_id, subject, html: html ?? null, text: text ?? null, templateId, ipPool, messageClass, needsReview: action === 'review', combinedScore, combinedReasons, sendAt, unsubscribeGroupId });
         results.push({ index: i, message_id, accepted: true, held_for_review: action === 'review', ...(sendAt && sendAt.getTime() > Date.now() + 1000 ? { scheduled_for: sendAt.toISOString() } : {}) });
       }
 
@@ -886,10 +1015,15 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
               body_object_key: ptr.object_key, body_size: ptr.size, body_hash: ptr.hash,
               headers: c.msg.headers ?? {},
               tags: c.msg.tags ?? [],
-              metadata: { ...(c.msg.metadata ?? {}), ...(auth.test_mode ? { _test_mode: true } : {}) },
+              metadata: {
+                ...(c.msg.metadata ?? {}),
+                ...(auth.test_mode ? { _test_mode: true } : {}),
+                ...(c.msg.ad_identified !== undefined ? { _ad_identified: c.msg.ad_identified } : {}),
+              },
               tracking_opens: c.msg.tracking?.opens ?? true,
               tracking_clicks: c.msg.tracking?.clicks ?? true,
               ip_pool: c.ipPool,
+              message_class: c.messageClass,
               template_id: c.templateId,
               risk_score: c.combinedScore,
               send_at: c.sendAt,
@@ -898,6 +1032,22 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
               });
             })
           ).returning(['message_id']).execute();
+
+          // CANSPAM-01 audit trail (parity with single /send).
+          const declared = toCommit.filter((c) => c.messageClass !== 'commercial');
+          if (declared.length) {
+            await trx.insertInto('audit_log').values({
+              customer_id: auth.customer_id,
+              api_key_id: auth.api_key_id,
+              action: 'message_class_declared',
+              resource: 'batch',
+              ip: req.ip,
+              metadata: {
+                message_ids: declared.map((c) => c.message_id),
+                classes: Object.fromEntries(declared.map((c) => [c.message_id, c.messageClass])),
+              },
+            }).execute();
+          }
 
           const reviewItems = toCommit.filter((c) => c.needsReview);
           const sendItems = toCommit.filter((c) => !c.needsReview);

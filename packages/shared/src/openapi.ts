@@ -807,6 +807,29 @@ export const openapiSpec = {
         },
       },
     },
+    '/auth/me/export': {
+      get: {
+        summary: 'Export the authenticated user\'s own account data (GDPR/CCPA access)',
+        operationId: 'exportOwnAccountData',
+        security: [{ userSessionAuth: [] }],
+        responses: {
+          '200': { description: 'Account data export: user record, memberships, sessions, MFA/passkey metadata, and documented exclusions. Never includes credential secrets.' },
+          '401': { description: 'Session required', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/auth/me': {
+      delete: {
+        summary: 'Delete the authenticated user\'s own account (self-service erasure)',
+        operationId: 'deleteOwnAccount',
+        security: [{ userSessionAuth: [] }],
+        responses: {
+          '200': { description: 'Account anonymized; credentials, sessions, tokens, and memberships removed' },
+          '400': { description: 'Missing confirmation phrase', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '409': { description: 'Caller is the sole owner of one or more organizations; transfer ownership first', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
     '/auth/sessions': {
       get: {
         summary: 'List the current user\'s active sessions (devices)',
@@ -889,5 +912,27 @@ export const openapiSpec = {
       },
     },
     '/privacy/delete-recipient': { post: { summary: 'GDPR: delete all data for a recipient', operationId: 'deleteRecipient', responses: { '200': { description: 'Deletion summary' } } } },
+    '/privacy/cases': {
+      post: { summary: 'Open a data-subject request case (intake, jurisdiction deadline computed)', operationId: 'createPrivacyCase', responses: { '201': { description: 'Case created with statutory due date' } } },
+      get: { summary: 'List privacy cases (filter by status or overdue)', operationId: 'listPrivacyCases', parameters: [{ name: 'status', in: 'query', schema: { type: 'string' } }, { name: 'overdue', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } }], responses: { '200': { description: 'Cases, newest first' } } },
+    },
+    '/privacy/cases/{id}': {
+      get: { summary: 'Get a privacy case with its append-only event history', operationId: 'getPrivacyCase', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { '200': { description: 'Case with events' }, '404': { description: 'Not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } },
+    },
+    '/privacy/cases/{id}/verify': {
+      post: { summary: 'Record data-subject identity verification for a case', operationId: 'verifyPrivacyCase', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { '200': { description: 'Verification recorded' }, '404': { description: 'Not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } },
+    },
+    '/privacy/cases/{id}/transition': {
+      post: { summary: 'Move a privacy case through its state machine (fulfill requires verification; deny requires a reason)', operationId: 'transitionPrivacyCase', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { '200': { description: 'New case state' }, '409': { description: 'Illegal transition', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } }, '422': { description: 'Missing verification or denial reason', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } },
+    },
+    '/privacy/cases/{id}/extend': {
+      post: { summary: 'Apply the single statutory deadline extension with a documented reason', operationId: 'extendPrivacyCase', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { '200': { description: 'Extended due date' }, '422': { description: 'Already extended', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } },
+    },
+    '/privacy/cases/{id}/artifacts': {
+      post: { summary: 'Attach a fulfillment artifact reference (deletion request id, export id, …)', operationId: 'attachPrivacyCaseArtifact', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { '200': { description: 'Artifact reference recorded' } } },
+    },
+    '/privacy/cases/{id}/communications': {
+      post: { summary: 'Record a case communication summary (channel and direction, never content)', operationId: 'recordPrivacyCaseCommunication', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { '200': { description: 'Communication recorded in the case ledger' } } },
+    },
   },
 } as const;

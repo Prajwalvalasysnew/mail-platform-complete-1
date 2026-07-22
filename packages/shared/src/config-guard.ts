@@ -53,6 +53,7 @@ const RULES: SecretRule[] = [
   { name: 'API_KEY_PEPPER', required: true, minLength: 32 },
   { name: 'ADMIN_SESSION_PEPPER', required: true, minLength: 32 },
   { name: 'ADMIN_TOKEN', required: false, minLength: 16 },
+  { name: 'PRIVACY_PSEUDONYM_SECRET', required: false, minLength: 16 },
   { name: 'HARAKA_OUTBOUND_PASS', required: false },
   { name: 'WORKER_SMTP_PASSWORD', required: false },
   { name: 'REDIS_PASSWORD', required: false },

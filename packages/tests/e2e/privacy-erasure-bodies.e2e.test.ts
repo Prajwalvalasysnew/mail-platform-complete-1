@@ -10,7 +10,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { buildTestApp, seedCustomer, seedVerifiedDomain } from './harness.js';
-import { db, setBodyStore, FilesystemStore, getBodyStore, retryPendingBodyErasures } from '@platform/shared';
+import { db, setBodyStore, FilesystemStore, getBodyStore, retryPendingBodyErasures, erasedRecipientPseudonym } from '@platform/shared';
 
 let app: FastifyInstance;
 beforeAll(async () => { app = await buildTestApp(); });
@@ -129,8 +129,12 @@ describe('GDPR erasure removes offloaded body objects', () => {
     });
     expect(del.statusCode).toBe(202);
     expect(del.json()).toMatchObject({ status: 'pending', objects_pending: 1, bodies_deleted: 0 });
+    // BASE-03: the evidence row stores the keyed pseudonym, never the
+    // plaintext recipient.
     const request = await db.selectFrom('deletion_requests').select(['id', 'status'])
-      .where('customer_id', '=', cust.customerId).where('recipient', '=', victim).executeTakeFirstOrThrow();
+      .where('customer_id', '=', cust.customerId)
+      .where('recipient', '=', erasedRecipientPseudonym(cust.customerId, victim))
+      .executeTakeFirstOrThrow();
     expect(request.status).toBe('pending');
     const item = await db.selectFrom('deletion_object_items').select(['status', 'attempts', 'last_error'])
       .where('deletion_request_id', '=', request.id).where('storage_kind', '=', 'fs').executeTakeFirstOrThrow();

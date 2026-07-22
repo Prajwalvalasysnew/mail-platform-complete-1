@@ -48,6 +48,7 @@ import {
   sweepOverdueWorkflowRuns,
   recoverStuckWorkflowRuns,
   sweepFinishedWorkflowRuns,
+  runUnsubscribeMonitor,
 } from '@platform/shared';
 
 interface Job {
@@ -183,6 +184,24 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         if (result.claimed) logger.info({ result }, 'privacy body erasure retry completed');
         if (result.failed || result.requestsFailed) {
           logger.error({ result }, 'privacy body erasure retry still has failures');
+        }
+      },
+    },
+    {
+      // CANSPAM-05: synthetic unsubscribe monitoring. Validates sampled
+      // commercial-message unsubscribe chains across the 30-day window,
+      // exercises the real one-click suppression write with a synthetic
+      // recipient, and cross-checks opt-outs against enforced suppressions.
+      // 6-hourly, so a broken unsubscribe path is caught same-day and the
+      // evidence trail shows multiple daily checks.
+      name: 'canspam_unsubscribe_monitor',
+      everyMs: 6 * HOUR,
+      run: async () => {
+        const result = await runUnsubscribeMonitor();
+        if (result.failures > 0 || result.slaViolations > 0) {
+          logger.error({ result }, 'CAN-SPAM unsubscribe monitor FAILURES — opt-out path may be broken');
+        } else {
+          logger.info({ result }, 'CAN-SPAM unsubscribe monitor clean');
         }
       },
     },

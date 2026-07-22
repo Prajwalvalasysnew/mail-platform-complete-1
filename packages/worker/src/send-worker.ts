@@ -20,6 +20,7 @@ import {
   withRemoteContext,
   decrementQueueDepth,
   addSuppression,
+  appendCompliantFooter,
   type SendJobData,
   loadMessageBody,
   isMessagePrivacyErased,
@@ -199,15 +200,15 @@ export function startSendWorker(logger: Logger) {
           throw paErr;
         }
 
+        // CANSPAM-04: footer appended AFTER rendering/tracking transforms via
+        // the shared tamper-resistant builder (HTML-escapes the address so a
+        // crafted value cannot inject markup or a fake unsubscribe target).
         let finalHtml = html;
         let finalText = loaded.text;
         if (physicalAddress) {
-          if (finalHtml) {
-            finalHtml += `\n<div style="font-size:11px;color:#888;margin-top:24px;border-top:1px solid #eee;padding-top:8px;">${physicalAddress.replace(/\n/g, '<br>')} &nbsp;&bull;&nbsp; <a href="${unsubUrl}">Unsubscribe</a></div>`;
-          }
-          if (finalText) {
-            finalText += `\n\n--\n${physicalAddress}\nUnsubscribe: ${unsubUrl}`;
-          }
+          const withFooter = appendCompliantFooter({ html: finalHtml, text: finalText, physicalAddress, unsubUrl });
+          finalHtml = withFooter.html ?? undefined;
+          finalText = withFooter.text ?? undefined;
         }
 
         const result = await tx.send({

@@ -10,7 +10,11 @@ import { db } from './db.js';
 import { generateApiKeyV2, type KeyType } from './apikeys.js';
 
 // The scopes the platform actually enforces (see api/src/plugins/scope.ts).
-export const API_KEY_SCOPES = ['send', 'domains', 'suppressions', 'messages', 'webhooks', 'templates', 'workflows', 'smtp', 'subaccounts'] as const;
+// 'classify' (CANSPAM-01) authorizes declaring a non-commercial message class
+// on sends; without it every message is treated as commercial (full CAN-SPAM
+// treatment). Deliberately separate from 'send' so classification authority
+// can be restricted to vetted integrations.
+export const API_KEY_SCOPES = ['send', 'domains', 'suppressions', 'messages', 'webhooks', 'templates', 'workflows', 'smtp', 'subaccounts', 'classify'] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 export const API_KEY_TYPES: KeyType[] = ['secret', 'publishable', 'test'];
