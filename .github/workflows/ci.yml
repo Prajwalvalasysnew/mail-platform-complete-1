@@ -73,7 +73,10 @@ jobs:
       - name: Run tests (unit + end-to-end)
         run: npm test
         env:
-          DELIVERY_TRANSPORT: haraka
+          # The CI job does not run an outbound Haraka service. Use the local
+          # sink so live-key persona tests exercise the full queue/worker path
+          # without retrying an unavailable SMTP endpoint forever.
+          DELIVERY_TRANSPORT: log
           TRACKING_DOMAIN: http://localhost:4000
           BOUNCE_DOMAIN: bounces.localhost
 

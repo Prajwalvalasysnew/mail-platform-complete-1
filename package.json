@@ -30,6 +30,7 @@
     "node": ">=20.0.0"
   },
   "overrides": {
+    "fast-uri": "3.1.4",
     "nodemailer": "9.0.1",
     "undici": "6.27.0",
     "serialize-javascript": "7.0.5",
