@@ -99,6 +99,21 @@ POST  /admin/deliverability/blocklist-scan(operator)
 POST  /admin/api-keys/rotate              { customer_id, api_key_id, name? }        (admin)
 ```
 
+## CAN-SPAM unsubscribe monitoring (CANSPAM-05)
+
+```
+GET   /admin/canspam/unsubscribe-monitor?days=30   aggregated synthetic-check evidence
+POST  /admin/canspam/unsubscribe-monitor/run       on-demand monitoring pass   (operator)
+```
+
+The worker runs the same checks every 6 hours: unsubscribe-chain validation
+for commercial messages sampled across the 30-day window (always including
+the oldest), a synthetic one-click suppression write with measured latency
+(cleaned up afterwards), and an SLA scan that flags any opt-out in the ledger
+without an enforced suppression. The report returns availability %, days with
+checks, the oldest link age validated, max suppression latency, current SLA
+violations, and recent failures — the monthly CAN-SPAM evidence package.
+
 ## Platform overview (dashboard data)
 
 ```

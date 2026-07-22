@@ -66,6 +66,8 @@ import {
   verifyAdminSessionCsrf,
   getPlatformSettings,
   updatePlatformSettings,
+  runUnsubscribeMonitor,
+  unsubscribeMonitorReport,
   type AdminContext,
   type AdminRole,
   type AdminSessionIssued,
@@ -234,6 +236,23 @@ function capabilitiesForRole(role: AdminRole): Record<string, boolean> {
 }
 
 export const adminRoutes: FastifyPluginAsync = async (app) => {
+  // ---- CAN-SPAM unsubscribe monitoring (CANSPAM-05) ----
+  // Aggregated synthetic-check evidence for the report window (default 30
+  // days): availability %, days with checks, oldest link age validated,
+  // suppression latency, SLA violations, recent failures.
+  app.get('/canspam/unsubscribe-monitor', { preHandler: requireAdmin('support') }, async (req) => {
+    const { days } = req.query as { days?: string };
+    const windowDays = Math.min(Math.max(1, Number(days ?? 30) || 30), 365);
+    return unsubscribeMonitorReport(windowDays);
+  });
+
+  // Trigger an on-demand monitoring pass (same checks the scheduler runs).
+  app.post('/canspam/unsubscribe-monitor/run', { preHandler: requireAdmin('operator') }, async (req) => {
+    const result = await runUnsubscribeMonitor();
+    await auditAdminAction(req.admin!, 'canspam_monitor_run', 'unsubscribe_monitor', { ...result });
+    return result;
+  });
+
   // ---- Customer support console ----
   app.get('/customers', { preHandler: requireAdmin('support') }, async (req) => {
     const query = normalizeSupportCustomerQuery(req.query as Record<string, string>);

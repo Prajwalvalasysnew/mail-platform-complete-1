@@ -303,6 +303,7 @@ export interface Database {
   unsubscribe_groups: UnsubscribeGroupsTable;
   unsubscribe_group_members: UnsubscribeGroupMembersTable;
   privacy_cases: PrivacyCasesTable;
+  unsubscribe_monitor_runs: UnsubscribeMonitorRunsTable;
   privacy_case_events: PrivacyCaseEventsTable;
   workflows: WorkflowsTable;
   workflow_versions: WorkflowVersionsTable;
@@ -1083,6 +1084,19 @@ export interface PrivacyCasesTable {
   artifacts: Generated<Array<Record<string, unknown>>>;
   created_by: string | null;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+// Migration 078 (CANSPAM-05): synthetic unsubscribe monitoring evidence.
+export interface UnsubscribeMonitorRunsTable {
+  id: Generated<string>;
+  run_at: Generated<Timestamp>;
+  kind: 'chain_validation' | 'one_click_synthetic' | 'sla_scan';
+  ok: boolean;
+  target_message_id: string | null;
+  message_age_days: number | null;
+  latency_ms: number | null;
+  detail: Generated<Record<string, unknown>>;
+  error: string | null;
 }
 
 export interface PrivacyCaseEventsTable {

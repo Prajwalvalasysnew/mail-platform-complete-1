@@ -26,6 +26,11 @@ async function seedRecipientFootprint(customerId: string, email: string) {
     customer_id: customerId, email, action: 'suppress', reason: 'unsubscribe',
     source: 'one_click_unsubscribe', notes: `unsubscribed by ${email}`, message_id: null,
   }).execute();
+  // A real one-click unsub writes ledger + suppression together; keep the
+  // fixture consistent so the CAN-SPAM SLA scan sees an honored opt-out.
+  await db.insertInto('suppressions').values({
+    customer_id: customerId, email, reason: 'unsubscribe', notes: null,
+  }).onConflict((oc) => oc.columns(['customer_id', 'email']).doNothing()).execute();
   const group = await db.insertInto('unsubscribe_groups')
     .values({ customer_id: customerId, name: 'Newsletter' })
     .returning('id').executeTakeFirstOrThrow();
@@ -63,7 +68,6 @@ describe('privacy export completeness and erasure pseudonymization', () => {
     const cust = await seedCustomer({ scopes: ['send', 'messages'] });
     const domain = await seedVerifiedDomain(cust.customerId);
     const victim = `erase-pseudo-${Date.now()}@example.com`;
-    await seedRecipientFootprint(cust.customerId, victim);
 
     const send = await app.inject({
       method: 'POST', url: '/v1/send',
@@ -71,6 +75,9 @@ describe('privacy export completeness and erasure pseudonymization', () => {
       payload: { from: `s@${domain}`, to: victim, subject: 'x', text: 'body' },
     });
     expect(send.statusCode).toBe(202);
+    // Footprint (incl. suppression) seeded after the send, as a real one-click
+    // opt-out would occur.
+    await seedRecipientFootprint(cust.customerId, victim);
 
     const del = await app.inject({
       method: 'POST', url: '/v1/privacy/delete-recipient',
