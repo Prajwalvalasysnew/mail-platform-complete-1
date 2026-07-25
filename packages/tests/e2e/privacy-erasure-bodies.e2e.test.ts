@@ -146,8 +146,14 @@ describe('GDPR erasure removes offloaded body objects', () => {
     const retried = await retryPendingBodyErasures({ limit: 10, maxAttempts: 3 });
     expect(retried.claimed).toBeGreaterThanOrEqual(1);
     expect(retried.completed).toBeGreaterThanOrEqual(1);
-    expect(retried.failed).toBe(0);
     expect(retried.requestsCompleted).toBeGreaterThanOrEqual(1);
+    // Scoped to THIS request: retryPendingBodyErasures() sweeps every tenant,
+    // so asserting on its global `failed` count would fail whenever an
+    // unrelated tenant has outstanding items — which is a normal state, not a
+    // defect in this erasure.
+    const failedHere = await db.selectFrom('deletion_object_items').select('id')
+      .where('deletion_request_id', '=', request.id).where('status', '=', 'failed').execute();
+    expect(failedHere).toHaveLength(0);
     const repairedRequest = await db.selectFrom('deletion_requests').select('status')
       .where('id', '=', request.id).executeTakeFirstOrThrow();
     expect(repairedRequest.status).toBe('completed');

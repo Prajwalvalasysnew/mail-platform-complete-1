@@ -23,6 +23,7 @@ export default defineConfig({
           '@platform/api',
           '@platform/worker',
           '@platform/smtp-gateway',
+          '@platform/tracker',
           /node_modules/,
         ],
       },

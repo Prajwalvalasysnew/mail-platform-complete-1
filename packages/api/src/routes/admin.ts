@@ -60,6 +60,7 @@ import {
   purgeDeadLetter,
   purgeAllDeadLetters,
   runRetention,
+  replayPrivacyTombstones,
   clearRetentionPolicyCache,
   reconcileMetering,
   rotateAdminSessionCsrf,
@@ -924,6 +925,33 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       dmarcRetentionDays: parsed.data.dmarc_retention_days,
     });
     await auditAdminAction(req.admin!, 'retention_run', 'platform', result as unknown as Record<string, unknown>);
+    return reply.code(200).send({ ok: true, result });
+  });
+
+  // Restore-time re-deletion (BASE-06 / mandatory privacy regression test 6).
+  //
+  // Online erasure does not rewrite backup images, so a restore from a backup
+  // taken before an erasure brings the erased rows back. This replays the
+  // privacy tombstones over the restored data and must be run after ANY
+  // restore, before the restored node serves traffic — see
+  // docs/runbooks/RESTORE_RE_DELETION.md.
+  //
+  // Admin-only rather than operator: it destroys restored rows.
+  app.post('/privacy/replay-tombstones', {
+    preHandler: requireAdmin('admin'),
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const parsed = z.object({
+      customer_id: z.string().uuid().optional(),
+      limit: z.number().int().min(1).max(10_000).optional(),
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const result = await replayPrivacyTombstones({
+      customerId: parsed.data.customer_id,
+      limit: parsed.data.limit,
+    });
+    await auditAdminAction(req.admin!, 'privacy_tombstone_replay', 'platform', result as unknown as Record<string, unknown>);
     return reply.code(200).send({ ok: true, result });
   });
 
