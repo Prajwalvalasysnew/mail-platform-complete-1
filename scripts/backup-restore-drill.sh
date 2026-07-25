@@ -105,6 +105,55 @@ for TABLE in customers api_keys sending_domains messages events suppressions; do
   ok "$TABLE: $SRC_COUNT rows"
 done
 
+# ── 8. Verify erasures survived the restore (BASE-12) ────────────────────────
+# The steps above prove data comes BACK. This proves erased data STAYS GONE,
+# which the compliance plan requires of a resilience exercise ("restored
+# erasures and suppressions remain enforced"). A restore from an image taken
+# BEFORE an erasure resurrects the erased rows; these are the invariants that
+# detect it.
+info "verifying privacy invariants on the restored copy"
+
+# 8a. No tombstoned message may exist again. In production, erasure deletes the
+# message and writes the tombstone in one transaction, so a tombstoned message
+# that still exists means the restore brought erased data back and tombstone
+# replay has not been run.
+#
+# On a DEVELOPMENT database this can trip on test fixtures:
+# privacy-worker-tombstone.e2e.test.ts deliberately seeds a tombstone next to a
+# surviving message to exercise the stale-job worker gate. Run the drill against
+# production or a production-shaped copy.
+RESURRECTED=$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$SCRATCH_DB" -tAc \
+  "SELECT count(*) FROM privacy_message_tombstones t
+     JOIN messages m ON m.message_id = t.message_id AND m.customer_id = t.customer_id;" \
+  | tr -d '[:space:]')
+if [ "$RESURRECTED" != "0" ]; then
+  fail "restore resurrected $RESURRECTED erased message(s). Run tombstone replay before serving traffic:
+       POST /admin/privacy/replay-tombstones  (see docs/runbooks/RESTORE_RE_DELETION.md)"
+fi
+ok "no erased messages resurrected"
+
+# 8b. A consent row marked pseudonymized must still hold a pseudonym. A
+# plaintext address here means the scrub was rolled back by the restore.
+UNSCRUBBED=$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$SCRATCH_DB" -tAc \
+  "SELECT count(*) FROM consent_events
+    WHERE pseudonymized_at IS NOT NULL AND email NOT LIKE 'erased:%';" \
+  | tr -d '[:space:]')
+if [ "$UNSCRUBBED" != "0" ]; then
+  fail "restore rolled back pseudonymization on $UNSCRUBBED consent row(s). Run tombstone replay
+       (see docs/runbooks/RESTORE_RE_DELETION.md)"
+fi
+ok "erased identifiers still pseudonymized"
+
+# 8c. Suppressions must survive. An opt-out lost to a restore means a recipient
+# who unsubscribed starts receiving mail again — report the count so the
+# operator can compare it against the pre-restore figure.
+SUPPRESSIONS=$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$SCRATCH_DB" -tAc \
+  "SELECT count(*) FROM suppressions;" | tr -d '[:space:]')
+TOMBSTONES=$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$SCRATCH_DB" -tAc \
+  "SELECT count(*) FROM privacy_message_tombstones;" | tr -d '[:space:]')
+ok "suppressions preserved: $SUPPRESSIONS (compare against the pre-restore count)"
+ok "erasure tombstones carried over: $TOMBSTONES"
+
 echo ""
 echo "[drill] ════════════════════════════════════════════"
 echo "[drill]  BACKUP / RESTORE DRILL PASSED"
@@ -113,4 +162,12 @@ echo "[drill]  tables    : $SRC_TABLES"
 echo "[drill]  migrations: $SRC_MIGS"
 echo "[drill]  restore RTO: ${RESTORE_RTO}s (local dump→restore; measure against"
 echo "[drill]              production-sized data + real object storage for the SLA)"
+echo "[drill]  suppressions: $SUPPRESSIONS   tombstones: $TOMBSTONES"
+echo "[drill] ────────────────────────────────────────────"
+echo "[drill]  NOTE: this drill restores a dump of the CURRENT database, so it"
+echo "[drill]  cannot resurrect anything by itself. A real restore from an"
+echo "[drill]  OLDER image can, and tombstone replay is mandatory before the"
+echo "[drill]  restored node serves traffic:"
+echo "[drill]    POST /admin/privacy/replay-tombstones"
+echo "[drill]    docs/runbooks/RESTORE_RE_DELETION.md"
 echo "[drill] ════════════════════════════════════════════"

@@ -27,12 +27,15 @@ effectively, or sufficient for any framework — see §16 release gates.
 | PCI-03 | Done | `billing-payload-allowlist.ts`, migration 079, retention sweep |
 | Privacy regression test 6 | Done | `replayPrivacyTombstones()`, `privacy-restore-replay.e2e`, [restore runbook](runbooks/RESTORE_RE_DELETION.md) |
 
-**Still open (P0):** BASE-07, BASE-09 through BASE-14. These require production
+| BASE-11 | Procedure written; **exercise outstanding** | [Incident and breach runbook](runbooks/INCIDENT_AND_BREACH.md) — severity model, breach clock, platform playbooks. Contacts, templates, and the first tabletop are organizational |
+| BASE-12 | Partial | `scripts/backup-restore-drill.sh` now also verifies erasures survived the restore (no resurrected messages, pseudonymization intact, suppressions preserved). Measured RPO/RTO against production-sized data remains outstanding |
+| BASE-13 | Template only | [Vendor register](VENDOR_REGISTER.md) — structure and codebase integration points; the register itself is a deployment fact and is unfilled |
+
+**Still open (P0):** BASE-07, BASE-09, BASE-10, BASE-14, plus the outstanding
+halves of BASE-11, BASE-12, BASE-13 and BASE-15. These need production
 configuration, organizational process, and operating evidence that source code
-cannot supply — key management validation, IAM operation, logging operations,
-incident and breach management, resilience drills, vendor governance, and
-secure development evidence. BASE-15 also has outstanding legal and product
-work.
+cannot supply — key-management validation, IAM operation, logging operations,
+and secure-development evidence.
 
 This document is the implementation roadmap for preparing the mail platform
 for production use under HIPAA, GDPR, CCPA as amended by CPRA, CAN-SPAM, PCI
