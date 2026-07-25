@@ -34,6 +34,9 @@ import {
   smtpGatewayMessages,
   smtpGatewayAuthFailures,
   smtpGatewayThrottled,
+  scanFields,
+  summarizeFindings,
+  cardDataPolicy,
   type AttachmentInput,
 } from '@platform/shared';
 
@@ -226,6 +229,20 @@ export async function acceptSmtpMessage(
   const text = parsed.text ?? undefined;
   if (!subject) throw new SmtpReject(554, 'Message must include a Subject header');
   if (!html && !text) throw new SmtpReject(554, 'Message must include a text or HTML body');
+
+  // PCI-02 (parity with POST /v1/send): card data is not accepted through any
+  // submission path. Rejected at DATA with a permanent 554 so the sending
+  // device does not retry the same content forever. The log line names the
+  // fields, never the digits.
+  const cardFindings = scanFields({ subject, html, text });
+  if (cardFindings.length > 0 && cardDataPolicy() === 'block') {
+    const summary = summarizeFindings(cardFindings);
+    console.warn(
+      `[pci] card data detected in SMTP submission — rejected ` +
+      `(pan=${summary.pan} cvv=${summary.cvv} fields=${summary.fields.join(',')})`,
+    );
+    throw new SmtpReject(554, 'Message content appears to contain a payment card number; this platform is not an approved cardholder-data channel');
+  }
 
   // Attachments go through the same validator as the API (size caps,
   // executable denylist, filename sanitization).

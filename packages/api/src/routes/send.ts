@@ -36,6 +36,10 @@ import {
   type SendResponse,
   getBodyStore,
   evaluateBillingAccess,
+  scanFields,
+  redactCardData,
+  summarizeFindings,
+  cardDataPolicy,
 } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
@@ -68,6 +72,29 @@ const EMAIL_IN_NAME = /[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/;
 export function embeddedNameDomain(fromName: string | undefined): string | null {
   const m = fromName?.match(EMAIL_IN_NAME);
   return m ? m[1]!.toLowerCase() : null;
+}
+
+// PCI-02: message content is not an approved card-data channel. Screening runs
+// AFTER template rendering so a PAN arriving through `variables` is caught too,
+// not only one pasted into an inline body. Returns the (possibly redacted)
+// content plus value-free findings — the digits never leave this function.
+export interface CardScreenResult {
+  findings: ReturnType<typeof scanFields>;
+  subject?: string;
+  html?: string;
+  text?: string;
+}
+export function screenContentForCardData(
+  content: { subject?: string; html?: string; text?: string },
+): CardScreenResult {
+  const findings = scanFields(content);
+  if (findings.length === 0 || cardDataPolicy() !== 'redact') return { findings, ...content };
+  return {
+    findings,
+    subject: content.subject === undefined ? undefined : redactCardData(content.subject, 'subject').text,
+    html: content.html === undefined ? undefined : redactCardData(content.html, 'html').text,
+    text: content.text === undefined ? undefined : redactCardData(content.text, 'text').text,
+  };
 }
 
 const SendSchema = z.object({
@@ -261,6 +288,40 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
 
     if (!subject) return reply.code(400).send({ error: 'missing_subject' });
     if (!html && !text) return reply.code(400).send({ error: 'missing_content', message: 'Provide html, text, or a template_id' });
+
+    // PCI-02: refuse (or redact) card data before the message is persisted or
+    // queued. Under the default 'block' policy nothing is written, so the PAN
+    // never reaches the messages table, the body store, or a backup.
+    const screened = screenContentForCardData({ subject, html, text });
+    if (screened.findings.length > 0) {
+      const summary = summarizeFindings(screened.findings);
+      // Value-free: records WHICH fields carried card data, never the digits.
+      await db.insertInto('audit_log').values({
+        customer_id: auth.customer_id,
+        api_key_id: auth.api_key_id,
+        action: 'card_data_detected',
+        resource: 'send',
+        ip: req.ip,
+        metadata: { ...summary, policy: cardDataPolicy() },
+      }).execute();
+      req.log.warn({ customer_id: auth.customer_id, ...summary }, '[pci] card data detected in outbound message content');
+
+      if (cardDataPolicy() === 'block') {
+        return reply.code(422).send({
+          error: 'card_data_detected',
+          message:
+            'Message content appears to contain a payment card number. This platform is not an approved ' +
+            'channel for cardholder data — remove it and send a reference (such as the last four digits) instead.',
+          fields: summary.fields,
+        });
+      }
+      // 'redact' policy: continue with the scrubbed content. `?? subject`
+      // keeps the non-empty narrowing established by the missing_subject
+      // guard above — redaction can shorten a subject but never removes it.
+      subject = screened.subject ?? subject;
+      html = screened.html;
+      text = screened.text;
+    }
 
     // Verify sending domain + load the customer in parallel — two independent
     // single-row lookups that would otherwise be sequential round-trips on the
@@ -901,6 +962,28 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
 
         if (!subject) { results.push({ index: i, accepted: false, error: 'missing_subject' }); refundCount++; continue; }
         if (!html && !text) { results.push({ index: i, accepted: false, error: 'missing_content' }); refundCount++; continue; }
+
+        // PCI-02 (parity with single /send): card data is rejected per-entry
+        // so one bad row does not fail the whole batch.
+        const screened = screenContentForCardData({ subject, html, text });
+        if (screened.findings.length > 0) {
+          const summary = summarizeFindings(screened.findings);
+          await db.insertInto('audit_log').values({
+            customer_id: auth.customer_id,
+            api_key_id: auth.api_key_id,
+            action: 'card_data_detected',
+            resource: 'send_batch',
+            ip: req.ip,
+            metadata: { ...summary, policy: cardDataPolicy(), batch_index: i },
+          }).execute();
+          req.log.warn({ customer_id: auth.customer_id, ...summary }, '[pci] card data detected in batch message content');
+          if (cardDataPolicy() === 'block') {
+            results.push({ index: i, accepted: false, error: 'card_data_detected' });
+            refundCount++;
+            continue;
+          }
+          subject = screened.subject ?? subject; html = screened.html; text = screened.text;
+        }
 
         if (await tenantScoped(req, (trx) => isSuppressed(auth.customer_id, msg.to, trx))) {
           results.push({ index: i, accepted: false, suppressed: true });

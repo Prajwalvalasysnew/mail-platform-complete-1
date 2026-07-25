@@ -162,6 +162,27 @@ export function scanFields(fields: Record<string, string | null | undefined>): C
   return findings;
 }
 
+/**
+ * What to do when card data reaches an ingress that was never meant to carry
+ * it (PCI-02 / BASE-15).
+ *
+ *  - `block`  reject the request. The default: the platform prohibits card
+ *             data by contract, so accepting it and cleaning up afterwards
+ *             would mean it existed in the request log, the queue, and any
+ *             crash dump in between.
+ *  - `redact` accept, but strip the value first. For channels where refusing
+ *             loses information the operator needs (an inbound support
+ *             ticket the customer cannot resend).
+ *  - `off`    detection only, for a phased rollout. Findings are still
+ *             logged so the operator can size the problem before enforcing.
+ */
+export type CardDataPolicy = 'block' | 'redact' | 'off';
+
+export function cardDataPolicy(): CardDataPolicy {
+  const v = (process.env.CARD_DATA_POLICY ?? 'block').toLowerCase();
+  return v === 'redact' || v === 'off' ? v : 'block';
+}
+
 /** Compact, value-free summary for audit metadata and alerts. */
 export function summarizeFindings(findings: CardFinding[]): { fields: string[]; brands: string[]; pan: number; cvv: number } {
   return {

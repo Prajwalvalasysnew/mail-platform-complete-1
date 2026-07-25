@@ -136,6 +136,7 @@ export const ERROR_CODES = {
   classification_not_authorized: { description: 'Declaring a non-commercial message class requires the classify scope.', httpStatus: 403 },
   reserved_header: { description: 'The custom header overrides an identity, routing, or opt-out header the platform controls.', httpStatus: 422 },
   from_name_spoofing: { description: 'The display name embeds an address at a domain the account has not verified.', httpStatus: 422 },
+  card_data_detected: { description: 'Content appears to contain a payment card number; this platform is not an approved cardholder-data channel.', httpStatus: 422 },
   sole_owner: { description: 'Account deletion is blocked: the caller is the sole owner of one or more organizations.', httpStatus: 409 },
 
   // ── Idempotency ────────────────────────────────────────────────────────────

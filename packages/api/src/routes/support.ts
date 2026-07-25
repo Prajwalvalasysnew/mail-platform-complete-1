@@ -10,8 +10,29 @@ import {
   normalizeSupportTicketQuery,
   rateSupportTicket,
   recordAuditSafe,
+  redactCardData,
+  summarizeFindings,
 } from '@platform/shared';
 import { requireCapability } from '../plugins/session-auth.js';
+
+// PCI-02: support tickets are a classic accidental card-data channel — a
+// customer troubleshooting a payment pastes the number they were looking at.
+//
+// This ingress always REDACTS rather than blocks, whatever CARD_DATA_POLICY
+// says. Rejecting the ticket would throw away a customer's help request and
+// train them to work around the check (screenshot, second ticket, email to an
+// agent) — which puts the same data somewhere with less scrubbing. Redacting
+// on the way in means the value never reaches support_tickets, the agent
+// console, or a backup.
+function scrubTicketText(fields: { subject?: string; body: string }, log: { warn: (o: object, m: string) => void }) {
+  const subject = fields.subject === undefined ? undefined : redactCardData(fields.subject, 'subject');
+  const body = redactCardData(fields.body, 'body');
+  const findings = [...(subject?.findings ?? []), ...body.findings];
+  if (findings.length > 0) {
+    log.warn({ ...summarizeFindings(findings) }, '[pci] card data redacted from support ticket content');
+  }
+  return { subject: subject?.text, body: body.text, findings };
+}
 
 export const supportRoutes: FastifyPluginAsync = async (app) => {
   app.get('/support/tickets', { preHandler: requireCapability('logs:read') }, async (req) => {
@@ -42,10 +63,11 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
     const parsed = CreateSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
     const user = req.user!;
+    const scrubbed = scrubTicketText({ subject: parsed.data.subject, body: parsed.data.body }, req.log); // PCI-02
     const ticket = await createSupportTicket({
       customerId: user.current_customer_id!,
-      subject: parsed.data.subject,
-      body: parsed.data.body,
+      subject: scrubbed.subject!,
+      body: scrubbed.body,
       priority: parsed.data.priority,
       category: parsed.data.category,
       createdByUserId: user.user_id,
@@ -98,7 +120,7 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
       ticketId: id,
       customerId: user.current_customer_id!,
       userId: user.user_id,
-      body: parsed.data.body,
+      body: scrubTicketText({ body: parsed.data.body }, req.log).body, // PCI-02
     });
     if (!msg) return reply.code(404).send({ error: 'not_found' });
     await markSupportTicketRead({
