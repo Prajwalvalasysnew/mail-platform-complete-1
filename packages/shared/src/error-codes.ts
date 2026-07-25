@@ -138,6 +138,7 @@ export const ERROR_CODES = {
   from_name_spoofing: { description: 'The display name embeds an address at a domain the account has not verified.', httpStatus: 422 },
   card_data_detected: { description: 'Content appears to contain a payment card number; this platform is not an approved cardholder-data channel.', httpStatus: 422 },
   rectify_noop: { description: 'The corrected address is identical to the current one.', httpStatus: 422 },
+  transfer_purpose_prohibited: { description: 'CAN-SPAM §5(a)(4) prohibits selling, exchanging, or transferring the address of a recipient who has opted out, except to a provider used to comply with the law.', httpStatus: 403 },
   sole_owner: { description: 'Account deletion is blocked: the caller is the sole owner of one or more organizations.', httpStatus: 409 },
 
   // ── Idempotency ────────────────────────────────────────────────────────────

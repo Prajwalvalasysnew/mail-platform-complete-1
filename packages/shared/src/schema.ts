@@ -265,6 +265,7 @@ export interface Database {
   recipient_domain_intel: RecipientDomainIntelTable;
   recipient_domain_tls: RecipientDomainTlsTable;
   processing_restrictions: ProcessingRestrictionsTable;
+  sale_share_optouts: SaleShareOptOutsTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -726,6 +727,18 @@ export interface RecipientDomainIntelTable {
   category: 'spam_trap' | 'disposable' | 'role' | 'high_bounce' | 'clean';
   notes: string | null;
   updated_at: Generated<Timestamp>;
+}
+
+/** CCPA-04: opt-out of sale/sharing, including Global Privacy Control. */
+export interface SaleShareOptOutsTable {
+  id: Generated<string>;
+  customer_id: string;
+  email: string;
+  source: 'gpc' | 'api' | 'web_form' | 'authorized_agent' | 'support';
+  context: string | null;
+  recorded_at: Generated<Timestamp>;
+  released_at: Timestamp | null;
+  released_reason: string | null;
 }
 
 /** GDPR-02: Article 18 processing restrictions (distinct from suppression). */

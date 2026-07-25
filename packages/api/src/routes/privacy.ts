@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, recordSaleShareOptOut, listSaleShareOptOuts, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -528,6 +528,46 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       requestedBy: parsed.data.requested_by ?? null,
     }, trx));
     return reply.code(200).send({ objection_recorded: true, effective: 'immediately' });
+  });
+
+  const OptOutSaleSchema = z.object({
+    recipient: z.string().email(),
+    source: z.enum(['api', 'web_form', 'authorized_agent', 'support']).default('api'),
+    context: z.string().max(200).optional(),
+  });
+
+  /**
+   * CCPA §1798.120: opt out of sale/sharing. Distinct from suppression — a
+   * consumer may want to keep receiving mail while refusing to be sold, so
+   * this does NOT stop delivery.
+   *
+   * Global Privacy Control is honoured automatically at the recipient-facing
+   * tracker surfaces; this endpoint is for submitted requests.
+   */
+  app.post('/privacy/opt-out-sale', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = OptOutSaleSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const result = await tenantScoped(req, (trx) => recordSaleShareOptOut({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      source: parsed.data.source,
+      context: parsed.data.context ?? null,
+    }, trx));
+
+    return reply.code(result.recorded ? 201 : 200).send({
+      opted_out: true,
+      newly_recorded: result.recorded,
+      note: 'This restricts sale and sharing only. It does not stop delivery — use suppression for that.',
+    });
+  });
+
+  app.get('/privacy/sale-share-optouts', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { limit } = req.query as Record<string, string | undefined>;
+    const optouts = await listSaleShareOptOuts(auth.customer_id, { limit: limit ? Number(limit) : undefined });
+    return { optouts };
   });
 
   app.post('/privacy/cases', { preHandler: requireScope('messages') }, async (req, reply) => {

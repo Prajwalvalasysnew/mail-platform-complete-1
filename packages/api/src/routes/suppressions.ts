@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { sql } from 'kysely';
-import { addSuppression, addSuppressionsBulk, removeSuppression, scoreList, getConsentHistory } from '@platform/shared';
+import { addSuppression, addSuppressionsBulk, removeSuppression, scoreList, getConsentHistory, db, resolveTransferPurpose, ProhibitedTransferError, type TransferPurpose } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -114,7 +114,23 @@ export const suppressionRoutes: FastifyPluginAsync = async (app) => {
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
   }, async (req, reply) => {
     const auth = req.auth!;
-    const { reason, since } = req.query as Record<string, string | undefined>;
+    const { reason, since, purpose } = req.query as Record<string, string | undefined>;
+
+    // CANSPAM-09: this endpoint emits a list of addresses that have opted out.
+    // CAN-SPAM §5(a)(4) makes selling, exchanging, or transferring those
+    // addresses unlawful, except to a provider used to comply with the law.
+    // The platform cannot tell which is happening from the request — so it
+    // requires the purpose to be declared, refuses the ones unlawful on their
+    // face, and retains the declaration as the accountability record.
+    let transferPurpose: TransferPurpose;
+    try {
+      transferPurpose = resolveTransferPurpose(purpose);
+    } catch (err) {
+      if (err instanceof ProhibitedTransferError) {
+        return reply.code(403).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
 
     const rows = await tenantScoped(req, async (trx) => {
       let q = trx
@@ -141,9 +157,21 @@ export const suppressionRoutes: FastifyPluginAsync = async (app) => {
       csvLines.push(escaped);
     }
 
+    // Retain the declaration. This is the record that makes the §5(a)(4)
+    // prohibition enforceable against the account that made the transfer.
+    await db.insertInto('audit_log').values({
+      customer_id: auth.customer_id,
+      api_key_id: auth.api_key_id,
+      action: 'suppression_list_exported',
+      resource: transferPurpose,
+      ip: req.ip,
+      metadata: { purpose: transferPurpose, rows: rows.length, reason_filter: reason ?? null },
+    }).execute();
+
     reply
       .header('Content-Type', 'text/csv; charset=utf-8')
-      .header('Content-Disposition', `attachment; filename="suppressions-${new Date().toISOString().slice(0, 10)}.csv"`);
+      .header('Content-Disposition', `attachment; filename="suppressions-${new Date().toISOString().slice(0, 10)}.csv"`)
+      .header('X-Transfer-Purpose', transferPurpose);
     return reply.send(csvLines.join('\n'));
   });
 

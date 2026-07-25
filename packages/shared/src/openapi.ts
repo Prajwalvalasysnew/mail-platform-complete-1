@@ -953,6 +953,24 @@ export const openapiSpec = {
         },
       },
     },
+    '/privacy/opt-out-sale': {
+      post: {
+        summary: 'CCPA §1798.120: opt out of sale/sharing. Does NOT stop delivery — a consumer may keep receiving mail while refusing to be sold. Global Privacy Control is honoured automatically at the tracker surfaces',
+        operationId: 'optOutOfSaleOrSharing',
+        responses: {
+          '201': { description: 'Opt-out recorded' },
+          '200': { description: 'Already opted out' },
+        },
+      },
+    },
+    '/privacy/sale-share-optouts': {
+      get: {
+        summary: 'List active sale/share opt-outs, including those captured from Global Privacy Control',
+        operationId: 'listSaleShareOptOuts',
+        parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer' } }],
+        responses: { '200': { description: 'Opt-outs, newest first' } },
+      },
+    },
     '/privacy/object': {
       post: {
         summary: 'GDPR Art 21: record an objection to direct marketing. Unconditional, so it takes effect immediately as an enforced suppression',

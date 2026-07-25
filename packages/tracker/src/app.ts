@@ -20,6 +20,8 @@ import {
   metricsText,
   metricsAuthorized,
   privacyLoggerOptions,
+  isGpcSignal,
+  recordSaleShareOptOut,
 } from '@platform/shared';
 
 // A signed confirmation token binds the unsubscribe POST to the specific
@@ -66,6 +68,34 @@ await app.register(rateLimit, {
 });
 
 // 1x1 transparent GIF
+/**
+ * CCPA-04: record a Global Privacy Control opt-out for the recipient of this
+ * message, if the request carries the signal.
+ *
+ * Deliberately best-effort — a failure here must never break the click
+ * redirect or the unsubscribe flow. Idempotent downstream, which matters
+ * because a consenting browser sends GPC on every single request.
+ */
+async function honorGpc(req: { headers: Record<string, unknown> }, messageId: string, context: string): Promise<void> {
+  if (!isGpcSignal(req.headers)) return;
+  try {
+    const msg = await db
+      .selectFrom('messages')
+      .select(['customer_id', 'to_address'])
+      .where('message_id', '=', messageId)
+      .executeTakeFirst();
+    if (!msg) return;
+    await recordSaleShareOptOut({
+      customerId: msg.customer_id,
+      email: msg.to_address,
+      source: 'gpc',
+      context,
+    });
+  } catch (err) {
+    app.log.warn({ err, context }, 'failed to record GPC opt-out');
+  }
+}
+
 const PIXEL = Buffer.from(
   'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
   'base64'
@@ -174,6 +204,13 @@ app.get<{ Params: { encoded: string; linkId: string } }>(
 
     if (!link) return reply.code(404).send('Link not found');
 
+    // CCPA-04: a click is a browser request, so it can carry Global Privacy
+    // Control. §1798.135(b)(1) requires the signal to be treated as a valid
+    // opt-out request from the consumer — it does not need a form submission.
+    // Best-effort and never blocking the redirect: the recipient is entitled
+    // to reach their destination whether or not we manage to record this.
+    await honorGpc(req, messageId, 'tracker_click');
+
     // Defense in depth: only ever 302 to an http(s) URL. Link rewriting already
     // filters to http(s) at storage time, but re-validating here ensures the
     // trusted tracking domain can never be turned into a javascript:/data:/etc.
@@ -244,6 +281,11 @@ app.get<UnsubParams>('/u/:encoded', async (req, reply) => {
     .executeTakeFirst();
 
   if (!msg) return reply.code(404).send('Message not found');
+
+  // CCPA-04: the unsubscribe page is browser-rendered, so it can carry GPC.
+  // Recorded on the GET — the signal is a valid request in its own right and
+  // does not depend on the recipient going on to confirm the unsubscribe.
+  await honorGpc(req, messageId, 'tracker_unsubscribe');
 
   const groupId = req.query.group;
   let groupName: string | null = null;
