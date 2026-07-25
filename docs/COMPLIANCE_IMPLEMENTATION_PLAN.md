@@ -1,6 +1,36 @@
 # Compliance implementation plan
 
-Reviewed: 2026-07-22
+Reviewed: 2026-07-22 · P0 status updated: 2026-07-25
+
+## P0 delivery status
+
+Repository-implementable P0 items only. "Done" means the control exists **and**
+has automated coverage; it does not mean the control is deployed, operating
+effectively, or sufficient for any framework — see §16 release gates.
+
+| ID | Status | Where |
+| --- | --- | --- |
+| BASE-01 | Done (doc) | [Data inventory and flow map](DATA_INVENTORY.md) |
+| BASE-02 / BASE-03 | Done | `privacy-export.e2e`, `privacy-pseudonymization.e2e`, migration 075 |
+| BASE-04 | Done | `account-data-subject.e2e` |
+| BASE-05 | Done | `privacy-cases.e2e`, migration 076 |
+| BASE-06 | Done (doc) | [Retention and disposal policy](RETENTION_AND_DISPOSAL.md) |
+| BASE-15 | Partial | [Data-use restrictions](DATA_USE_RESTRICTIONS.md) — card data enforced; PHI/FERPA/SEC contractual only; terms and UI notices outstanding |
+| GDPR-01, CCPA-01 | Done | Satisfied by BASE-02…05 |
+| CANSPAM-01 | Done | Migration 077, `canspam-classification.e2e` |
+| CANSPAM-02/03/04 | Done | `canspam-sender-identity.e2e`, `canspam-footer.test` |
+| CANSPAM-05 | Done | Migration 078, `canspam-unsubscribe-monitor.e2e` |
+| CANSPAM-06 | Done | `canspam-optout-friction.e2e` |
+| PCI-01 | Done (doc) | [Payment data flow and PCI DSS scope](PAYMENT_DATA_FLOW.md) |
+| PCI-02 | Done | `card-data.ts`, `pci-card-data.e2e`, [card-data runbook](runbooks/CARD_DATA.md) |
+| PCI-03 | Done | `billing-payload-allowlist.ts`, migration 079, retention sweep |
+| Privacy regression test 6 | Done | `replayPrivacyTombstones()`, `privacy-restore-replay.e2e`, [restore runbook](runbooks/RESTORE_RE_DELETION.md) |
+
+**Still open (P0):** BASE-07 through BASE-14. These require production
+configuration, organizational process, and operating evidence that source code
+cannot supply — key management, IAM operation, logging operations, incident
+and breach management, resilience drills, vendor governance, and secure
+development evidence. BASE-15 also has outstanding legal and product work.
 
 This document is the implementation roadmap for preparing the mail platform
 for production use under HIPAA, GDPR, CCPA as amended by CPRA, CAN-SPAM, PCI

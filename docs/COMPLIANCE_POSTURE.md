@@ -39,7 +39,7 @@ environment, cloud account, workforce, vendors, contracts, or legal posture.
 | Consent ledger and suppression | Implemented and tested | Append-only suppress/unsuppress events record action, reason, source, note, message, and timestamp; sending and workflow paths enforce current suppression | The sender must establish lawful basis, capture any required affirmative consent, publish notices, and control re-subscription |
 | Tenant-safe deletion | Implemented and tested | Application tenant scoping plus fail-closed PostgreSQL RLS and cross-tenant E2E tests constrain export, erasure, legal-hold, and export-artifact access | Production must use the non-bypass database role and pass the startup RLS posture check |
 | Data residency | External gap | No application-level region assignment or region-pinned routing is implemented | Deploy region-scoped API/workers, PostgreSQL, Redis, object storage, ClickHouse, logs, and backups, then prevent cross-region failover |
-| Backup erasure | External gap | Online authoritative stores are addressed; historical backup images are not selectively rewritten by the application | Define backup expiry, cryptographic erasure where applicable, restore-time re-deletion, and legal-hold interaction with the backup provider |
+| Backup erasure | Partial | Online authoritative stores are addressed. Backup images are still not selectively rewritten, but restore-time re-deletion is implemented: `replayPrivacyTombstones()` re-purges resurrected rows, re-pseudonymizes recovered identifiers, and re-queues object/analytics/queue deletions; `POST /admin/privacy/replay-tombstones`, `privacy-restore-replay.e2e.test.ts` | Define backup expiry and cryptographic erasure where applicable, and legal-hold interaction with the backup provider. A restored node must not serve traffic before replay runs — [restore re-deletion runbook](runbooks/RESTORE_RE_DELETION.md) |
 
 ## Security controls relevant to regulated deployments
 
@@ -114,10 +114,14 @@ be assessed and adequately protected. See the official HHS resources:
   unsubscribe, and suppression controls are implemented. The sender remains
   responsible for classification, headers, content, honoring requests, and
   all jurisdiction-specific requirements.
-- **PCI DSS:** Billing integrations should keep cardholder data at the payment
-  provider, but this repository has no PCI DSS assessment or attestation. Do
-  not put cardholder data or sensitive authentication data in email content,
-  metadata, support tickets, or webhook fields.
+- **PCI DSS:** Checkout is a provider-hosted redirect for every provider, so no
+  component stores, processes, or transmits cardholder data; the flow, the
+  evidence queries, and the responsibility split are documented in
+  [Payment data flow and PCI DSS scope](PAYMENT_DATA_FLOW.md). Accidental card
+  data is detected and contained at the send, SMTP, support, and billing-webhook
+  ingresses (see [the card-data runbook](runbooks/CARD_DATA.md)). This repository
+  still has no PCI DSS assessment or attestation, and cardholder data remains
+  prohibited in email content, metadata, support tickets, and webhook fields.
 - **SOC 2 / ISO 27001:** The repository contains useful security controls and
   evidence mechanisms, but there is no audit report, certified ISMS, control
   ownership matrix, or operating-effectiveness period here.
