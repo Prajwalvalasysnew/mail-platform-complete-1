@@ -13,7 +13,8 @@
     "@platform/shared": "*",
     "@platform/api": "*",
     "@platform/worker": "*",
-    "@platform/smtp-gateway": "*"
+    "@platform/smtp-gateway": "*",
+    "@platform/tracker": "*"
   },
   "devDependencies": {
     "vitest": "^4.1.7",
