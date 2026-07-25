@@ -12,6 +12,9 @@
 //   - audit_log rows older than RETENTION_AUDIT_DAYS (default 365) — archived
 //     to audit_log_archive, never destroyed, so legal holds do not gate this
 //   - resolved/rejected review_queue rows older than RETENTION_REVIEW_QUEUE_DAYS (default 30)
+//   - stored billing webhook payloads older than RETENTION_BILLING_PAYLOAD_DAYS
+//     (default 90) — the payload column only; the billing_events row is the
+//     idempotency marker and is kept (PCI-03)
 //
 // LEGAL HOLDS. Every destructive step skips data covered by an active legal
 // hold (scope 'customer' = whole tenant, 'recipient:<email>' = one recipient),
@@ -57,6 +60,13 @@ export interface RetentionOptions {
   exportRetentionDays?: number;
   /** Days to keep DMARC reports and source records. Default: RETENTION_DMARC_DAYS env or 365. */
   dmarcRetentionDays?: number;
+  /**
+   * Days to keep the stored billing webhook payload (PCI-03). The
+   * billing_events ROW is never purged — it is the idempotency marker — only
+   * the payload column is nulled. Default: RETENTION_BILLING_PAYLOAD_DAYS env
+   * or 90.
+   */
+  billingPayloadRetentionDays?: number;
   /** Max rows per delete/update batch. Default: RETENTION_BATCH_SIZE env or 10_000. */
   batchSize?: number;
 }
@@ -73,6 +83,8 @@ export interface RetentionResult {
   exports_purged: number;
   dmarc_reports_purged: number;
   dmarc_records_purged: number;
+  /** billing_events rows whose stored provider payload was nulled (PCI-03). */
+  billing_payloads_purged: number;
   audit_purged: number;
   review_queue_purged: number;
   /** Rows matching a retention cutoff but preserved by an active legal hold. */
@@ -121,6 +133,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     outboxRetentionDays = Number(process.env.RETENTION_OUTBOX_DAYS ?? 30),
     exportRetentionDays = Number(process.env.RETENTION_EXPORT_DAYS ?? 7),
     dmarcRetentionDays = Number(process.env.RETENTION_DMARC_DAYS ?? 365),
+    billingPayloadRetentionDays = Number(process.env.RETENTION_BILLING_PAYLOAD_DAYS ?? 90),
     batchSize = Number(process.env.RETENTION_BATCH_SIZE ?? 10_000),
   } = opts;
 
@@ -144,6 +157,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   const blocklistCutoff = new Date(Date.now() - blocklistRetentionDays * 86_400_000);
   const outboxCutoff = new Date(Date.now() - outboxRetentionDays * 86_400_000);
   const dmarcCutoff = new Date(Date.now() - dmarcRetentionDays * 86_400_000);
+  const billingPayloadCutoff = new Date(Date.now() - billingPayloadRetentionDays * 86_400_000);
 
   let heldSkipped = 0;
 
@@ -467,6 +481,32 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   if (dmarcRecordsPurged) dmarcRetentionPurged.inc({ kind: 'record' }, dmarcRecordsPurged);
   if (dmarcReportsPurged) dmarcRetentionPurged.inc({ kind: 'report' }, dmarcReportsPurged);
 
+  // --- 7c. Expire stored billing webhook payloads (PCI-03/BASE-06) --------
+  // The payload is retained only so an operator can replay the event. Past
+  // that window it is provider data with no remaining purpose, so the column
+  // is nulled while the row — the idempotency marker — is kept forever. The
+  // admin API then reports the event exactly as it reports a pre-035 row:
+  // "not replayable". Not hold-gated: this is provider billing metadata, not
+  // tenant message content, and the invoice/subscription records it produced
+  // are unaffected.
+  const billingPayloadsPurged = await drainBatches(batchSize, async (limit) => {
+    const res = await sql<{ count: string }>`
+      WITH batch AS (
+        SELECT provider_event_id FROM billing_events
+        WHERE payload IS NOT NULL
+          AND processed_at < ${billingPayloadCutoff}
+        ORDER BY processed_at
+        LIMIT ${limit}
+      ), cleared AS (
+        UPDATE billing_events b SET payload = NULL
+        FROM batch WHERE b.provider_event_id = batch.provider_event_id
+        RETURNING b.provider_event_id
+      )
+      SELECT COUNT(*)::text AS count FROM cleared
+    `.execute(db);
+    return Number(res.rows[0]?.count ?? 0);
+  });
+
   // --- 8. Archive + purge old audit log (not hold-gated: rows are moved to
   // audit_log_archive with their hash-chain fields, never destroyed) -------
   const auditResult = await sql<{ count: string }>`
@@ -521,6 +561,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     exports_purged: exportsPurged,
     dmarc_reports_purged: dmarcReportsPurged,
     dmarc_records_purged: dmarcRecordsPurged,
+    billing_payloads_purged: billingPayloadsPurged,
     audit_purged: auditPurged,
     review_queue_purged: reviewQueuePurged,
     held_rows_skipped: heldSkipped,

@@ -13,6 +13,24 @@ import { db } from './db.js';
 import type { DbExecutor } from './db.js';
 import { getBillingProviderFor } from './billing-provider.js';
 import { sendDunningEmail } from './mailer.js';
+import { sanitizeBillingPayload } from './billing-payload-allowlist.js';
+import { summarizeFindings } from './card-data.js';
+
+// PCI-03: the ONLY place a provider payload becomes a billing_events row.
+// Every insert site funnels through here so no call site can persist a raw
+// event by accident. Card data found in a retained free-text field is redacted
+// (never stored) and logged as a value-free alert for the PCI-02 runbook.
+function payloadForStorage(provider: string | null | undefined, raw: unknown): unknown | null {
+  const { payload, findings } = sanitizeBillingPayload(provider, raw);
+  if (findings.length > 0) {
+    const s = summarizeFindings(findings);
+    console.warn(
+      `[pci] card data detected in ${provider ?? 'unknown'} billing webhook payload — redacted before storage ` +
+      `(pan=${s.pan} cvv=${s.cvv} brands=${s.brands.join(',') || 'none'} fields=${s.fields.join(',')})`,
+    );
+  }
+  return payload;
+}
 
 export const TIER_BY_PRICE: Record<string, { tier: 'free' | 'paid' | 'enterprise'; daily: number; monthly: number; plan: string }> = {
   price_free: { tier: 'free', daily: 100, monthly: 3000, plan: 'free' },
@@ -146,9 +164,10 @@ export async function applySubscriptionState(ev: SubscriptionEvent): Promise<boo
         provider_event_id: ev.provider_event_id,
         type: ev.type,
         provider,
-        // Store the raw payload (JSONB) so an operator can replay this exact
-        // event later. null when the caller didn't provide it.
-        payload: ev.raw_payload !== undefined ? (ev.raw_payload as any) : null,
+        // Store the ALLOWLISTED payload (JSONB) so an operator can replay this
+        // exact event later (PCI-03). null when the caller didn't provide one
+        // or the provider shape is unknown.
+        payload: ev.raw_payload !== undefined ? (payloadForStorage(provider, ev.raw_payload) as any) : null,
       })
       .onConflict((oc) => oc.column('provider_event_id').doNothing())
       .returning('provider_event_id')
@@ -594,7 +613,8 @@ export interface InvoiceEvent {
 export async function applyInvoiceEvent(ev: InvoiceEvent): Promise<boolean> {
   return db.transaction().execute(async (trx) => {
     const marker = await trx.insertInto('billing_events').values({
-      provider_event_id: ev.provider_event_id, type: ev.type, provider: ev.provider, payload: ev.raw_payload as any,
+      provider_event_id: ev.provider_event_id, type: ev.type, provider: ev.provider,
+      payload: payloadForStorage(ev.provider, ev.raw_payload) as any, // PCI-03
     }).onConflict((oc) => oc.column('provider_event_id').doNothing()).returning('provider_event_id').executeTakeFirst();
     if (!marker) return false;
     const customer = await trx.selectFrom('customers').select('id')
@@ -669,7 +689,8 @@ export interface CreditNoteEvent {
 export async function applyCreditNoteEvent(ev: CreditNoteEvent): Promise<boolean> {
   return db.transaction().execute(async (trx) => {
     const marker = await trx.insertInto('billing_events').values({
-      provider_event_id: ev.provider_event_id, type: ev.type, provider: ev.provider, payload: ev.raw_payload as any,
+      provider_event_id: ev.provider_event_id, type: ev.type, provider: ev.provider,
+      payload: payloadForStorage(ev.provider, ev.raw_payload) as any, // PCI-03
     }).onConflict((oc) => oc.column('provider_event_id').doNothing()).returning('provider_event_id').executeTakeFirst();
     if (!marker) return false;
     const customer = await trx.selectFrom('customers').select('id')
