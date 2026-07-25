@@ -266,6 +266,7 @@ export interface Database {
   recipient_domain_tls: RecipientDomainTlsTable;
   processing_restrictions: ProcessingRestrictionsTable;
   sale_share_optouts: SaleShareOptOutsTable;
+  sender_health_runs: SenderHealthRunsTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -727,6 +728,29 @@ export interface RecipientDomainIntelTable {
   category: 'spam_trap' | 'disposable' | 'role' | 'high_bounce' | 'clean';
   notes: string | null;
   updated_at: Generated<Timestamp>;
+}
+
+/** CANSPAM-08: per-sender health verdicts and reviewer decisions. */
+export interface SenderHealthRunsTable {
+  id: Generated<string>;
+  customer_id: string;
+  window_start: Timestamp;
+  window_end: Timestamp;
+  sent: Generated<number>;
+  bounced: Generated<number>;
+  complained: Generated<number>;
+  unsubscribed: Generated<number>;
+  bounce_rate: Generated<string>;
+  complaint_rate: Generated<string>;
+  unsubscribe_rate: Generated<string>;
+  verdict: 'ok' | 'watch' | 'hold';
+  triggered_by: Generated<string[]>;
+  action_taken: Generated<'none' | 'alerted' | 'held'>;
+  reviewed_at: Timestamp | null;
+  reviewed_by: string | null;
+  review_decision: 'released' | 'upheld' | 'escalated' | null;
+  review_notes: string | null;
+  created_at: Generated<Timestamp>;
 }
 
 /** CCPA-04: opt-out of sale/sharing, including Global Privacy Control. */

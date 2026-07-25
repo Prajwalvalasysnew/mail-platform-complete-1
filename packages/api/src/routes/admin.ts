@@ -61,6 +61,9 @@ import {
   purgeAllDeadLetters,
   runRetention,
   replayPrivacyTombstones,
+  listSenderHealthRuns,
+  reviewSenderHealth,
+  SenderHealthReviewError,
   clearRetentionPolicyCache,
   reconcileMetering,
   rotateAdminSessionCsrf,
@@ -926,6 +929,56 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     });
     await auditAdminAction(req.admin!, 'retention_run', 'platform', result as unknown as Record<string, unknown>);
     return reply.code(200).send({ ok: true, result });
+  });
+
+  // CANSPAM-08: sender-health reviewer queue.
+  app.get('/sender-health', { preHandler: requireAdmin('support') }, async (req) => {
+    const { open_holds, customer_id, limit } = req.query as Record<string, string | undefined>;
+    const runs = await listSenderHealthRuns({
+      openHoldsOnly: open_holds === 'true',
+      customerId: customer_id,
+      limit: limit ? Number(limit) : undefined,
+    });
+    return { runs };
+  });
+
+  /**
+   * Record the reviewer decision that closes an automated hold.
+   *
+   * 'released' lifts it; 'upheld' and 'escalated' keep the sender blocked
+   * while recording that a human confirmed it. Operator role: releasing a hold
+   * lets a sender with a bad complaint rate resume, which is a judgement call,
+   * not a support action.
+   */
+  app.post('/sender-health/:id/review', {
+    preHandler: requireAdmin('operator'),
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = z.object({
+      decision: z.enum(['released', 'upheld', 'escalated']),
+      notes: z.string().max(2000).optional(),
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    try {
+      await reviewSenderHealth({
+        runId: id,
+        decision: parsed.data.decision,
+        reviewedBy: req.admin!.email,
+        notes: parsed.data.notes ?? null,
+      });
+    } catch (err) {
+      if (err instanceof SenderHealthReviewError) {
+        return reply.code(404).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+
+    await auditAdminAction(req.admin!, 'sender_health_reviewed', 'sender_health_run', {
+      run_id: id, decision: parsed.data.decision,
+    });
+    return { reviewed: id, decision: parsed.data.decision };
   });
 
   // Restore-time re-deletion (BASE-06 / mandatory privacy regression test 6).

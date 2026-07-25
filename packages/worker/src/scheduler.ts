@@ -37,6 +37,7 @@ import {
   updateVolumeBaseline,
   eventsQueue,
   retryPendingBodyErasures,
+  sweepSenderHealth,
   runDunningSweep,
   expirePlanChangeRequests,
   reconcileSubmittedPlanChanges,
@@ -244,6 +245,19 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         } else {
           logger.info('metering reconciliation clean — no drift');
         }
+      },
+    },
+    {
+      // CANSPAM-08: per-sender complaint/bounce monitoring with automated
+      // holds. Daily rather than hourly — the rates are computed over a
+      // rolling multi-day window, so sweeping more often would re-derive the
+      // same verdict and add nothing but reviewer noise.
+      name: 'sender_health_sweep',
+      everyMs: 24 * HOUR,
+      run: async () => {
+        const result = await sweepSenderHealth();
+        if (result.held) logger.warn({ result }, 'CANSPAM-08: senders placed on hold pending review');
+        else if (result.watch) logger.info({ result }, 'CANSPAM-08: senders over the warning threshold');
       },
     },
     {

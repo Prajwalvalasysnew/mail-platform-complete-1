@@ -42,6 +42,7 @@ import {
   cardDataPolicy,
   restrictedSet,
   isProcessingRestricted,
+  isSenderOnHold,
 } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
@@ -381,6 +382,14 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
 
     // Customer status / billing gate
     if (customer.status !== 'active') return reply.code(403).send({ error: 'account_suspended' });
+    // CANSPAM-08: an automated sending hold blocks NEW sends pending human
+    // review. Distinct from suspension — reversible by a reviewer.
+    if (await isSenderOnHold(auth.customer_id)) {
+      return reply.code(403).send({
+        error: 'sender_on_hold',
+        message: 'Sending is paused pending review of this account\'s complaint or bounce rate. Contact support.',
+      });
+    }
     const billingAccess = await evaluateBillingAccess(auth.customer_id);
     if (!billingAccess.allowed) return reply.code(402).send({ error: 'billing_inactive', reason: billingAccess.reason, grace_ends_at: billingAccess.graceEndsAt });
 
@@ -829,6 +838,14 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         .where('id', '=', auth.customer_id)
         .executeTakeFirstOrThrow();
       if (customer.status !== 'active') return reply.code(403).send({ error: 'account_suspended' });
+      // CANSPAM-08: an automated sending hold blocks NEW sends pending human
+      // review. Distinct from suspension — reversible by a reviewer.
+      if (await isSenderOnHold(auth.customer_id)) {
+        return reply.code(403).send({
+          error: 'sender_on_hold',
+          message: 'Sending is paused pending review of this account\'s complaint or bounce rate. Contact support.',
+        });
+      }
       const billingAccess = await evaluateBillingAccess(auth.customer_id);
       if (!billingAccess.allowed) return reply.code(402).send({ error: 'billing_inactive', reason: billingAccess.reason, grace_ends_at: billingAccess.graceEndsAt });
 
