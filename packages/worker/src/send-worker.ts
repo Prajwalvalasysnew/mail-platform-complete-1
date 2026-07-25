@@ -21,6 +21,7 @@ import {
   decrementQueueDepth,
   addSuppression,
   appendCompliantFooter,
+  checkDomainTlsSafety,
   type SendJobData,
   loadMessageBody,
   isMessagePrivacyErased,
@@ -187,6 +188,26 @@ export function startSendWorker(logger: Logger) {
           .executeTakeFirst();
         const physicalAddress = customer?.physical_address ?? null;
         const tlsRequired = customer?.tls_required === true;
+
+        // BASE-08: fail CLOSED for TLS-required tenants. `tls_required` used to
+        // be detective only — Haraka logged a violation after the message had
+        // already gone out in the clear. If a previous delivery to this
+        // recipient's domain was observed completing WITHOUT TLS, refuse rather
+        // than repeat it. Permanent: retrying changes nothing until the
+        // receiving domain fixes its TLS, and a queue of retries would keep
+        // pressing against the same unencrypted path.
+        if (tlsRequired && !isTest) {
+          const verdict = await checkDomainTlsSafety(msg.to_address);
+          if (verdict.unsafe) {
+            const tlsErr: any = new Error(
+              `tls_required_domain_unsafe: a previous delivery to this recipient's domain completed without TLS ` +
+              `(observed ${verdict.observedAt?.toISOString()}). This account requires encrypted delivery, so the ` +
+              `message was not sent. See docs/TRANSPORT_SECURITY.md.`
+            );
+            tlsErr.permanent = true;
+            throw tlsErr;
+          }
+        }
 
         // Enforce for live sends. Test-mode sends skip enforcement (no real
         // delivery, no legal exposure). Set SKIP_PHYSICAL_ADDRESS_CHECK=true

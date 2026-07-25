@@ -15,6 +15,7 @@ effectively, or sufficient for any framework — see §16 release gates.
 | BASE-04 | Done | `account-data-subject.e2e` |
 | BASE-05 | Done | `privacy-cases.e2e`, migration 076 |
 | BASE-06 | Done (doc) | [Retention and disposal policy](RETENTION_AND_DISPOSAL.md) |
+| BASE-08 | Done (policy: prohibit + partial enforcement) | [Sensitive-message transport policy](TRANSPORT_SECURITY.md) — `tls_required` is now fail-closed per recipient domain; PHI stays prohibited because first-delivery and end-to-end gaps remain |
 | BASE-15 | Partial | [Data-use restrictions](DATA_USE_RESTRICTIONS.md) — card data enforced; PHI/FERPA/SEC contractual only; terms and UI notices outstanding |
 | GDPR-01, CCPA-01 | Done | Satisfied by BASE-02…05 |
 | CANSPAM-01 | Done | Migration 077, `canspam-classification.e2e` |
@@ -26,11 +27,12 @@ effectively, or sufficient for any framework — see §16 release gates.
 | PCI-03 | Done | `billing-payload-allowlist.ts`, migration 079, retention sweep |
 | Privacy regression test 6 | Done | `replayPrivacyTombstones()`, `privacy-restore-replay.e2e`, [restore runbook](runbooks/RESTORE_RE_DELETION.md) |
 
-**Still open (P0):** BASE-07 through BASE-14. These require production
+**Still open (P0):** BASE-07, BASE-09 through BASE-14. These require production
 configuration, organizational process, and operating evidence that source code
-cannot supply — key management, IAM operation, logging operations, incident
-and breach management, resilience drills, vendor governance, and secure
-development evidence. BASE-15 also has outstanding legal and product work.
+cannot supply — key management validation, IAM operation, logging operations,
+incident and breach management, resilience drills, vendor governance, and
+secure development evidence. BASE-15 also has outstanding legal and product
+work.
 
 This document is the implementation roadmap for preparing the mail platform
 for production use under HIPAA, GDPR, CCPA as amended by CPRA, CAN-SPAM, PCI

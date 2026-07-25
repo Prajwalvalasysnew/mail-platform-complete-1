@@ -263,6 +263,7 @@ export interface Database {
   blocklist_checks: BlocklistChecksTable;
   dkim_keys: DkimKeysTable;
   recipient_domain_intel: RecipientDomainIntelTable;
+  recipient_domain_tls: RecipientDomainTlsTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -723,6 +724,16 @@ export interface RecipientDomainIntelTable {
   domain: string;
   category: 'spam_trap' | 'disposable' | 'role' | 'high_bounce' | 'clean';
   notes: string | null;
+  updated_at: Generated<Timestamp>;
+}
+
+/** BASE-08: observed downstream TLS behaviour per recipient domain. */
+export interface RecipientDomainTlsTable {
+  domain: string;
+  deliveries_secured: Generated<number>;
+  deliveries_plaintext: Generated<number>;
+  last_secured_at: Timestamp | null;
+  last_plaintext_at: Timestamp | null;
   updated_at: Generated<Timestamp>;
 }
 
