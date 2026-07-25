@@ -230,7 +230,25 @@ function defaultSourceForReason(reason: string): string {
 }
 
 /** Append a single row to the append-only consent ledger. */
-async function appendConsentEvent(
+/**
+ * Drop the cached suppression verdict for a recipient.
+ *
+ * The cache stores BOTH outcomes ('1' suppressed, '0' not suppressed), so any
+ * workflow that moves or rewrites suppression rows outside add/remove — such
+ * as rectification changing a recipient's address — must invalidate the old
+ * AND new keys. A stale '0' on the new address is fail-OPEN: it would let mail
+ * through to someone who had opted out.
+ */
+export async function invalidateSuppressionCache(customerId: string, email: string): Promise<void> {
+  await redis.del(key(customerId, email.toLowerCase()));
+}
+
+/**
+ * Append to the consent ledger. Exported so other rights workflows
+ * (privacy-rights.ts) record their processing acts in the SAME append-only
+ * ledger rather than starting a parallel history.
+ */
+export async function appendConsentEvent(
   executor: DbExecutor,
   ev: {
     customerId: string;

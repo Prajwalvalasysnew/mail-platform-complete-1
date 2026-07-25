@@ -912,6 +912,54 @@ export const openapiSpec = {
       },
     },
     '/privacy/delete-recipient': { post: { summary: 'GDPR: delete all data for a recipient', operationId: 'deleteRecipient', responses: { '200': { description: 'Deletion summary' } } } },
+    '/privacy/restrict-recipient': {
+      post: {
+        summary: 'GDPR Art 18: restrict processing for a recipient (store but do not use). Distinct from suppression — lifted by a decision, not by resubscribing',
+        operationId: 'restrictRecipientProcessing',
+        responses: {
+          '201': { description: 'Restriction created' },
+          '200': { description: 'Already restricted; the original restriction is returned unchanged' },
+        },
+      },
+    },
+    '/privacy/release-restriction': {
+      post: {
+        summary: 'Lift an Article 18 processing restriction. A reason is required — Art 18(3) obliges informing the data subject before lifting',
+        operationId: 'releaseProcessingRestriction',
+        responses: {
+          '200': { description: 'Restriction released' },
+          '404': { description: 'No active restriction for that recipient', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/restrictions': {
+      get: {
+        summary: 'List processing restrictions (active by default)',
+        operationId: 'listProcessingRestrictions',
+        parameters: [
+          { name: 'include_released', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+          { name: 'limit', in: 'query', schema: { type: 'integer' } },
+        ],
+        responses: { '200': { description: 'Restrictions, newest first' } },
+      },
+    },
+    '/privacy/rectify-recipient': {
+      post: {
+        summary: 'GDPR Art 16 / CCPA right to correct: move suppression, consent, group and restriction state to a corrected address. Historical delivery records are preserved and reported',
+        operationId: 'rectifyRecipient',
+        responses: {
+          '200': { description: 'Counts moved, plus historical records deliberately preserved' },
+          '422': { description: 'The corrected address is identical to the current one', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/object': {
+      post: {
+        summary: 'GDPR Art 21: record an objection to direct marketing. Unconditional, so it takes effect immediately as an enforced suppression',
+        operationId: 'recordMarketingObjection',
+        responses: { '200': { description: 'Objection recorded and enforced' } },
+      },
+    },
     '/privacy/cases': {
       post: { summary: 'Open a data-subject request case (intake, jurisdiction deadline computed)', operationId: 'createPrivacyCase', responses: { '201': { description: 'Case created with statutory due date' } } },
       get: { summary: 'List privacy cases (filter by status or overdue)', operationId: 'listPrivacyCases', parameters: [{ name: 'status', in: 'query', schema: { type: 'string' } }, { name: 'overdue', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } }], responses: { '200': { description: 'Cases, newest first' } } },

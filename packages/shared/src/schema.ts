@@ -264,6 +264,7 @@ export interface Database {
   dkim_keys: DkimKeysTable;
   recipient_domain_intel: RecipientDomainIntelTable;
   recipient_domain_tls: RecipientDomainTlsTable;
+  processing_restrictions: ProcessingRestrictionsTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -725,6 +726,21 @@ export interface RecipientDomainIntelTable {
   category: 'spam_trap' | 'disposable' | 'role' | 'high_bounce' | 'clean';
   notes: string | null;
   updated_at: Generated<Timestamp>;
+}
+
+/** GDPR-02: Article 18 processing restrictions (distinct from suppression). */
+export interface ProcessingRestrictionsTable {
+  id: Generated<string>;
+  customer_id: string;
+  email: string;
+  basis: 'accuracy_contested' | 'unlawful_processing' | 'legal_claims' | 'objection_pending';
+  reason: string | null;
+  requested_by: string | null;
+  privacy_case_id: string | null;
+  restricted_at: Generated<Timestamp>;
+  released_at: Timestamp | null;
+  released_reason: string | null;
+  released_by: string | null;
 }
 
 /** BASE-08: observed downstream TLS behaviour per recipient domain. */

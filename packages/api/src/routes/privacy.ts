@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -406,6 +406,129 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
     }
     throw err;
   };
+
+  // ─── GDPR-02 / CCPA-02: rights beyond access and erasure ─────────────────
+
+  const RestrictSchema = z.object({
+    recipient: z.string().email(),
+    basis: z.enum(['accuracy_contested', 'unlawful_processing', 'legal_claims', 'objection_pending']),
+    reason: z.string().max(1000).optional(),
+    requested_by: z.string().max(200).optional(),
+    privacy_case_id: z.string().uuid().optional(),
+  });
+
+  /**
+   * Article 18: store it, do not use it. Deliberately NOT suppression — a
+   * restriction is lifted by a decision, not by the recipient resubscribing.
+   */
+  app.post('/privacy/restrict-recipient', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = RestrictSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const result = await tenantScoped(req, (trx) => restrictProcessing({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      basis: parsed.data.basis,
+      reason: parsed.data.reason ?? null,
+      requestedBy: parsed.data.requested_by ?? null,
+      privacyCaseId: parsed.data.privacy_case_id ?? null,
+    }, trx));
+
+    return reply.code(result.alreadyRestricted ? 200 : 201).send({
+      restriction: result.restriction,
+      already_restricted: result.alreadyRestricted,
+    });
+  });
+
+  const ReleaseRestrictionSchema = z.object({
+    recipient: z.string().email(),
+    // Article 18(3) requires informing the data subject before lifting, so an
+    // unexplained release is not a defensible record.
+    reason: z.string().min(1).max(1000),
+    released_by: z.string().max(200).optional(),
+  });
+
+  app.post('/privacy/release-restriction', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = ReleaseRestrictionSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const released = await tenantScoped(req, (trx) => releaseProcessingRestriction({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      reason: parsed.data.reason,
+      releasedBy: parsed.data.released_by ?? null,
+    }, trx));
+    if (!released) return reply.code(404).send({ error: 'not_found', message: 'No active restriction for that recipient.' });
+    return { released: true };
+  });
+
+  app.get('/privacy/restrictions', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { include_released, limit } = req.query as Record<string, string | undefined>;
+    const restrictions = await listProcessingRestrictions(auth.customer_id, {
+      includeReleased: include_released === 'true',
+      limit: limit ? Number(limit) : undefined,
+    });
+    return { restrictions };
+  });
+
+  const RectifySchema = z.object({
+    recipient: z.string().email(),
+    corrected: z.string().email(),
+    requested_by: z.string().max(200).optional(),
+  });
+
+  /**
+   * Article 16 / CCPA right to correct. Corrects the stores that govern FUTURE
+   * processing; historical delivery records are preserved and reported, because
+   * "we sent to X on date Y" is accurate and rewriting it would falsify a log.
+   */
+  app.post('/privacy/rectify-recipient', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = RectifySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    if (parsed.data.recipient.toLowerCase() === parsed.data.corrected.toLowerCase()) {
+      return reply.code(422).send({ error: 'rectify_noop', message: 'The corrected address is identical to the current one.' });
+    }
+
+    const result = await tenantScoped(req, (trx) => rectifyRecipient({
+      customerId: auth.customer_id,
+      from: parsed.data.recipient,
+      to: parsed.data.corrected,
+      requestedBy: parsed.data.requested_by ?? null,
+    }, trx));
+
+    return {
+      ...result,
+      note: 'Historical message and event records are preserved: they are an accurate record of what was sent, and rewriting them would falsify the delivery log rather than correct inaccurate data.',
+    };
+  });
+
+  const ObjectSchema = z.object({
+    recipient: z.string().email(),
+    reason: z.string().max(1000).optional(),
+    requested_by: z.string().max(200).optional(),
+  });
+
+  /**
+   * Article 21(2): the right to object to direct marketing is unconditional —
+   * no balancing test, no grace period — so it takes effect immediately.
+   */
+  app.post('/privacy/object', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = ObjectSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    await tenantScoped(req, (trx) => recordObjection({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      reason: parsed.data.reason ?? null,
+      requestedBy: parsed.data.requested_by ?? null,
+    }, trx));
+    return reply.code(200).send({ objection_recorded: true, effective: 'immediately' });
+  });
 
   app.post('/privacy/cases', { preHandler: requireScope('messages') }, async (req, reply) => {
     const auth = req.auth!;

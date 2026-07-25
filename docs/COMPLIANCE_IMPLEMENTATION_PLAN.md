@@ -18,6 +18,7 @@ effectively, or sufficient for any framework — see §16 release gates.
 | BASE-08 | Done (policy: prohibit + partial enforcement) | [Sensitive-message transport policy](TRANSPORT_SECURITY.md) — `tls_required` is now fail-closed per recipient domain; PHI stays prohibited because first-delivery and end-to-end gaps remain |
 | BASE-15 | Partial | [Data-use restrictions](DATA_USE_RESTRICTIONS.md) — card data enforced; PHI/FERPA/SEC contractual only; terms and UI notices outstanding |
 | GDPR-01, CCPA-01 | Done | Satisfied by BASE-02…05 |
+| GDPR-02, CCPA-02 (P1) | Done | Art 18 restriction (enforced in both send paths), Art 16 / right-to-correct rectification, Art 21 objection; `privacy-rights.ts`, migration 081, `privacy-rights.e2e.test.ts` |
 | CANSPAM-01 | Done | Migration 077, `canspam-classification.e2e` |
 | CANSPAM-02/03/04 | Done | `canspam-sender-identity.e2e`, `canspam-footer.test` |
 | CANSPAM-05 | Done | Migration 078, `canspam-unsubscribe-monitor.e2e` |

@@ -74,6 +74,7 @@ export * from './unsubscribe-monitor.js';
 export * from './canspam-footer.js';
 export * from './card-data.js';
 export * from './transport-security.js';
+export * from './privacy-rights.js';
 export * from './billing-payload-allowlist.js';
 export * from './logging.js';
 export * from './workflow-definition.js';

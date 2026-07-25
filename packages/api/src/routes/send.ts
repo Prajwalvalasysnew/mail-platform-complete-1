@@ -40,6 +40,8 @@ import {
   redactCardData,
   summarizeFindings,
   cardDataPolicy,
+  restrictedSet,
+  isProcessingRestricted,
 } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
@@ -490,10 +492,15 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     // distinct domains — instead of two sequential round-trips per recipient.
     // For a 1000-recipient send this turns ~2000 awaits into ~3.
     const suppressedSet = await tenantScoped(req, (trx) => isSuppressedBatch(auth.customer_id, recipients, trx));
+    // GDPR-02: Article 18 restriction is checked alongside suppression. A
+    // restricted recipient is reported as suppressed to the caller — the
+    // sender does not need to know a rights request is in progress, and
+    // leaking that would itself be a disclosure.
+    const restricted = await tenantScoped(req, (trx) => restrictedSet(auth.customer_id, recipients, trx));
     const intelMap = await isTrapOrDisposableBatch(recipients);
     for (const rcpt of recipients) {
       const lower = rcpt.toLowerCase();
-      if (suppressedSet.has(lower)) {
+      if (suppressedSet.has(lower) || restricted.has(lower)) {
         suppressed.push(rcpt);
         continue;
       }
@@ -985,7 +992,9 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
           subject = screened.subject ?? subject; html = screened.html; text = screened.text;
         }
 
-        if (await tenantScoped(req, (trx) => isSuppressed(auth.customer_id, msg.to, trx))) {
+        // GDPR-02: restriction gates the batch path too (parity with /send).
+        if (await tenantScoped(req, (trx) => isSuppressed(auth.customer_id, msg.to, trx))
+            || await tenantScoped(req, (trx) => isProcessingRestricted(auth.customer_id, msg.to, trx))) {
           results.push({ index: i, accepted: false, suppressed: true });
           refundCount++;
           continue;
