@@ -269,6 +269,7 @@ export interface Database {
   sender_health_runs: SenderHealthRunsTable;
   regulatory_retention_locks: RegulatoryRetentionLocksTable;
   consent_records: ConsentRecordsTable;
+  privacy_case_appeals: PrivacyCaseAppealsTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -730,6 +731,21 @@ export interface RecipientDomainIntelTable {
   category: 'spam_trap' | 'disposable' | 'role' | 'high_bounce' | 'clean';
   notes: string | null;
   updated_at: Generated<Timestamp>;
+}
+
+/** CCPA-07: appeals against denied data-subject requests. */
+export interface PrivacyCaseAppealsTable {
+  id: Generated<string>;
+  case_id: string;
+  customer_id: string;
+  submitted_at: Generated<Timestamp>;
+  reason: string;
+  due_at: Timestamp;
+  status: Generated<'received' | 'upheld' | 'overturned'>;
+  decided_at: Timestamp | null;
+  decided_by: string | null;
+  decision_reason: string | null;
+  escalation_notice: string | null;
 }
 
 /** GDPR-05: affirmative consent grants with provenance (Art 7(1) proof). */
@@ -1206,7 +1222,10 @@ export interface PrivacyCaseEventsTable {
   id: Generated<string>;
   case_id: string;
   customer_id: string;
-  event: 'created' | 'verified' | 'status_changed' | 'extended' | 'communication' | 'artifact_attached' | 'denied' | 'closed';
+  event: 'created' | 'verified' | 'status_changed' | 'extended' | 'communication' | 'artifact_attached' | 'denied' | 'closed'
+    // CCPA-07: a denial can be appealed, and an overturned appeal reopens the
+    // case — a reopen must be as auditable as the denial that preceded it.
+    | 'appeal_submitted' | 'appeal_decided' | 'reopened';
   detail: Generated<Record<string, unknown>>;
   actor: string | null;
   created_at: Generated<Timestamp>;

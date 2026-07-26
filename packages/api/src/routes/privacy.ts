@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, recordConsentGrant, confirmDoubleOptIn, getConsentProof, withdrawConsent, ConsentEvidenceError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, recordSaleShareOptOut, listSaleShareOptOuts, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, recordConsentGrant, confirmDoubleOptIn, getConsentProof, withdrawConsent, ConsentEvidenceError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, submitPrivacyCaseAppeal, decidePrivacyCaseAppeal, listPrivacyCaseAppeals, recordSaleShareOptOut, listSaleShareOptOuts, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -712,6 +712,69 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
   // Place / list / release legal holds. A hold blocks erasure for its scope.
   // Requires the messages scope (same as erasure); a customer can only manage
   // holds on their own tenant.
+  // ─── CCPA-07: appeals against a denied request ───────────────────────────
+
+  app.post('/privacy/cases/:id/appeal', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = z.object({
+      reason: z.string().min(1).max(2000),
+      submitted_by: z.string().max(200).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    try {
+      const appeal = await tenantScoped(req, (trx) => submitPrivacyCaseAppeal(auth.customer_id, id, {
+        reason: parsed.data.reason,
+        submittedBy: parsed.data.submitted_by ?? null,
+      }, trx));
+      return reply.code(201).send({ appeal });
+    } catch (err) {
+      return caseErrorReply(reply, err);
+    }
+  });
+
+  /**
+   * Decide an appeal. Upholding a denial requires an escalation notice — the
+   * consumer must be told how to complain to the regulator, and recording what
+   * they were told is what turns that duty into evidence. Overturning reopens
+   * the case for fulfilment.
+   */
+  app.post('/privacy/appeals/:id/decide', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = z.object({
+      decision: z.enum(['upheld', 'overturned']),
+      decided_by: z.string().min(1).max(200),
+      reason: z.string().min(1).max(2000),
+      escalation_notice: z.string().max(2000).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    try {
+      const appeal = await tenantScoped(req, (trx) => decidePrivacyCaseAppeal(auth.customer_id, id, {
+        decision: parsed.data.decision,
+        decidedBy: parsed.data.decided_by,
+        reason: parsed.data.reason,
+        escalationNotice: parsed.data.escalation_notice ?? null,
+      }, trx));
+      return { appeal };
+    } catch (err) {
+      return caseErrorReply(reply, err);
+    }
+  });
+
+  app.get('/privacy/appeals', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { case_id, open, overdue } = req.query as Record<string, string | undefined>;
+    const appeals = await tenantScoped(req, (trx) => listPrivacyCaseAppeals(auth.customer_id, {
+      caseId: case_id,
+      openOnly: open === 'true',
+      overdueOnly: overdue === 'true',
+    }, trx));
+    return { appeals };
+  });
+
   app.get('/privacy/legal-holds', { preHandler: requireScope('messages') }, async (req) => {
     const auth = req.auth!;
     const { active } = req.query as { active?: string };

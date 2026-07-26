@@ -953,6 +953,42 @@ export const openapiSpec = {
         },
       },
     },
+    '/privacy/cases/{id}/appeal': {
+      post: {
+        summary: 'CCPA-07: appeal a denied data-subject request. The appeal runs on its own statutory clock, and remains available after the case was closed',
+        operationId: 'submitPrivacyCaseAppeal',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '201': { description: 'Appeal recorded with its own due date' },
+          '409': { description: 'The case was never denied, so there is nothing to appeal', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '422': { description: 'An appeal on this case is already awaiting a decision', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/appeals/{id}/decide': {
+      post: {
+        summary: 'Decide an appeal. Upholding a denial requires an escalation notice recording how the consumer was told to complain to the regulator; overturning reopens the case',
+        operationId: 'decidePrivacyCaseAppeal',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '200': { description: 'Appeal decided' },
+          '409': { description: 'The appeal has already been decided', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '422': { description: 'Upholding without an escalation notice', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/appeals': {
+      get: {
+        summary: 'List appeals; filter to open or overdue for the response-timeliness metric',
+        operationId: 'listPrivacyCaseAppeals',
+        parameters: [
+          { name: 'case_id', in: 'query', schema: { type: 'string', format: 'uuid' } },
+          { name: 'open', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+          { name: 'overdue', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+        ],
+        responses: { '200': { description: 'Appeals, newest first' } },
+      },
+    },
     '/privacy/consent': {
       post: {
         summary: 'GDPR Art 7(1): record an affirmative consent grant with provenance, evidence wording and policy version. A double_opt_in grant is NOT valid consent until confirmed',
