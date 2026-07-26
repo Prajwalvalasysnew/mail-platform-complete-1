@@ -21,6 +21,7 @@
 
 import { sql } from 'kysely';
 import { db } from './db.js';
+import { summarizeAccessAudit } from './access-audit.js';
 
 export type Completeness = 'complete' | 'partial' | 'missing';
 
@@ -236,7 +237,31 @@ async function base10(p: EvidencePeriod): Promise<ControlEvidence> {
   };
 }
 
-const COLLECTORS = [canspam05, canspam08, base06, privacyRequests, base03, pci02, base10];
+async function hipaa07(p: EvidencePeriod): Promise<ControlEvidence> {
+  const s = await summarizeAccessAudit({ start: p.start, end: p.end });
+
+  return {
+    control_id: 'HIPAA-07',
+    metrics: {
+      staff_data_accesses: s.accesses,
+      distinct_staff: s.distinct_admins,
+      break_glass_accesses: s.break_glass_accesses,
+      break_glass_unreviewed: s.break_glass_unreviewed,
+      found_inappropriate: s.found_inappropriate,
+    },
+    // Zero accesses is genuinely clean — nobody needed to look. What is not
+    // clean is emergency access that nobody went back and checked: an
+    // unreviewed break-glass grant is the finding this control exists for.
+    completeness: s.break_glass_unreviewed > 0 ? 'partial' : 'complete',
+    notes: s.break_glass_unreviewed > 0
+      ? `${s.break_glass_unreviewed} break-glass access(es) awaiting reviewer decision.`
+      : s.found_inappropriate > 0
+        ? `${s.found_inappropriate} access(es) were reviewed and found inappropriate — see the incident record.`
+        : null,
+  };
+}
+
+const COLLECTORS = [canspam05, canspam08, base06, privacyRequests, base03, pci02, base10, hipaa07];
 
 /**
  * Collect evidence for every instrumented control over a period.

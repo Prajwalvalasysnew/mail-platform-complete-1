@@ -138,6 +138,25 @@ Required, and **not implemented in this repository**:
 
 A restored node must not serve traffic until tombstone replay has run.
 
+## 3b. Reviewed-access interlock (HIPAA-07)
+
+An audit row recording staff access to tenant data is ordinary audit traffic
+and ages out on the normal schedule — **unless a reviewer has ruled on it**.
+A review is a judgement about a named person's conduct, and it is keyed to the
+audit row's id, so archiving that row would leave the finding pointing at
+nothing.
+
+Reviewed access rows are therefore held back and reported as
+`reviewed_access_rows_skipped`. Note what this is *not*: the review table's
+foreign key could have blocked the delete instead, but that would fail the
+whole audit purge the first time anyone reviewed anything — retention would
+stop platform-wide because one record was examined.
+
+Retiring these deliberately (after the organization's access-review retention
+period, typically tied to the SOC 2 or HIPAA record-retention commitment) means
+deleting the review row first; the next sweep then treats the audit row
+normally.
+
 ## 7. Monitoring
 
 The sweep returns per-step counts. Alert on:
@@ -151,6 +170,9 @@ The sweep returns per-step counts. Alert on:
   deadline is probably being missed too;
 - `regulatory_locked_rows_skipped` for a tenant with no regulated workload,
   which means a lock was placed in error and is suppressing normal disposal;
+- `reviewed_access_rows_skipped` growing without bound, which means reviewed
+  staff-access records (HIPAA-07) are accumulating past the audit window with
+  no policy for retiring them — see §3b;
 - `deletion_object_items` in `failed` with exhausted attempts, which means
   erasure is incomplete for a data subject;
 - ClickHouse TTL drift against `RETENTION_EVENT_DAYS`.

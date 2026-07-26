@@ -82,6 +82,7 @@ export * from './consent-records.js';
 export * from './sensitive-pi.js';
 export * from './control-evidence.js';
 export * from './processor-assistance.js';
+export * from './access-audit.js';
 export * from './billing-payload-allowlist.js';
 export * from './logging.js';
 export * from './workflow-definition.js';

@@ -102,6 +102,12 @@ export interface RetentionResult {
    * operator action.
    */
   regulatory_locked_rows_skipped: number;
+  /**
+   * Audit rows past the audit cutoff that a reviewer has ruled on (HIPAA-07).
+   * A judgement about someone's access to tenant data outlives the ordinary
+   * audit window, and the review row points at the audit row's id.
+   */
+  reviewed_access_rows_skipped: number;
 }
 
 const TERMINAL_STATUSES = ['delivered', 'hard_bounced', 'failed', 'suppressed'] as const;
@@ -640,6 +646,13 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
       FROM audit_log a
       LEFT JOIN audit_log_hashes h ON h.audit_id = a.id
       WHERE a.occurred_at < ${auditCutoff}
+        -- HIPAA-07: an access record a reviewer has ruled on is evidence
+        -- about a person's conduct, and it outlives the ordinary audit
+        -- window. Preserved rather than archived because the review row
+        -- (admin_access_reviews) points at this id — archiving would leave a
+        -- finding attached to nothing. Counted, not silently dropped, and a
+        -- later sweep picks it up once the review is aged out deliberately.
+        AND NOT EXISTS (SELECT 1 FROM admin_access_reviews r WHERE r.audit_id = a.id)
     ), archived AS (
       INSERT INTO audit_log_archive (
         audit_id, customer_id, api_key_id, actor_type, actor_id, actor_label,
@@ -660,6 +673,17 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     SELECT COUNT(*)::text AS count FROM deleted
   `.execute(db);
   const auditPurged = Number(auditResult.rows[0]?.count ?? 0);
+
+  // How many audit rows the reviewed-access rule held back. Reported for the
+  // same reason as the other skip counters: "nothing to purge" and "purging
+  // is blocked" must never look the same from outside.
+  const reviewedAccessHeld = await sql<{ count: string }>`
+    SELECT COUNT(*)::text AS count
+    FROM audit_log a
+    WHERE a.occurred_at < ${auditCutoff}
+      AND EXISTS (SELECT 1 FROM admin_access_reviews r WHERE r.audit_id = a.id)
+  `.execute(db);
+  const reviewedAccessRowsSkipped = Number(reviewedAccessHeld.rows[0]?.count ?? 0);
 
   // --- 8b. Purge expired export artifacts ---------------------------------
   const exportsPurged = await purgeExpiredExports(exportRetentionDays);
@@ -690,5 +714,6 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     held_rows_skipped: heldSkipped,
     request_pinned_rows_skipped: requestPinnedSkipped,
     regulatory_locked_rows_skipped: regulatoryLockedSkipped,
+    reviewed_access_rows_skipped: reviewedAccessRowsSkipped,
   };
 }

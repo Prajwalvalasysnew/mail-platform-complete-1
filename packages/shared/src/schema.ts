@@ -271,6 +271,7 @@ export interface Database {
   consent_records: ConsentRecordsTable;
   privacy_case_appeals: PrivacyCaseAppealsTable;
   sensitive_pi_limits: SensitivePiLimitsTable;
+  admin_access_reviews: AdminAccessReviewsTable;
   retention_runs: RetentionRunsTable;
   control_evidence_runs: ControlEvidenceRunsTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
@@ -1218,6 +1219,21 @@ export interface PrivacyCasesTable {
   artifacts: Generated<Array<Record<string, unknown>>>;
   created_by: string | null;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/**
+ * HIPAA-07: a reviewer's judgement about one staff access to tenant data.
+ *
+ * Separate from the access record itself, which lives in the hash-chained
+ * audit_log — the evidence must stay append-only, the judgement about it
+ * arrives later.
+ */
+export interface AdminAccessReviewsTable {
+  audit_id: number;
+  reviewed_at: Generated<Timestamp>;
+  reviewed_by: string;
+  decision: 'appropriate' | 'inappropriate';
+  note: string | null;
 }
 
 /**
