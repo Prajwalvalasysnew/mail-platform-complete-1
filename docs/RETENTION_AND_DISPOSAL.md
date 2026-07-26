@@ -84,7 +84,36 @@ The pin is scoped to the request's subject within its own tenant: it is not a
 tenant-wide freeze, because over-preserving would quietly defeat the retention
 policy for every other recipient.
 
-## 4. Legal holds
+## 4. Regulatory retention locks (SEC-04)
+
+A **time-bound statutory obligation** — SEC Rule 17a-4, FINRA Rule 4511, or
+another named authority — preserves records until its period lapses. This is
+the third preservation mechanism and it is not interchangeable with the others:
+
+| Mechanism | Placed by | Released by | Blocks erasure? |
+| --- | --- | --- | --- |
+| Legal hold | Tenant | Tenant, at will | Yes |
+| Request pin | Automatic | The request being fulfilled | No (it *is* the request) |
+| **Regulatory lock** | Tenant, naming an authority | The period lapsing, or a documented early release | **Yes — even for the data subject** |
+
+The erasure interaction is the point. A regulatory lock refuses a deletion
+request the data subject is otherwise entitled to make: GDPR Art 17(3)(b)
+makes compliance with a legal obligation a lawful ground to refuse, and a
+broker-dealer cannot delete a record it is required to retain. The refusal
+returns the basis, the naming authority, and the expiry, because the
+controller has to be able to tell the subject *why* and *until when*.
+
+Enforcement is time-bound by design: past `retain_until` the ordinary policy
+resumes with no operator action, so a lapsed obligation cannot quietly become
+permanent retention. Early release requires both a releaser and a documented
+reason — enforced by a table constraint as well as the API.
+
+**This makes regulated retention enforceable; it does not make the platform a
+qualifying archive.** SEC-03 (WORM or audit-trail-alternative storage), SEC-05
+(retrieval and production) and SEC-09 (independent validation) are still open,
+and broker-dealer records remain a prohibited workload until they are done.
+
+## 5. Legal holds
 
 An active hold (`scope = 'customer'` for a whole tenant, `recipient:<email>`
 for one recipient) blocks both retention sweeps and direct erasure. Held rows
@@ -92,7 +121,7 @@ are counted, skipped, and collected by a later sweep once the hold is
 released. Steps that archive rather than destroy, and tables with no tenant
 content, are not hold-gated. See `docs/LEGAL_HOLD.md`.
 
-## 5. Backups
+## 6. Backups
 
 Backups are **not** selectively rewritten. No online deletion can reach into a
 backup image, so erased data persists in any backup taken before the erasure,
@@ -109,7 +138,7 @@ Required, and **not implemented in this repository**:
 
 A restored node must not serve traffic until tombstone replay has run.
 
-## 6. Monitoring
+## 7. Monitoring
 
 The sweep returns per-step counts. Alert on:
 
@@ -120,13 +149,15 @@ The sweep returns per-step counts. Alert on:
 - `request_pinned_rows_skipped` growing steadily, which means privacy cases are
   being opened and never closed — the data stays pinned and the statutory
   deadline is probably being missed too;
+- `regulatory_locked_rows_skipped` for a tenant with no regulated workload,
+  which means a lock was placed in error and is suppressing normal disposal;
 - `deletion_object_items` in `failed` with exhausted attempts, which means
   erasure is incomplete for a data subject;
 - ClickHouse TTL drift against `RETENTION_EVENT_DAYS`.
 
 Manual run: `POST /admin/retention/run` (operator role).
 
-## 7. Open items
+## 8. Open items
 
 - Approved windows signed off by Legal and the privacy owner.
 - Backup retention, encryption, and key-destruction procedure (BASE-07).

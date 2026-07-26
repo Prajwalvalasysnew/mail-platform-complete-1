@@ -140,6 +140,8 @@ export const ERROR_CODES = {
   rectify_noop: { description: 'The corrected address is identical to the current one.', httpStatus: 422 },
   transfer_purpose_prohibited: { description: 'CAN-SPAM §5(a)(4) prohibits selling, exchanging, or transferring the address of a recipient who has opted out, except to a provider used to comply with the law.', httpStatus: 403 },
   sender_on_hold: { description: 'Sending is paused pending review of the account\'s complaint or bounce rate.', httpStatus: 403 },
+  regulatory_retention_active: { description: 'Erasure is blocked: the records are under a regulatory retention obligation (SEC 17a-4 / FINRA 4511). Compliance with a legal obligation is a lawful ground to refuse erasure.', httpStatus: 409 },
+  retain_until_in_past: { description: 'A regulatory retention lock must expire in the future.', httpStatus: 422 },
   sole_owner: { description: 'Account deletion is blocked: the caller is the sole owner of one or more organizations.', httpStatus: 409 },
 
   // ── Idempotency ────────────────────────────────────────────────────────────

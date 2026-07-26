@@ -953,6 +953,33 @@ export const openapiSpec = {
         },
       },
     },
+    '/privacy/regulatory-locks': {
+      post: {
+        summary: 'SEC-04: place a time-bound regulatory retention obligation (SEC 17a-4 / FINRA 4511). Blocks both retention purge and data-subject erasure until it lapses',
+        operationId: 'placeRegulatoryLock',
+        responses: {
+          '201': { description: 'Lock placed' },
+          '422': { description: 'retain_until is not in the future', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+      get: {
+        summary: 'List regulatory retention locks (active by default)',
+        operationId: 'listRegulatoryLocks',
+        parameters: [{ name: 'include_released', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } }],
+        responses: { '200': { description: 'Locks, newest first' } },
+      },
+    },
+    '/privacy/regulatory-locks/{id}/release': {
+      post: {
+        summary: 'Release a regulatory lock before its statutory expiry. Requires both a releaser and a documented reason',
+        operationId: 'releaseRegulatoryLock',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '200': { description: 'Lock released' },
+          '404': { description: 'No active lock with that id', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
     '/privacy/opt-out-sale': {
       post: {
         summary: 'CCPA §1798.120: opt out of sale/sharing. Does NOT stop delivery — a consumer may keep receiving mail while refusing to be sold. Global Privacy Control is honoured automatically at the tracker surfaces',

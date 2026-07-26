@@ -77,6 +77,7 @@ export * from './transport-security.js';
 export * from './privacy-rights.js';
 export * from './sale-share.js';
 export * from './sender-health.js';
+export * from './regulatory-retention.js';
 export * from './billing-payload-allowlist.js';
 export * from './logging.js';
 export * from './workflow-definition.js';

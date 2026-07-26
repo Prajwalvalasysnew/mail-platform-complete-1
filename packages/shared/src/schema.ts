@@ -267,6 +267,7 @@ export interface Database {
   processing_restrictions: ProcessingRestrictionsTable;
   sale_share_optouts: SaleShareOptOutsTable;
   sender_health_runs: SenderHealthRunsTable;
+  regulatory_retention_locks: RegulatoryRetentionLocksTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -728,6 +729,21 @@ export interface RecipientDomainIntelTable {
   category: 'spam_trap' | 'disposable' | 'role' | 'high_bounce' | 'clean';
   notes: string | null;
   updated_at: Generated<Timestamp>;
+}
+
+/** SEC-04: time-bound regulatory retention obligations. */
+export interface RegulatoryRetentionLocksTable {
+  id: Generated<string>;
+  customer_id: string;
+  scope: string;
+  basis: 'sec_17a4' | 'finra_4511' | 'other_statutory';
+  authority: string;
+  retain_until: Timestamp;
+  created_by: string | null;
+  created_at: Generated<Timestamp>;
+  released_at: Timestamp | null;
+  released_by: string | null;
+  released_reason: string | null;
 }
 
 /** CANSPAM-08: per-sender health verdicts and reviewer decisions. */

@@ -96,6 +96,12 @@ export interface RetentionResult {
    * being fulfilled.
    */
   request_pinned_rows_skipped: number;
+  /**
+   * Rows matching a retention cutoff but locked by a regulatory retention
+   * obligation (SEC-04). Released by the statutory period lapsing, not by any
+   * operator action.
+   */
+  regulatory_locked_rows_skipped: number;
 }
 
 const TERMINAL_STATUSES = ['delivered', 'hard_bounced', 'failed', 'suppressed'] as const;
@@ -140,10 +146,23 @@ const openRequestOnMessage = sql<boolean>`EXISTS (
     AND c.request_types && ARRAY[${sql.join([...PINNING_REQUEST_TYPES])}]::text[]
 )`;
 
-// A message is preserved when EITHER a legal hold covers it or an open access
-// request pins it. Every step that was hold-gated is interlock-gated too —
-// the reason differs but the requirement is identical: the data must survive.
-const preservedMessage = sql<boolean>`(${holdOnMessage} OR ${openRequestOnMessage})`;
+// SEC-04: a regulatory retention obligation preserves the record until its
+// statutory period lapses. Unlike a hold this is TIME-BOUND — past
+// retain_until the ordinary policy resumes with no manual step, so an expired
+// obligation cannot quietly become permanent retention.
+const regulatoryLockOnMessage = sql<boolean>`EXISTS (
+  SELECT 1 FROM regulatory_retention_locks r
+  WHERE r.customer_id = messages.customer_id
+    AND r.released_at IS NULL
+    AND r.retain_until > now()
+    AND (r.scope = 'customer' OR r.scope = 'recipient:' || lower(messages.to_address))
+)`;
+
+// A message is preserved when a legal hold covers it, an open access request
+// pins it, or a regulatory obligation locks it. Every step that was hold-gated
+// is gated by all three — the reasons differ but the requirement is identical:
+// the data must survive.
+const preservedMessage = sql<boolean>`(${holdOnMessage} OR ${openRequestOnMessage} OR ${regulatoryLockOnMessage})`;
 const noHoldOnMessage = sql<boolean>`NOT ${preservedMessage}`;
 
 /**
@@ -202,6 +221,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
 
   let heldSkipped = 0;
   let requestPinnedSkipped = 0;
+  let regulatoryLockedSkipped = 0;
 
   // --- 1. Purge inline bodies (batched, hold-aware) ----------------------
   const messagesBodyPurgedInline = await drainBatches(batchSize, async (limit) => {
@@ -255,6 +275,19 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
       AND ${openRequestOnMessage}
   `.execute(db);
   requestPinnedSkipped += Number(pinnedInline.rows[0]?.count ?? 0);
+
+  // SEC-04: inline bodies locked by a regulatory retention obligation.
+  const lockedInline = await sql<{ count: string }>`
+    WITH windows AS (${windows})
+    SELECT COUNT(*)::text AS count FROM messages
+    LEFT JOIN windows w ON w.customer_id = messages.customer_id
+    WHERE body_storage = 'inline'
+      AND status IN (${sql.join([...TERMINAL_STATUSES])})
+      AND queued_at < now() - make_interval(days => COALESCE(w.body_days, ${messageBodyRetentionDays})::int)
+      AND (html_body IS NOT NULL OR text_body IS NOT NULL)
+      AND ${regulatoryLockOnMessage}
+  `.execute(db);
+  regulatoryLockedSkipped += Number(lockedInline.rows[0]?.count ?? 0);
 
   // --- 2. Purge offloaded bodies (preservation-aware) --------------------
   // Only delete an object when EVERY message referencing that key is past
@@ -624,5 +657,6 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     review_queue_purged: reviewQueuePurged,
     held_rows_skipped: heldSkipped,
     request_pinned_rows_skipped: requestPinnedSkipped,
+    regulatory_locked_rows_skipped: regulatoryLockedSkipped,
   };
 }

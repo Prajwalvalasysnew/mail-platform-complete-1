@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, recordSaleShareOptOut, listSaleShareOptOuts, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, recordSaleShareOptOut, listSaleShareOptOuts, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -41,6 +41,13 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       // row is touched — so held data is never destroyed. Throws LegalHoldError,
       // translated to a 409 below.
       await assertNoActiveHold(auth.customer_id, recipient, trx);
+
+      // SEC-04: a regulatory retention obligation blocks erasure even when the
+      // DATA SUBJECT is the one asking. GDPR Art 17(3)(b) makes compliance
+      // with a legal obligation a lawful ground to refuse, and a broker-dealer
+      // cannot delete a record it is required to retain. Checked in the same
+      // transaction, before any row is touched.
+      await assertNoRegulatoryLock(auth.customer_id, recipient, trx);
 
       // Create subquery to select message_ids for the recipient
       const subquery = trx
@@ -195,6 +202,21 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
           error: 'legal_hold_active',
           message: 'Erasure is blocked: the recipient is under an active legal hold.',
           holds: err.holds.map((h) => ({ id: h.id, scope: h.scope, reason: h.reason })),
+        });
+      }
+      // SEC-04: refusing a data subject's erasure request is only defensible
+      // if the controller can say WHY and UNTIL WHEN, so the basis, the naming
+      // authority, and the expiry all come back with the refusal.
+      if (err instanceof RegulatoryRetentionError) {
+        return reply.code(409).send({
+          error: err.code,
+          message:
+            'Erasure is blocked: these records are under a regulatory retention obligation. ' +
+            'Compliance with a legal obligation is a lawful ground to refuse erasure.',
+          locks: err.locks.map((l) => ({
+            id: l.id, scope: l.scope, basis: l.basis,
+            authority: l.authority, retain_until: l.retain_until,
+          })),
         });
       }
       throw err;
@@ -697,6 +719,75 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       listLegalHolds(auth.customer_id, { activeOnly: active === 'true' }, trx)
     );
     return { holds };
+  });
+
+  // ─── SEC-04: regulatory retention locks ──────────────────────────────────
+
+  const PlaceLockSchema = z.object({
+    scope: z.string().min(1).max(320),
+    basis: z.enum(['sec_17a4', 'finra_4511', 'other_statutory']),
+    // Required: "we retained it because a rule says so" is only defensible if
+    // the rule is named.
+    authority: z.string().min(1).max(500),
+    retain_until: z.string().datetime(),
+  });
+
+  app.post('/privacy/regulatory-locks', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = PlaceLockSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const retainUntil = new Date(parsed.data.retain_until);
+    if (retainUntil.getTime() <= Date.now()) {
+      return reply.code(422).send({
+        error: 'retain_until_in_past',
+        message: 'retain_until must be in the future; a lapsed obligation preserves nothing.',
+      });
+    }
+    const scope = parsed.data.scope === 'customer'
+      ? 'customer'
+      : recipientLockScope(parsed.data.scope.replace(/^recipient:/i, ''));
+
+    const lock = await tenantScoped(req, (trx) => placeRegulatoryLock({
+      customerId: auth.customer_id,
+      scope,
+      basis: parsed.data.basis,
+      authority: parsed.data.authority,
+      retainUntil,
+      createdBy: auth.api_key_id ?? 'api',
+    }, trx));
+    return reply.code(201).send({ lock });
+  });
+
+  app.get('/privacy/regulatory-locks', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { include_released } = req.query as Record<string, string | undefined>;
+    const locks = await listRegulatoryLocks(auth.customer_id, { includeReleased: include_released === 'true' });
+    return { locks };
+  });
+
+  /**
+   * Early release, before the statutory period lapses. Both a releaser and a
+   * documented reason are required — an undocumented early release of a
+   * regulatory lock is precisely what an examiner would ask about.
+   */
+  app.post('/privacy/regulatory-locks/:id/release', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = z.object({
+      reason: z.string().min(1).max(1000),
+      released_by: z.string().min(1).max(200),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const released = await tenantScoped(req, (trx) => releaseRegulatoryLock({
+      customerId: auth.customer_id,
+      lockId: id,
+      releasedBy: parsed.data.released_by,
+      reason: parsed.data.reason,
+    }, trx));
+    if (!released) return reply.code(404).send({ error: 'not_found', message: 'No active regulatory lock with that id.' });
+    return { released: true };
   });
 
   app.post('/privacy/legal-holds', { preHandler: requireScope('messages') }, async (req, reply) => {
