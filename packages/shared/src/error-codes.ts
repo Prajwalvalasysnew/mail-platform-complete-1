@@ -69,6 +69,7 @@ export const ERROR_CODES = {
   origin_mismatch: { description: 'The request Origin is not an allowed admin console origin.', httpStatus: 403 },
   cross_site_blocked: { description: 'Cross-site requests are not permitted on the admin plane (Sec-Fetch-Site).', httpStatus: 403 },
   note_required: { description: 'A note explaining the decision is required (KYC request-info / reject).', httpStatus: 400 },
+  invalid_period: { description: 'The requested reporting period is not a valid range (end must be after start).', httpStatus: 400 },
 
   // ── API-key / bearer auth (plugins) ────────────────────────────────────────
   missing_auth: { description: 'No Authorization header / API key was provided.', httpStatus: 401 },

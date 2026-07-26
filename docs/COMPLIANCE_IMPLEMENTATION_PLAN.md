@@ -22,6 +22,7 @@ effectively, or sufficient for any framework — see §16 release gates.
 | GDPR-05 (P1) | Done | Affirmative consent capture with provenance, evidence wording, policy version and double-opt-in confirmation; Art 7(1) proof export; Art 7(3) withdrawal that preserves the proof. `consent-records.ts`, migration 085, `consent-records.e2e.test.ts`. Erasure pseudonymizes the new table (BASE-03) |
 | CCPA-05 (P1) | Done | Right to limit use of sensitive PI (§1798.121). Message content is SPI here by definition — §1798.140(ae)(1)(E) covers email contents unless the business is the intended recipient, and this platform never is. The limit disables open/click tracking in both send paths, overriding the sender; delivery, abuse scanning and legal-obligation controls are deliberately unaffected. `sensitive-pi.ts`, migration 087, `sensitive-pi-limit.e2e.test.ts` |
 | CCPA-07 (P1) | Partial | Appeals against a denied request, with their own statutory clock, a required regulator-escalation notice on upholding, and an overturn path that reopens the case; migration 086, `privacy-appeals.e2e.test.ts`. Intake channels, verification and deadlines were already covered by BASE-05. Authorized-agent authority verification and staff training remain outstanding |
+| SOC2-06 (P1) | Done | Monthly per-control evidence collection with an explicit completeness verdict, reviewer sign-off, and a PII/secret guard on the write path. Records `'missing'` as a finding distinct from a zero count — a control that stopped running otherwise reads as clean. `control-evidence.ts`, migration 088, `control-evidence.e2e.test.ts`. Also closes a gap it exposed: the retention sweep persisted nothing, so `retention_runs` now records every sweep including failures |
 | CCPA-04 (P1) | Done | Sale/share opt-out as a state distinct from suppression, Global Privacy Control honoured at the tracker click and unsubscribe surfaces; `sale-share.ts`, migration 082, `sale-share-optout.e2e.test.ts`. CCPA-03 (the sale/share applicability inventory) remains a Legal decision |
 | SEC-04 (P1) | Done | Time-bound regulatory retention locks that survive the retention sweep AND refuse data-subject erasure (Art 17(3)(b)); `regulatory-retention.ts`, migration 084, `regulatory-retention.e2e.test.ts`. SEC-01/02/03/05…09 remain open, so broker-dealer records are still a prohibited workload |
 | FERPA-07 (P1) | Done | Retention interlock: an open access/portability/rectification case pins its subject's data; an open erasure case deliberately does not. `retention.ts`, `retention-request-interlock.e2e.test.ts`. Applies to GDPR Art 15 access equally, not only education records |
@@ -575,6 +576,33 @@ For every roadmap item, retain:
 Do not store production secrets, message bodies, full recipient lists, health
 information, student records, or card data in audit evidence systems. Redact or
 tokenize evidence and grant auditors time-bounded least-privilege access.
+
+### What is automated today (SOC2-06)
+
+`control-evidence.ts` collects the *timestamped execution evidence and review
+approval* rows above for seven controls — CANSPAM-05, CANSPAM-08, BASE-03,
+BASE-05, BASE-06, BASE-10 and PCI-02 — monthly, via the
+`control_evidence_collection` scheduler job, with `GET /admin/control-evidence`
+for retrieval and `POST /admin/control-evidence/:id/review` for sign-off.
+`POST /admin/control-evidence/collect` re-collects an arbitrary window when an
+auditor asks for one.
+
+Two properties are load-bearing and are asserted by
+`control-evidence.e2e.test.ts`:
+
+- **`missing` is a finding, not a blank.** For controls that claim continuous
+  operation, no evidence at all is recorded as `missing` rather than as a zero
+  count, because "the job stopped running" and "nothing happened" are otherwise
+  indistinguishable — and only the first is a control failure. Controls that
+  write only on exception (CANSPAM-08, PCI-02) treat zero as `complete`; the
+  asymmetry is deliberate.
+- **No secrets, no personal data.** `assertEvidenceIsSafe()` rejects metrics
+  containing an email address or a credential-shaped key before anything is
+  written, so the paragraph above is enforced rather than merely stated.
+
+The remaining register fields — owner, reviewer assignment, requirement source,
+exception tracking, vendor-inherited controls and next review date — are not
+automated and are still maintained by hand.
 
 ## 16. Release gates
 

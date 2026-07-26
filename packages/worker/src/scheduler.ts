@@ -22,7 +22,8 @@ import {
   complaintRateGauge,
   blocklistListings,
   meteringDrift,
-  runRetention,
+  runRetentionWithEvidence,
+  collectMonthlyControlEvidence,
   retentionHeldSkipped,
   ensureEventPartitions,
   sweepExpiredEventPartitions,
@@ -373,12 +374,39 @@ export function startScheduler(logger: Logger): { stop: () => void } {
       name: 'daily_retention',
       everyMs: 24 * HOUR,
       run: async () => {
-        const result = await runRetention();
+        // ...WithEvidence records the run in retention_runs (SOC2-06). The
+        // failure mode this guards is silence: a sweep that stops running
+        // looks exactly like a sweep with nothing to do, while data
+        // accumulates past its window.
+        const result = await runRetentionWithEvidence();
         retentionHeldSkipped.set(result.held_rows_skipped);
         if (result.held_rows_skipped > 0) {
           logger.warn({ held_rows_skipped: result.held_rows_skipped }, 'retention preserved rows under active legal hold');
         }
         logger.info({ result }, 'daily retention sweep complete');
+      },
+    },
+    {
+      // SOC2-06: collect control evidence for the previous complete calendar
+      // month. Ticks daily but writes at most once per month — the helper
+      // returns null when the period is already on file, so a nightly tick
+      // does not overwrite a reviewer's sign-off.
+      name: 'control_evidence_collection',
+      everyMs: 24 * HOUR,
+      run: async () => {
+        const collected = await collectMonthlyControlEvidence();
+        if (!collected) return;
+        const gaps = collected.evidence.filter((e) => e.completeness !== 'complete');
+        if (gaps.length) {
+          // A 'missing' verdict means a control produced no evidence at all,
+          // which is the finding an auditor opens with.
+          logger.warn(
+            { gaps: gaps.map((g) => ({ control: g.control_id, completeness: g.completeness, notes: g.notes })) },
+            'SOC2-06: control evidence collected with gaps',
+          );
+        } else {
+          logger.info({ controls: collected.evidence.length }, 'SOC2-06: control evidence collected clean');
+        }
       },
     },
     {

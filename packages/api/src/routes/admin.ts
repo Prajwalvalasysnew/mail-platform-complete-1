@@ -59,11 +59,15 @@ import {
   replayDeadLetter,
   purgeDeadLetter,
   purgeAllDeadLetters,
-  runRetention,
+  runRetentionWithEvidence,
   replayPrivacyTombstones,
   listSenderHealthRuns,
   reviewSenderHealth,
   SenderHealthReviewError,
+  collectControlEvidence,
+  listControlEvidence,
+  reviewControlEvidence,
+  EvidenceReviewError,
   clearRetentionPolicyCache,
   reconcileMetering,
   rotateAdminSessionCsrf,
@@ -917,7 +921,11 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.post('/retention/run', { preHandler: requireAdmin('operator') }, async (req, reply) => {
     const parsed = RetentionTriggerSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
-    const result = await runRetention({
+    // ...WithEvidence: a manually triggered sweep is still a sweep, and
+    // SOC2-06's BASE-06 collector reads from retention_runs. If manual runs
+    // did not record, an operator firing this by hand would leave the period
+    // looking as though retention never happened.
+    const result = await runRetentionWithEvidence({
       messageBodyRetentionDays: parsed.data.message_body_retention_days,
       eventRetentionDays: parsed.data.event_retention_days,
       messageRetentionDays: parsed.data.message_retention_days,
@@ -929,6 +937,85 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     });
     await auditAdminAction(req.admin!, 'retention_run', 'platform', result as unknown as Record<string, unknown>);
     return reply.code(200).send({ ok: true, result });
+  });
+
+  // ---- SOC2-06: control-evidence collection ----
+  //
+  // Read access is 'support' because the whole point is that evidence is easy
+  // to pull; the metrics are counts and timestamps with no personal data in
+  // them (enforced by assertEvidenceIsSafe at write time).
+  app.get('/control-evidence', { preHandler: requireAdmin('support') }, async (req) => {
+    const { control_id, unreviewed, limit } = req.query as Record<string, string | undefined>;
+    const runs = await listControlEvidence({
+      controlId: control_id,
+      unreviewedOnly: unreviewed === 'true',
+      limit: limit ? Number(limit) : undefined,
+    });
+    return { runs };
+  });
+
+  /**
+   * Collect evidence for a period on demand.
+   *
+   * The scheduler does this monthly; this exists for the case an auditor asks
+   * about an arbitrary window. Idempotent per (control, period) — re-running
+   * replaces the row, and deliberately clears any prior sign-off, because the
+   * reviewer approved the numbers that were there before.
+   */
+  app.post('/control-evidence/collect', {
+    preHandler: requireAdmin('operator'),
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const parsed = z.object({
+      period_start: z.string().datetime(),
+      period_end: z.string().datetime(),
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const start = new Date(parsed.data.period_start);
+    const end = new Date(parsed.data.period_end);
+    if (end <= start) {
+      return reply.code(400).send({ error: 'invalid_period', message: 'period_end must be after period_start.' });
+    }
+
+    const evidence = await collectControlEvidence({ start, end });
+    await auditAdminAction(req.admin!, 'control_evidence_collected', 'platform', {
+      period_start: parsed.data.period_start,
+      period_end: parsed.data.period_end,
+      controls: evidence.length,
+      gaps: evidence.filter((e) => e.completeness !== 'complete').map((e) => e.control_id),
+    });
+    return reply.code(200).send({ evidence });
+  });
+
+  /**
+   * Reviewer sign-off. Evidence nobody looked at does not demonstrate that a
+   * control operated, which is the thing an auditor actually tests.
+   */
+  app.post('/control-evidence/:id/review', {
+    preHandler: requireAdmin('operator'),
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = z.object({ note: z.string().max(2000).optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    // Non-UUID ids would reach Postgres and fail the cast as a 500. An id that
+    // cannot exist is a 404, not a server error.
+    if (!z.string().uuid().safeParse(id).success) {
+      return reply.code(404).send({ error: 'not_found', message: 'No evidence record with that id.' });
+    }
+
+    try {
+      await reviewControlEvidence({ id, reviewedBy: req.admin!.email, note: parsed.data.note ?? null });
+    } catch (err) {
+      if (err instanceof EvidenceReviewError) {
+        return reply.code(404).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+
+    await auditAdminAction(req.admin!, 'control_evidence_reviewed', 'control_evidence_run', { evidence_id: id });
+    return { reviewed: id };
   });
 
   // CANSPAM-08: sender-health reviewer queue.

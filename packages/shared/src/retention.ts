@@ -181,6 +181,38 @@ async function drainBatches(
   }
 }
 
+/**
+ * Run the sweep and persist a record that it ran (SOC2-06).
+ *
+ * The failure mode for retention is SILENCE: a sweep that stops running looks
+ * exactly like a sweep with nothing to do, while data accumulates past its
+ * window. Recording every run — including failures — is what makes the absence
+ * detectable. Prefer this over calling runRetention() directly from a
+ * scheduler or an operator endpoint.
+ */
+export async function runRetentionWithEvidence(opts: RetentionOptions = {}): Promise<RetentionResult> {
+  const startedAt = new Date();
+  try {
+    const result = await runRetention(opts);
+    await db.insertInto('retention_runs').values({
+      started_at: startedAt,
+      duration_ms: Date.now() - startedAt.getTime(),
+      result: JSON.stringify(result) as never,
+    } as never).execute().catch(() => {
+      // Evidence recording must never turn a successful sweep into a failure.
+    });
+    return result;
+  } catch (err) {
+    await db.insertInto('retention_runs').values({
+      started_at: startedAt,
+      duration_ms: Date.now() - startedAt.getTime(),
+      result: JSON.stringify({}) as never,
+      error: err instanceof Error ? err.message.slice(0, 2000) : 'unknown_retention_error',
+    } as never).execute().catch(() => {});
+    throw err;
+  }
+}
+
 export async function runRetention(opts: RetentionOptions = {}): Promise<RetentionResult> {
   const {
     messageBodyRetentionDays = Number(process.env.RETENTION_BODY_DAYS ?? 90),

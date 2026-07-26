@@ -271,6 +271,8 @@ export interface Database {
   consent_records: ConsentRecordsTable;
   privacy_case_appeals: PrivacyCaseAppealsTable;
   sensitive_pi_limits: SensitivePiLimitsTable;
+  retention_runs: RetentionRunsTable;
+  control_evidence_runs: ControlEvidenceRunsTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -1216,6 +1218,38 @@ export interface PrivacyCasesTable {
   artifacts: Generated<Array<Record<string, unknown>>>;
   created_by: string | null;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/**
+ * SOC2-06: one row per retention sweep.
+ *
+ * The sweep returned its counts to the caller and persisted nothing, so a
+ * sweep that stopped running looked exactly like a sweep with nothing to do.
+ * This table makes that absence detectable.
+ */
+export interface RetentionRunsTable {
+  id: Generated<string>;
+  started_at: Timestamp;
+  finished_at: Generated<Timestamp>;
+  duration_ms: number;
+  result: Record<string, unknown>;
+  error: string | null;
+}
+
+/** SOC2-06: periodic per-control evidence with a completeness verdict. */
+export interface ControlEvidenceRunsTable {
+  id: Generated<string>;
+  control_id: string;
+  period_start: Timestamp;
+  period_end: Timestamp;
+  collected_at: Generated<Timestamp>;
+  // Counts and timestamps only — never identifiers, content, or secrets.
+  metrics: Generated<Record<string, unknown>>;
+  completeness: 'complete' | 'partial' | 'missing';
+  notes: string | null;
+  reviewed_at: Timestamp | null;
+  reviewed_by: string | null;
+  review_note: string | null;
 }
 
 // Migration 078 (CANSPAM-05): synthetic unsubscribe monitoring evidence.
