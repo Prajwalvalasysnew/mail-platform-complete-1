@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, recordConsentGrant, confirmDoubleOptIn, getConsentProof, withdrawConsent, ConsentEvidenceError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, submitPrivacyCaseAppeal, decidePrivacyCaseAppeal, listPrivacyCaseAppeals, recordSaleShareOptOut, listSaleShareOptOuts, limitSensitivePiUse, releaseSensitivePiLimit, listSensitivePiLimits, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, recordConsentGrant, confirmDoubleOptIn, getConsentProof, withdrawConsent, ConsentEvidenceError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, submitPrivacyCaseAppeal, decidePrivacyCaseAppeal, listPrivacyCaseAppeals, recordSaleShareOptOut, listSaleShareOptOuts, limitSensitivePiUse, releaseSensitivePiLimit, listSensitivePiLimits, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection, processingRecord } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -484,6 +484,20 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
     }, trx));
     if (!released) return reply.code(404).send({ error: 'not_found', message: 'No active restriction for that recipient.' });
     return { released: true };
+  });
+
+  /**
+   * GDPR-13: the Art 30(2) record of processing carried out for this
+   * controller, with the Art 32 measures schedule and the Art 28(3)
+   * assistance duties attached.
+   *
+   * Read-only and scoped to the caller's own tenant — the measures resolve
+   * against that tenant's live configuration, so it is not shareable evidence
+   * about anyone else.
+   */
+  app.get('/privacy/processing-record', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    return processingRecord(auth.customer_id);
   });
 
   app.get('/privacy/restrictions', { preHandler: requireScope('messages') }, async (req) => {

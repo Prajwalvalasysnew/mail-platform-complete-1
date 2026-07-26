@@ -15,6 +15,14 @@ unenforceable.
 must fill in the named accountable roles from §2 of the compliance
 implementation plan before this document becomes evidence.
 
+**For a specific tenant, prefer the generated record.** `GET
+/v1/privacy/processing-record` (GDPR-13) returns the Art 30(2) record and Art
+32 measures schedule resolved against that tenant's live configuration —
+retention windows actually in effect, which measures are on, which are off.
+This document describes the platform; that endpoint describes one controller's
+processing. Where they disagree, the endpoint is current and this document is
+stale.
+
 ## 1. Data classes
 
 | Class | Examples | Sensitivity |

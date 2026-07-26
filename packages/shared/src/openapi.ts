@@ -943,6 +943,18 @@ export const openapiSpec = {
         responses: { '200': { description: 'Restrictions, newest first' } },
       },
     },
+    '/privacy/processing-record': {
+      get: {
+        summary: 'GDPR Art 30(2) record of processing carried out for this controller, with the Art 32 security-measures schedule resolved against this tenant\'s live configuration and the Art 28(3) assistance duties mapped to the endpoints that deliver them',
+        description:
+          'Each measure carries a state: "enforced" (true by construction in the platform), "configured" (currently on, can be switched off), '
+          + '"not_enabled" (the platform supports it and it is off for this tenant), or "policy_only" (an organizational commitment with no technical enforcement). '
+          + 'Measures that are off are returned with state "not_enabled" rather than omitted, and a configuration-derived measure never reports "enforced". '
+          + 'Subprocessors are not named — that is a deployment fact, not a source-code fact.',
+        operationId: 'getProcessingRecord',
+        responses: { '200': { description: 'Processing record, measures schedule, assistance commitments and a gap summary' } },
+      },
+    },
     '/privacy/rectify-recipient': {
       post: {
         summary: 'GDPR Art 16 / CCPA right to correct: move suppression, consent, group and restriction state to a corrected address. Historical delivery records are preserved and reported',
