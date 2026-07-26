@@ -115,6 +115,15 @@ export async function pseudonymizeErasedRecipient(
     .where('email', '=', normalized)
     .executeTakeFirst();
 
+  // CCPA-05 limits carry the address too. Same rule as everywhere else: a new
+  // table must not become a place erasure forgets to reach.
+  await executor
+    .updateTable('sensitive_pi_limits')
+    .set({ email: pseudonym, pseudonymized_at: now } as any)
+    .where('customer_id', '=', customerId)
+    .where('email', '=', normalized)
+    .execute();
+
   return {
     pseudonym,
     consentEventsPseudonymized: Number(consent.numUpdatedRows ?? 0),

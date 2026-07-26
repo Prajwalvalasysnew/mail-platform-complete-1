@@ -46,6 +46,7 @@ Recipient data
   `tracked_links`, `send_outbox`, `suppressions`, `consent_events`,
   `unsubscribe_groups`, `unsubscribe_group_members`, `soft_bounce_tracker`,
   `consent_records`, `processing_restrictions`, `sale_share_optouts`,
+  `sensitive_pi_limits`,
   `recipient_domain_intel`, `workflows`, `workflow_versions`,
   `workflow_runs`, `workflow_run_steps`, `workflow_step_stats`,
   `unsubscribe_monitor_runs`
@@ -79,7 +80,8 @@ Support
 Privacy operations
 : `deletion_requests`, `deletion_object_items`,
   `privacy_message_tombstones`, `privacy_cases`, `privacy_case_events`,
-  `legal_holds`, `regulatory_retention_locks`, `data_exports`
+  `legal_holds`, `regulatory_retention_locks`, `privacy_case_appeals`,
+  `data_exports`
 
 ## 4. Flow map
 

@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, recordConsentGrant, confirmDoubleOptIn, getConsentProof, withdrawConsent, ConsentEvidenceError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, submitPrivacyCaseAppeal, decidePrivacyCaseAppeal, listPrivacyCaseAppeals, recordSaleShareOptOut, listSaleShareOptOuts, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, recordConsentGrant, confirmDoubleOptIn, getConsentProof, withdrawConsent, ConsentEvidenceError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, submitPrivacyCaseAppeal, decidePrivacyCaseAppeal, listPrivacyCaseAppeals, recordSaleShareOptOut, listSaleShareOptOuts, limitSensitivePiUse, releaseSensitivePiLimit, listSensitivePiLimits, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -782,6 +782,61 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       listLegalHolds(auth.customer_id, { activeOnly: active === 'true' }, trx)
     );
     return { holds };
+  });
+
+  // ─── CCPA-05: limit use of sensitive PI ──────────────────────────────────
+
+  /**
+   * §1798.121. Message content is sensitive PI here by definition, not by
+   * configuration: §1798.140(ae)(1)(E) covers the contents of mail and email
+   * unless the business is the intended recipient, and this platform never is.
+   *
+   * The limit turns off engagement tracking — inference ABOUT the consumer —
+   * and leaves delivery, abuse scanning and legal-obligation controls running.
+   */
+  app.post('/privacy/limit-sensitive-pi', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = z.object({
+      recipient: z.string().email(),
+      source: z.enum(['api', 'web_form', 'authorized_agent', 'support', 'privacy_case']).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const result = await tenantScoped(req, (trx) => limitSensitivePiUse({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      source: parsed.data.source,
+    }, trx));
+
+    return reply.code(result.alreadyLimited ? 200 : 201).send({
+      limit: result.limit,
+      already_limited: result.alreadyLimited,
+      effect: 'Open and click tracking are disabled for this recipient. Delivery, abuse scanning and legal-obligation controls are unaffected.',
+    });
+  });
+
+  app.post('/privacy/limit-sensitive-pi/release', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = z.object({
+      recipient: z.string().email(),
+      reason: z.string().max(1000).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const released = await tenantScoped(req, (trx) => releaseSensitivePiLimit({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      reason: parsed.data.reason ?? null,
+    }, trx));
+    if (!released) return reply.code(404).send({ error: 'not_found', message: 'No active sensitive-PI limit for that recipient.' });
+    return { released: true };
+  });
+
+  app.get('/privacy/sensitive-pi-limits', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { include_released } = req.query as Record<string, string | undefined>;
+    const limits = await listSensitivePiLimits(auth.customer_id, { includeReleased: include_released === 'true' });
+    return { limits };
   });
 
   // ─── GDPR-05: consent capture and proof ──────────────────────────────────

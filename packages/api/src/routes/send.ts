@@ -43,6 +43,8 @@ import {
   restrictedSet,
   isProcessingRestricted,
   isSenderOnHold,
+  sensitivePiLimitedSet,
+  applySensitivePiLimitToTracking,
 } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
@@ -506,6 +508,11 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     // sender does not need to know a rights request is in progress, and
     // leaking that would itself be a disclosure.
     const restricted = await tenantScoped(req, (trx) => restrictedSet(auth.customer_id, recipients, trx));
+    // CCPA-05: message content is sensitive PI (§1798.140(ae)(1)(E) — this
+    // platform is never the intended recipient), so a consumer can limit its
+    // use to what is necessary to deliver the service. Engagement tracking is
+    // not; delivery is. Fetched once for the whole batch.
+    const spiLimited = await tenantScoped(req, (trx) => sensitivePiLimitedSet(auth.customer_id, recipients, trx));
     const intelMap = await isTrapOrDisposableBatch(recipients);
     for (const rcpt of recipients) {
       const lower = rcpt.toLowerCase();
@@ -662,8 +669,10 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
               ...(auth.test_mode ? { _test_mode: true } : {}),
               ...(body.ad_identified !== undefined ? { _ad_identified: body.ad_identified } : {}),
             },
-            tracking_opens: body.tracking?.opens ?? true,
-            tracking_clicks: body.tracking?.clicks ?? true,
+            // CCPA-05: a consumer's limit on sensitive-PI use overrides
+            // whatever the sender asked for. That override is the whole point
+            // of the right — a customer setting cannot outrank it.
+            ...applySensitivePiLimitToTracking(spiLimited.has(m.to.toLowerCase()), body.tracking),
             ip_pool: ipPool,
             message_class: messageClass,
             template_id: templateId,
@@ -1072,6 +1081,10 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         const bodyStore = getBodyStore();
         const traceCarrier = injectTraceContext();
 
+        // CCPA-05: one lookup for the whole committed batch, not per message.
+        const batchSpiLimited = await tenantScoped(req, (trx) =>
+          sensitivePiLimitedSet(auth.customer_id, toCommit.map((c) => c.msg.to), trx));
+
         // Offload each message body BEFORE opening the transaction (never hold a
         // DB txn open across object-store I/O). Unlike single-send, each batch
         // entry can carry a distinct body, so we offload per-message. Bodies are
@@ -1129,8 +1142,8 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
                 ...(auth.test_mode ? { _test_mode: true } : {}),
                 ...(c.msg.ad_identified !== undefined ? { _ad_identified: c.msg.ad_identified } : {}),
               },
-              tracking_opens: c.msg.tracking?.opens ?? true,
-              tracking_clicks: c.msg.tracking?.clicks ?? true,
+              // CCPA-05 (parity with single /send).
+              ...applySensitivePiLimitToTracking(batchSpiLimited.has(c.msg.to.toLowerCase()), c.msg.tracking),
               ip_pool: c.ipPool,
               message_class: c.messageClass,
               template_id: c.templateId,

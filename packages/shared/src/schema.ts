@@ -270,6 +270,7 @@ export interface Database {
   regulatory_retention_locks: RegulatoryRetentionLocksTable;
   consent_records: ConsentRecordsTable;
   privacy_case_appeals: PrivacyCaseAppealsTable;
+  sensitive_pi_limits: SensitivePiLimitsTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -731,6 +732,18 @@ export interface RecipientDomainIntelTable {
   category: 'spam_trap' | 'disposable' | 'role' | 'high_bounce' | 'clean';
   notes: string | null;
   updated_at: Generated<Timestamp>;
+}
+
+/** CCPA-05: limit use/disclosure of sensitive PI (§1798.121). */
+export interface SensitivePiLimitsTable {
+  id: Generated<string>;
+  customer_id: string;
+  email: string;
+  source: Generated<'api' | 'web_form' | 'authorized_agent' | 'support' | 'privacy_case'>;
+  requested_at: Generated<Timestamp>;
+  released_at: Timestamp | null;
+  released_reason: string | null;
+  pseudonymized_at: Timestamp | null;
 }
 
 /** CCPA-07: appeals against denied data-subject requests. */

@@ -953,6 +953,34 @@ export const openapiSpec = {
         },
       },
     },
+    '/privacy/limit-sensitive-pi': {
+      post: {
+        summary: 'CCPA §1798.121: limit use of sensitive PI. Message content is SPI here by definition (§1798.140(ae)(1)(E)). Disables open and click tracking; delivery, abuse scanning and legal-obligation controls are unaffected',
+        operationId: 'limitSensitivePiUse',
+        responses: {
+          '201': { description: 'Limit recorded' },
+          '200': { description: 'Already limited' },
+        },
+      },
+    },
+    '/privacy/limit-sensitive-pi/release': {
+      post: {
+        summary: 'Lift a sensitive-PI limit, restoring the tenant\'s tracking preferences',
+        operationId: 'releaseSensitivePiLimit',
+        responses: {
+          '200': { description: 'Limit released' },
+          '404': { description: 'No active limit for that recipient', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/sensitive-pi-limits': {
+      get: {
+        summary: 'List sensitive-PI limits (active by default)',
+        operationId: 'listSensitivePiLimits',
+        parameters: [{ name: 'include_released', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } }],
+        responses: { '200': { description: 'Limits, newest first' } },
+      },
+    },
     '/privacy/cases/{id}/appeal': {
       post: {
         summary: 'CCPA-07: appeal a denied data-subject request. The appeal runs on its own statutory clock, and remains available after the case was closed',
