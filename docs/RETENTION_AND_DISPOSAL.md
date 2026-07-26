@@ -62,7 +62,29 @@ window means raising the environment ceiling *and* the ClickHouse TTL
 together; otherwise the promise is unenforceable and the analytics copy
 expires before the promised window ends.
 
-## 3. Legal holds
+## 3. Open-request interlock (FERPA-07)
+
+An **open access request pins the data it covers**. While a privacy case for a
+recipient is in a non-terminal status and carries an `access`, `portability`,
+or `rectification` request type, the retention sweep will not purge that
+recipient's data. Pinned rows are reported as `request_pinned_rows_skipped`,
+separately from legal holds, because the two are released by different events:
+a hold by the matter closing, a pin by the request being fulfilled.
+
+Without this, the sweep can delete the very records a data subject asked for
+while their request is in flight — leaving the controller answering a
+statutory request with data it destroyed *after* receiving the request.
+
+**An open erasure request does NOT pin.** Deletion is the outcome the subject
+asked for, so letting the sweep get there first fulfils the request rather
+than frustrating it — and pinning on erasure would be self-defeating, since
+the case could never complete through the ordinary lifecycle.
+
+The pin is scoped to the request's subject within its own tenant: it is not a
+tenant-wide freeze, because over-preserving would quietly defeat the retention
+policy for every other recipient.
+
+## 4. Legal holds
 
 An active hold (`scope = 'customer'` for a whole tenant, `recipient:<email>`
 for one recipient) blocks both retention sweeps and direct erasure. Held rows
@@ -70,7 +92,7 @@ are counted, skipped, and collected by a later sweep once the hold is
 released. Steps that archive rather than destroy, and tables with no tenant
 content, are not hold-gated. See `docs/LEGAL_HOLD.md`.
 
-## 4. Backups
+## 5. Backups
 
 Backups are **not** selectively rewritten. No online deletion can reach into a
 backup image, so erased data persists in any backup taken before the erasure,
@@ -87,7 +109,7 @@ Required, and **not implemented in this repository**:
 
 A restored node must not serve traffic until tombstone replay has run.
 
-## 5. Monitoring
+## 6. Monitoring
 
 The sweep returns per-step counts. Alert on:
 
@@ -95,13 +117,16 @@ The sweep returns per-step counts. Alert on:
   failure that matters — nothing looks broken while data accumulates);
 - `held_rows_skipped` growing steadily, which usually means a hold was never
   released;
+- `request_pinned_rows_skipped` growing steadily, which means privacy cases are
+  being opened and never closed — the data stays pinned and the statutory
+  deadline is probably being missed too;
 - `deletion_object_items` in `failed` with exhausted attempts, which means
   erasure is incomplete for a data subject;
 - ClickHouse TTL drift against `RETENTION_EVENT_DAYS`.
 
 Manual run: `POST /admin/retention/run` (operator role).
 
-## 6. Open items
+## 7. Open items
 
 - Approved windows signed off by Legal and the privacy owner.
 - Backup retention, encryption, and key-destruction procedure (BASE-07).

@@ -89,6 +89,13 @@ export interface RetentionResult {
   review_queue_purged: number;
   /** Rows matching a retention cutoff but preserved by an active legal hold. */
   held_rows_skipped: number;
+  /**
+   * Rows matching a retention cutoff but pinned by an OPEN access request
+   * (FERPA-07). Distinct from held_rows_skipped because the two are released
+   * by different events: a hold by a matter closing, a pin by the request
+   * being fulfilled.
+   */
+  request_pinned_rows_skipped: number;
 }
 
 const TERMINAL_STATUSES = ['delivered', 'hard_bounced', 'failed', 'suppressed'] as const;
@@ -103,7 +110,41 @@ const holdOnMessage = sql<boolean>`EXISTS (
     AND h.customer_id = messages.customer_id
     AND (h.scope = 'customer' OR h.scope = 'recipient:' || lower(messages.to_address))
 )`;
-const noHoldOnMessage = sql<boolean>`NOT ${holdOnMessage}`;
+// FERPA-07 (and the same problem under GDPR Art 15 / CCPA access): an OPEN
+// access request pins the data it covers.
+//
+// Without this, the retention sweep can delete the very records a data subject
+// asked for while their request is still in flight — and the controller then
+// has to answer a statutory request with data it destroyed AFTER receiving the
+// request. FERPA states it plainly (no destruction while an eligible access
+// request is outstanding); the same reasoning applies to any access or
+// portability request anywhere.
+//
+// ONLY read-type requests pin. An open ERASURE request must NOT block
+// retention: deletion is the outcome the subject asked for, so letting the
+// sweep get there first fulfils the request rather than frustrating it.
+// Pinning on erasure would also be self-defeating — the case could never be
+// completed by the ordinary lifecycle.
+//
+// Closed cases (fulfilled/denied/closed) release the pin, and a case whose
+// subject has been pseudonymized after fulfilment can no longer match a
+// plaintext address anyway.
+const PINNING_REQUEST_TYPES = ['access', 'portability', 'rectification'] as const;
+const openRequestOnMessage = sql<boolean>`EXISTS (
+  SELECT 1 FROM privacy_cases c
+  WHERE c.customer_id = messages.customer_id
+    AND c.subject_kind = 'recipient'
+    AND c.status NOT IN ('fulfilled', 'denied', 'closed')
+    AND c.subject_pseudonymized_at IS NULL
+    AND lower(c.subject_identifier) = lower(messages.to_address)
+    AND c.request_types && ARRAY[${sql.join([...PINNING_REQUEST_TYPES])}]::text[]
+)`;
+
+// A message is preserved when EITHER a legal hold covers it or an open access
+// request pins it. Every step that was hold-gated is interlock-gated too —
+// the reason differs but the requirement is identical: the data must survive.
+const preservedMessage = sql<boolean>`(${holdOnMessage} OR ${openRequestOnMessage})`;
+const noHoldOnMessage = sql<boolean>`NOT ${preservedMessage}`;
 
 /**
  * Run a batched mutation until it returns fewer rows than the batch size.
@@ -160,6 +201,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   const billingPayloadCutoff = new Date(Date.now() - billingPayloadRetentionDays * 86_400_000);
 
   let heldSkipped = 0;
+  let requestPinnedSkipped = 0;
 
   // --- 1. Purge inline bodies (batched, hold-aware) ----------------------
   const messagesBodyPurgedInline = await drainBatches(batchSize, async (limit) => {
@@ -185,7 +227,10 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   });
   let messagesBodyPurged = messagesBodyPurgedInline;
 
-  // Count inline bodies preserved solely because of a hold (visibility).
+  // Count inline bodies preserved by a legal hold (visibility). Counted
+  // separately from the access-request interlock below so an operator can tell
+  // "a matter is preserving this" from "a request is preserving this" — they
+  // are released by completely different events.
   const heldInline = await sql<{ count: string }>`
     WITH windows AS (${windows})
     SELECT COUNT(*)::text AS count FROM messages
@@ -198,11 +243,24 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   `.execute(db);
   heldSkipped += Number(heldInline.rows[0]?.count ?? 0);
 
-  // --- 2. Purge offloaded bodies (hold-aware) ----------------------------
+  // FERPA-07: inline bodies pinned by an OPEN access request.
+  const pinnedInline = await sql<{ count: string }>`
+    WITH windows AS (${windows})
+    SELECT COUNT(*)::text AS count FROM messages
+    LEFT JOIN windows w ON w.customer_id = messages.customer_id
+    WHERE body_storage = 'inline'
+      AND status IN (${sql.join([...TERMINAL_STATUSES])})
+      AND queued_at < now() - make_interval(days => COALESCE(w.body_days, ${messageBodyRetentionDays})::int)
+      AND (html_body IS NOT NULL OR text_body IS NOT NULL)
+      AND ${openRequestOnMessage}
+  `.execute(db);
+  requestPinnedSkipped += Number(pinnedInline.rows[0]?.count ?? 0);
+
+  // --- 2. Purge offloaded bodies (preservation-aware) --------------------
   // Only delete an object when EVERY message referencing that key is past
-  // retention AND none of them is under an active legal hold. First collect
-  // keys still live (referenced by a non-expired, non-terminal, or held
-  // message), then delete the rest.
+  // retention AND none of them is under a legal hold or an open access
+  // request. First collect keys still live (referenced by a non-expired,
+  // non-terminal, or preserved message), then delete the rest.
   const liveKeyRows = await sql<{ body_object_key: string }>`
     WITH windows AS (${windows})
     SELECT body_object_key FROM messages
@@ -212,7 +270,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
       AND (
         status NOT IN (${sql.join([...TERMINAL_STATUSES])})
         OR queued_at >= now() - make_interval(days => COALESCE(w.body_days, ${messageBodyRetentionDays})::int)
-        OR ${holdOnMessage}
+        OR ${preservedMessage}
       )
     GROUP BY body_object_key
   `.execute(db);
@@ -565,5 +623,6 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     audit_purged: auditPurged,
     review_queue_purged: reviewQueuePurged,
     held_rows_skipped: heldSkipped,
+    request_pinned_rows_skipped: requestPinnedSkipped,
   };
 }
