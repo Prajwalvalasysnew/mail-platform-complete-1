@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, recordSaleShareOptOut, listSaleShareOptOuts, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, recordConsentGrant, confirmDoubleOptIn, getConsentProof, withdrawConsent, ConsentEvidenceError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, recordSaleShareOptOut, listSaleShareOptOuts, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -719,6 +719,88 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       listLegalHolds(auth.customer_id, { activeOnly: active === 'true' }, trx)
     );
     return { holds };
+  });
+
+  // ─── GDPR-05: consent capture and proof ──────────────────────────────────
+
+  const ConsentSchema = z.object({
+    recipient: z.string().email(),
+    purpose: z.string().max(100).optional(),
+    method: z.enum(['web_form', 'double_opt_in', 'api', 'offline', 'import_with_evidence']),
+    // The exact wording the subject agreed to. Article 7(1) requires
+    // demonstrating consent, which a bare assertion does not.
+    evidence_text: z.string().min(10).max(2000),
+    policy_version: z.string().max(100).optional(),
+    source_url: z.string().max(2000).optional(),
+    ip: z.string().max(45).optional(),
+    user_agent: z.string().max(500).optional(),
+  });
+
+  app.post('/privacy/consent', { preHandler: requireScope('suppressions') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = ConsentSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    try {
+      const { record, confirmationToken } = await tenantScoped(req, (trx) => recordConsentGrant({
+        customerId: auth.customer_id,
+        email: parsed.data.recipient,
+        purpose: parsed.data.purpose,
+        method: parsed.data.method,
+        evidenceText: parsed.data.evidence_text,
+        policyVersion: parsed.data.policy_version ?? null,
+        sourceUrl: parsed.data.source_url ?? null,
+        ip: parsed.data.ip ?? null,
+        userAgent: parsed.data.user_agent ?? null,
+      }, trx));
+
+      return reply.code(201).send({
+        consent: { ...record, confirmation_token: undefined },
+        // Returned once, at creation. A double opt-in is NOT valid consent
+        // until the recipient confirms.
+        ...(confirmationToken ? { confirmation_token: confirmationToken, pending_confirmation: true } : {}),
+      });
+    } catch (err) {
+      if (err instanceof ConsentEvidenceError) {
+        return reply.code(422).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/privacy/consent/confirm', { preHandler: requireScope('suppressions') }, async (req, reply) => {
+    const parsed = z.object({ token: z.string().min(1).max(200) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    const confirmed = await tenantScoped(req, (trx) => confirmDoubleOptIn(parsed.data.token, trx));
+    if (!confirmed) return reply.code(404).send({ error: 'not_found', message: 'Unknown or already-used confirmation token.' });
+    return { confirmed: true };
+  });
+
+  /** Art 7(1) proof: the full grant chain, not just the current position. */
+  app.get('/privacy/consent/proof', { preHandler: requireScope('suppressions') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { recipient } = req.query as Record<string, string | undefined>;
+    if (!recipient) return reply.code(400).send({ error: 'validation_failed', message: 'recipient is required' });
+    return tenantScoped(req, (trx) => getConsentProof(auth.customer_id, recipient, trx));
+  });
+
+  app.post('/privacy/consent/withdraw', { preHandler: requireScope('suppressions') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = z.object({
+      recipient: z.string().email(),
+      purpose: z.string().max(100).optional(),
+      source: z.string().max(100).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const withdrawn = await tenantScoped(req, (trx) => withdrawConsent({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      purpose: parsed.data.purpose,
+      source: parsed.data.source ?? 'api',
+    }, trx));
+    if (!withdrawn) return reply.code(404).send({ error: 'not_found', message: 'No active consent for that recipient and purpose.' });
+    return { withdrawn: true };
   });
 
   // ─── SEC-04: regulatory retention locks ──────────────────────────────────

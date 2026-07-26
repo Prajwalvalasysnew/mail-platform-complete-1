@@ -268,6 +268,7 @@ export interface Database {
   sale_share_optouts: SaleShareOptOutsTable;
   sender_health_runs: SenderHealthRunsTable;
   regulatory_retention_locks: RegulatoryRetentionLocksTable;
+  consent_records: ConsentRecordsTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -729,6 +730,28 @@ export interface RecipientDomainIntelTable {
   category: 'spam_trap' | 'disposable' | 'role' | 'high_bounce' | 'clean';
   notes: string | null;
   updated_at: Generated<Timestamp>;
+}
+
+/** GDPR-05: affirmative consent grants with provenance (Art 7(1) proof). */
+export interface ConsentRecordsTable {
+  id: Generated<string>;
+  customer_id: string;
+  email: string;
+  purpose: Generated<string>;
+  method: 'web_form' | 'double_opt_in' | 'api' | 'offline' | 'import_with_evidence';
+  affirmative: Generated<boolean>;
+  evidence_text: string;
+  policy_version: string | null;
+  source_url: string | null;
+  ip: string | null;
+  user_agent: string | null;
+  granted_at: Generated<Timestamp>;
+  confirmation_token: string | null;
+  confirmed_at: Timestamp | null;
+  withdrawn_at: Timestamp | null;
+  withdrawal_source: string | null;
+  pseudonymized_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
 }
 
 /** SEC-04: time-bound regulatory retention obligations. */

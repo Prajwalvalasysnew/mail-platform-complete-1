@@ -953,6 +953,44 @@ export const openapiSpec = {
         },
       },
     },
+    '/privacy/consent': {
+      post: {
+        summary: 'GDPR Art 7(1): record an affirmative consent grant with provenance, evidence wording and policy version. A double_opt_in grant is NOT valid consent until confirmed',
+        operationId: 'recordConsentGrant',
+        responses: {
+          '201': { description: 'Consent recorded; a confirmation token is returned for double opt-in' },
+          '422': { description: 'Evidence wording is missing or too short to demonstrate consent', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/consent/confirm': {
+      post: {
+        summary: 'Complete a double opt-in with the confirmation token. Single-use',
+        operationId: 'confirmDoubleOptIn',
+        responses: {
+          '200': { description: 'Consent confirmed and now valid' },
+          '404': { description: 'Unknown or already-used token', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/consent/proof': {
+      get: {
+        summary: 'Art 7(1) proof of consent: the full grant chain including superseded and withdrawn records',
+        operationId: 'getConsentProof',
+        parameters: [{ name: 'recipient', in: 'query', required: true, schema: { type: 'string', format: 'email' } }],
+        responses: { '200': { description: 'Consent history, newest first' } },
+      },
+    },
+    '/privacy/consent/withdraw': {
+      post: {
+        summary: 'Art 7(3): withdraw consent. Marks the record rather than deleting it — mail sent while consent was valid must stay accountable',
+        operationId: 'withdrawConsent',
+        responses: {
+          '200': { description: 'Consent withdrawn' },
+          '404': { description: 'No active consent for that recipient and purpose', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
     '/privacy/regulatory-locks': {
       post: {
         summary: 'SEC-04: place a time-bound regulatory retention obligation (SEC 17a-4 / FINRA 4511). Blocks both retention purge and data-subject erasure until it lapses',

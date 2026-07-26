@@ -47,6 +47,8 @@ export interface RecipientPseudonymizationResult {
   consentEventsPseudonymized: number;
   deletionRequestsPseudonymized: number;
   groupMembershipsDeleted: number;
+  /** GDPR-05 consent grant records scrubbed of direct identifiers. */
+  consentRecordsPseudonymized: number;
 }
 
 /**
@@ -93,10 +95,31 @@ export async function pseudonymizeErasedRecipient(
     .where('email', '=', normalized)
     .executeTakeFirst();
 
+  // GDPR-05 consent grants. The row survives — the controller must still be
+  // able to account for mail sent while consent was valid — but everything
+  // that identifies the person goes: the address becomes the pseudonym, and
+  // the IP, user agent and confirmation token are cleared outright, since they
+  // are personal data with no evidential value once the subject is erased.
+  // What remains (method, evidence wording, policy version, timestamps) is the
+  // proof itself and carries no identifier.
+  const consentGrants = await executor
+    .updateTable('consent_records')
+    .set({
+      email: pseudonym,
+      ip: null,
+      user_agent: null,
+      confirmation_token: null,
+      pseudonymized_at: now,
+    } as any)
+    .where('customer_id', '=', customerId)
+    .where('email', '=', normalized)
+    .executeTakeFirst();
+
   return {
     pseudonym,
     consentEventsPseudonymized: Number(consent.numUpdatedRows ?? 0),
     deletionRequestsPseudonymized: Number(requests.numUpdatedRows ?? 0),
     groupMembershipsDeleted: Number(members.numDeletedRows ?? 0),
+    consentRecordsPseudonymized: Number(consentGrants.numUpdatedRows ?? 0),
   };
 }
