@@ -5,6 +5,8 @@ import 'dotenv/config';
 import {
   applySubscriptionState,
   closeDb,
+  closeQueues,
+  closeRedis,
   db,
 } from '../packages/shared/src/index.js';
 
@@ -164,10 +166,14 @@ async function main() {
   console.log(JSON.stringify({ runId, results }, null, 2));
 }
 
+async function closeResources() {
+  await Promise.allSettled([closeQueues(), closeRedis(), closeDb()]);
+}
+
 main()
-  .then(() => closeDb())
+  .then(() => closeResources())
   .catch(async (error) => {
     console.error(error instanceof Error ? error.message : error);
-    await closeDb();
+    await closeResources();
     process.exitCode = 1;
   });

@@ -16,9 +16,9 @@ below names both the contractual restriction and the enforcement.
 | Class | Status | Why | Enforcement |
 | --- | --- | --- | --- |
 | **Cardholder data** (PAN, CVV/CVC, magnetic-stripe or chip data) | **Prohibited** | The platform is deliberately outside the CDE; there is no approved card channel (PCI-01) | Detection and rejection at send and SMTP ingress; redaction in support tickets; allowlist on billing payloads (PCI-02/03) |
-| **Protected health information (ePHI)** | **Prohibited** until the HIPAA workstream completes and a BAA is signed | No BAA program, no ePHI risk analysis, no guaranteed secure delivery (HIPAA-01…15) | Contractual only — **no content detection today** |
-| **Student education records** | **Prohibited** until the FERPA workstream completes | No education contract model, disclosure ledger, or amendment workflow (FERPA-01…11) | Contractual only — **no content detection today** |
-| **Broker-dealer regulated communications** (as system of record) | **Prohibited** | The audit chain is not a qualifying SEC 17a-4 archive (SEC-01…09) | Contractual only |
+| **Protected health information (ePHI)** | **Prohibited by default; conditional only for an individually activated HIPAA tenant using the secure portal** | Requires real BAAs, risk analysis, production safeguards/drills and independent assessment | Value-free classifier blocks ordinary send; portal mode and evidence gates are enforced |
+| **Student education records** | **Prohibited by default; conditional only for an individually activated FERPA tenant using the secure portal** | Requires school/direct-control terms, approved data flow and independent assessment | Value-free classifier plus rights/hearing and disclosure workflows |
+| **Broker-dealer regulated communications** (as system of record) | **Prohibited by default; conditional only after SEC/FINRA activation** | Requires an approved specialist archive, record mapping, supervision and independent assessment | Every outbound communication fails closed on an archive receipt |
 | **Special-category / children's data** | **Requires assessment** before processing | Lawful basis and safeguards not yet established (GDPR-14, CCPA-13) | Contractual only |
 
 ### Honest statement of coverage

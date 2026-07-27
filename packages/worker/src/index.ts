@@ -14,6 +14,7 @@ import {
   stopTracing,
   redis,
   privacyLoggerOptions,
+  preloadMasterKey,
 } from '@platform/shared';
 import { startSendWorker } from './send-worker.js';
 import { startEventWorker } from './event-worker.js';
@@ -37,6 +38,8 @@ process.on('uncaughtException', (err) => {
 
 // Refuse to boot with default/insecure secrets in production.
 enforceConfig(logger);
+const keyPosture = await preloadMasterKey();
+logger.info({ kms_provider: keyPosture.provider }, 'master encryption key preloaded');
 startTracing('mail-worker');
 
 const sendWorker = startSendWorker(logger);

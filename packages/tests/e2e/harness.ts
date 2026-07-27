@@ -68,6 +68,7 @@ import { toolRoutes } from '@platform/api/routes/tools.js';
 import { sendgridCompatRoutes } from '@platform/api/routes/sendgrid-compat.js';
 import { subaccountRoutes } from '@platform/api/routes/subaccounts.js';
 import { dmarcRoutes } from '@platform/api/routes/dmarc.js';
+import { secureMessageRoutes, securePortalRoutes } from '@platform/api/routes/secure-messages.js';
 
 export interface Harness {
   app: FastifyInstance;
@@ -135,6 +136,7 @@ export async function buildTestApp(): Promise<FastifyInstance> {
 
   await app.register(billingRoutes, { prefix: '/v1' });
   await app.register(customerRoutes, { prefix: '/v1' });
+  await app.register(securePortalRoutes, { prefix: '/v1' });
   await app.register(adminRoutes, { prefix: '/admin' });
   await app.register(scimRoutes);
   await app.register(accountRoutes, { prefix: '/v1' });
@@ -163,6 +165,7 @@ export async function buildTestApp(): Promise<FastifyInstance> {
     await instance.register(toolRoutes, { prefix: '/v1' });
     await instance.register(subaccountRoutes, { prefix: '/v1' });
     await instance.register(dmarcRoutes, { prefix: '/v1' });
+    await instance.register(secureMessageRoutes, { prefix: '/v1' });
     await instance.register(sendgridCompatRoutes);
   });
 

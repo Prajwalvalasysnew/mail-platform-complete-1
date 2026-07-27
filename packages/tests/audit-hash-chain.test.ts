@@ -109,6 +109,11 @@ describe('audit hash chain', () => {
   it('remains verifiable across retention archive and continues the sequence', async () => {
     const c = await seedCustomer();
     await recordN(c.customerId, 3);
+    // The audit timestamp is assigned by PostgreSQL with microsecond
+    // precision, while the retention cutoff is a JavaScript millisecond Date.
+    // Give a zero-day cutoff a real boundary so a row a few microseconds newer
+    // than the client clock is not legitimately retained.
+    await new Promise((resolve) => setTimeout(resolve, 20));
     const retention = await runRetention({ auditRetentionDays: 0 });
     expect(retention.audit_purged).toBeGreaterThanOrEqual(3);
     expect(await db.selectFrom('audit_log_hashes').select('audit_id').where('chain_key', '=', c.customerId).execute()).toHaveLength(0);

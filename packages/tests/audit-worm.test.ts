@@ -14,7 +14,7 @@ import {
   setAuditSigningKey, auditSigningPublicKeyPem, setWormAuditSink,
   seedCustomer,
 } from '@platform/shared';
-import type { AuditCheckpoint, WormAuditSink } from '@platform/shared';
+import type { AuditCheckpoint, ImmutableAuditBundle, WormAuditSink } from '@platform/shared';
 
 // A fixed test signing key so results are deterministic across the suite.
 const { privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -23,7 +23,12 @@ const TEST_KEY_PEM = privateKey.export({ type: 'pkcs8', format: 'pem' }).toStrin
 class CapturingSink implements WormAuditSink {
   readonly name = 'capturing';
   records: AuditCheckpoint[] = [];
+  bundles: ImmutableAuditBundle[] = [];
   async append(record: AuditCheckpoint) { this.records.push(record); }
+  async appendBundle(bundle: ImmutableAuditBundle) {
+    this.bundles.push(bundle);
+    return `captured/${bundle.chain_key}/${bundle.start_seq}-${bundle.end_seq}.json`;
+  }
 }
 let sink: CapturingSink;
 
@@ -42,6 +47,7 @@ describe('signed audit checkpoints (WORM)', () => {
     const c = await seedCustomer();
     await seedChain(c.customerId, 3);
     const before = sink.records.length;
+    const bundlesBefore = sink.bundles.length;
 
     const cp = await signAuditCheckpoint(c.customerId);
     expect(cp).not.toBeNull();
@@ -49,6 +55,13 @@ describe('signed audit checkpoints (WORM)', () => {
     // Exported to the WORM sink exactly once.
     expect(sink.records.length).toBe(before + 1);
     expect(sink.records.at(-1)).toMatchObject({ chain_key: c.customerId, seq: 3 });
+    expect(sink.bundles.length).toBe(bundlesBefore + 1);
+    expect(sink.bundles.at(-1)).toMatchObject({
+      chain_key: c.customerId, start_seq: 1, end_seq: 3, record_count: 3,
+    });
+    const exported = await db.selectFrom('audit_worm_exports').selectAll()
+      .where('chain_key', '=', c.customerId).executeTakeFirstOrThrow();
+    expect(exported.bundle_sha256).toMatch(/^[a-f0-9]{64}$/);
 
     const result = await verifyAuditCheckpoint(cp!);
     expect(result).toMatchObject({ signatureValid: true, matchesChain: true });

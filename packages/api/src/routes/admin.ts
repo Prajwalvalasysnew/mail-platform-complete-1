@@ -12,6 +12,7 @@ import {
   resolveAdminSession,
   verifyAdminPasswordCredentials,
   createAdminSession,
+  oidcAuthenticationContextSatisfied,
   createAdminSessionForPasswordAuth,
   beginAdminTotpEnrollment,
   confirmAdminTotpEnrollment,
@@ -80,9 +81,14 @@ import {
   updatePlatformSettings,
   runUnsubscribeMonitor,
   unsubscribeMonitorReport,
+  REQUIRED_PREREQUISITES,
+  reviewRegulatedWorkload,
+  reviewPrerequisiteEvidence,
+  RegulatedWorkloadError,
   type AdminContext,
   type AdminRole,
   type AdminSessionIssued,
+  type RegulatedWorkloadMode,
 } from '@platform/shared';
 
 declare module 'fastify' {
@@ -1064,6 +1070,105 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { reviewed: id, decision: parsed.data.decision };
   });
 
+  // ---- Regulated-workload activation gate ----
+  app.get('/regulated-workloads', {
+    preHandler: requireAdmin('support'),
+    config: { accessAudit: false },
+  }, async (req, reply) => {
+    const parsed = z.object({
+      status: z.enum(['disabled', 'pending', 'active', 'rejected', 'suspended']).optional(),
+      mode: z.enum(['hipaa', 'ferpa', 'sec_finra']).optional(),
+      customer_id: z.string().uuid().optional(),
+    }).safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    let query = db.selectFrom('regulated_workload_posture')
+      .innerJoin('customers', 'customers.id', 'regulated_workload_posture.customer_id')
+      .select([
+        'regulated_workload_posture.customer_id', 'regulated_workload_posture.mode',
+        'regulated_workload_posture.status', 'regulated_workload_posture.prerequisites',
+        'regulated_workload_posture.requested_at', 'regulated_workload_posture.requested_by',
+        'regulated_workload_posture.reviewed_at', 'regulated_workload_posture.reviewed_by',
+        'regulated_workload_posture.review_note', 'regulated_workload_posture.activated_at',
+        'regulated_workload_posture.suspended_at', 'regulated_workload_posture.updated_at',
+        'customers.email as customer_email',
+      ]);
+    if (parsed.data.status) query = query.where('regulated_workload_posture.status', '=', parsed.data.status);
+    if (parsed.data.mode) query = query.where('regulated_workload_posture.mode', '=', parsed.data.mode);
+    if (parsed.data.customer_id) query = query.where('regulated_workload_posture.customer_id', '=', parsed.data.customer_id);
+    const requests = await query.orderBy('regulated_workload_posture.updated_at', 'desc').limit(500).execute();
+    return { requests, required_prerequisites: REQUIRED_PREREQUISITES };
+  });
+
+  app.post('/regulated-workloads/:customerId/:mode/review', {
+    preHandler: requireAdmin('admin'),
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { customerId, mode } = req.params as { customerId: string; mode: string };
+    const path = z.object({
+      customerId: z.string().uuid(),
+      mode: z.enum(['hipaa', 'ferpa', 'sec_finra']),
+    }).safeParse({ customerId, mode });
+    const body = z.object({
+      decision: z.enum(['activate', 'reject', 'suspend']),
+      prerequisites: z.record(z.string(), z.boolean()).optional(),
+      note: z.string().max(4000).optional(),
+    }).safeParse(req.body ?? {});
+    if (!path.success || !body.success) {
+      return reply.code(400).send({ error: 'validation_failed' });
+    }
+    try {
+      const posture = await reviewRegulatedWorkload({
+        customerId: path.data.customerId,
+        mode: path.data.mode as RegulatedWorkloadMode,
+        decision: body.data.decision,
+        prerequisites: body.data.prerequisites,
+        reviewedBy: req.admin!.email,
+        note: body.data.note,
+      });
+      await auditAdminAction(req.admin!, `regulated_workload_${body.data.decision}`, 'customer', {
+        customer_id: path.data.customerId,
+        mode: path.data.mode,
+        status: posture.status,
+        prerequisite_keys: Object.keys(posture.prerequisites as Record<string, boolean>).sort(),
+      });
+      return { posture };
+    } catch (err) {
+      if (err instanceof RegulatedWorkloadError) {
+        const status = err.code === 'not_found' ? 404 : 409;
+        return reply.code(status).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/regulated-workload-evidence/:id/review', {
+    preHandler: requireAdmin('admin'),
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const id = z.string().uuid().safeParse((req.params as { id?: string }).id);
+    const body = z.object({
+      decision: z.enum(['approved', 'rejected']),
+      note: z.string().max(4000).optional(),
+    }).safeParse(req.body ?? {});
+    if (!id.success || !body.success) return reply.code(400).send({ error: 'validation_failed' });
+    try {
+      const evidence = await reviewPrerequisiteEvidence({
+        id: id.data, decision: body.data.decision, reviewedBy: req.admin!.email, note: body.data.note,
+      });
+      await auditAdminAction(req.admin!, 'regulated_prerequisite_evidence_reviewed', 'customer', {
+        customer_id: evidence.customer_id, mode: evidence.mode,
+        prerequisite: evidence.prerequisite, decision: evidence.status,
+        artifact_sha256: evidence.artifact_sha256,
+      });
+      return { evidence };
+    } catch (err) {
+      if (err instanceof RegulatedWorkloadError) {
+        return reply.code(err.code === 'not_found' ? 404 : 409).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+  });
+
   // ---- SOC2-06: control-evidence collection ----
   //
   // Read access is 'support' because the whole point is that evidence is easy
@@ -1418,6 +1523,13 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       if (!payload.sub) throw new Error('missing sub claim');
       const rawEmail = (payload as Record<string, unknown>).email;
       if (typeof rawEmail !== 'string' || !rawEmail) throw new Error('missing email claim');
+      const requiredContext = process.env.OIDC_REQUIRED_AUTH_CONTEXT;
+      if (requiredContext && !oidcAuthenticationContextSatisfied(payload as Record<string, unknown>, requiredContext)) {
+        return reply.code(403).send({
+          error: 'oidc_context_required',
+          message: 'The identity-provider session does not contain the required authentication context.',
+        });
+      }
       sub = payload.sub;
       email = rawEmail.toLowerCase();
     } catch (err: any) {

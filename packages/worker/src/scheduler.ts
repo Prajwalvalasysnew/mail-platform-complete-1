@@ -324,10 +324,11 @@ export function startScheduler(logger: Logger): { stop: () => void } {
       },
     },
     {
-      // Sign each audit chain's head and export the signed root to the WORM
-      // sink, so a later DB rewrite is detectable against an external record.
+      // Export complete audit segments and signed chain heads to the
+      // independently administered WORM sink. Keep the exposure window short:
+      // production defaults to five minutes and may lower it further.
       name: 'audit_checkpoint',
-      everyMs: HOUR,
+      everyMs: Number(process.env.AUDIT_WORM_EXPORT_INTERVAL_MS ?? 5 * MIN),
       run: async () => {
         const result = await checkpointAllAuditChains();
         if (result.signed) logger.info({ result }, 'signed audit chain checkpoints');

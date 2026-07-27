@@ -6,7 +6,8 @@
 //
 //   KMS_PROVIDER=env    -> ENCRYPTION_KEY env var (dev / single-host)
 //   KMS_PROVIDER=aws    -> AWS KMS Decrypt (pre-wrapped key in AWS_KMS_ENCRYPTED_KEY)
-//   KMS_PROVIDER=gcp    -> GCP KMS Decrypt (pre-wrapped key in GCP_KMS_ENCRYPTED_KEY)
+// GCP is intentionally not selectable: its current client dependency tree
+// fails the production vulnerability gate. Re-enable only with a clean client.
 //   KMS_PROVIDER=vault  -> HashiCorp Vault Transit decrypt (VAULT_ENCRYPTED_KEY)
 //
 // Setup: for each cloud provider, generate the master key once and wrap it:
@@ -25,8 +26,10 @@
 
 export interface MasterKeyProvider {
   readonly name: string;
-  /** Return the 32-byte data-encryption key used by AES-256-GCM. */
-  getKey(): Promise<Buffer> | Buffer;
+  /** Return the preloaded 32-byte data-encryption key used by AES-256-GCM. */
+  getKey(): Buffer;
+  /** Resolve and validate remote key access before the process starts work. */
+  preload(): Promise<void>;
   /** Optional: rotate the underlying key. */
   rotate?(): Promise<void>;
 }
@@ -43,6 +46,9 @@ function decodeKey(raw: string): Buffer {
 
 class EnvKeyProvider implements MasterKeyProvider {
   readonly name = 'env';
+  async preload(): Promise<void> {
+    this.getKey();
+  }
   getKey(): Buffer {
     const raw = process.env.ENCRYPTION_KEY;
     if (!raw) throw new Error('ENCRYPTION_KEY is required for KMS_PROVIDER=env');
@@ -71,10 +77,13 @@ class AwsKmsProvider implements MasterKeyProvider {
     this.ttlMs = Number(process.env.KMS_CACHE_TTL_MS ?? 300_000);
   }
 
-  async getKey(): Promise<Buffer> {
+  getKey(): Buffer {
     const now = Date.now();
     if (this.cachedKey && now - this.cachedAt < this.ttlMs) return this.cachedKey;
+    throw new Error('AWS KMS master key is not preloaded; call preloadMasterKey() during startup');
+  }
 
+  async preload(): Promise<void> {
     const encryptedKey = process.env.AWS_KMS_ENCRYPTED_KEY;
     if (!encryptedKey) throw new Error('AWS_KMS_ENCRYPTED_KEY is required for KMS_PROVIDER=aws (base64 CiphertextBlob from aws kms encrypt)');
 
@@ -88,8 +97,7 @@ class AwsKmsProvider implements MasterKeyProvider {
       throw new Error(`AWS KMS Decrypt returned unexpected key length: ${(res.Plaintext as Uint8Array | undefined)?.length ?? 0}`);
     }
     this.cachedKey = Buffer.from(res.Plaintext as Uint8Array);
-    this.cachedAt = now;
-    return this.cachedKey;
+    this.cachedAt = Date.now();
   }
 }
 
@@ -111,10 +119,13 @@ class GcpKmsProvider implements MasterKeyProvider {
     this.ttlMs = Number(process.env.KMS_CACHE_TTL_MS ?? 300_000);
   }
 
-  async getKey(): Promise<Buffer> {
+  getKey(): Buffer {
     const now = Date.now();
     if (this.cachedKey && now - this.cachedAt < this.ttlMs) return this.cachedKey;
+    throw new Error('GCP KMS master key is not preloaded; call preloadMasterKey() during startup');
+  }
 
+  async preload(): Promise<void> {
     const keyName = process.env.GCP_KMS_KEY_NAME;
     const encryptedKey = process.env.GCP_KMS_ENCRYPTED_KEY;
     if (!keyName) throw new Error('GCP_KMS_KEY_NAME required for KMS_PROVIDER=gcp');
@@ -132,8 +143,7 @@ class GcpKmsProvider implements MasterKeyProvider {
       throw new Error(`GCP KMS decrypt returned unexpected key length: ${plaintext.length}`);
     }
     this.cachedKey = plaintext;
-    this.cachedAt = now;
-    return this.cachedKey;
+    this.cachedAt = Date.now();
   }
 }
 
@@ -159,10 +169,13 @@ class VaultKmsProvider implements MasterKeyProvider {
     this.ttlMs = Number(process.env.KMS_CACHE_TTL_MS ?? 300_000);
   }
 
-  async getKey(): Promise<Buffer> {
+  getKey(): Buffer {
     const now = Date.now();
     if (this.cachedKey && now - this.cachedAt < this.ttlMs) return this.cachedKey;
+    throw new Error('Vault KMS master key is not preloaded; call preloadMasterKey() during startup');
+  }
 
+  async preload(): Promise<void> {
     const addr = process.env.VAULT_ADDR;
     const token = process.env.VAULT_TOKEN;
     const key = process.env.VAULT_TRANSIT_KEY;
@@ -195,8 +208,7 @@ class VaultKmsProvider implements MasterKeyProvider {
       throw new Error(`Vault Transit decrypt returned unexpected key length: ${plaintext.length}`);
     }
     this.cachedKey = plaintext;
-    this.cachedAt = now;
-    return this.cachedKey;
+    this.cachedAt = Date.now();
   }
 }
 
@@ -212,9 +224,6 @@ export function getMasterKeyProvider(): MasterKeyProvider {
     case 'aws':
       cached = new AwsKmsProvider();
       break;
-    case 'gcp':
-      cached = new GcpKmsProvider();
-      break;
     case 'vault':
       cached = new VaultKmsProvider();
       break;
@@ -222,6 +231,14 @@ export function getMasterKeyProvider(): MasterKeyProvider {
       throw new Error(`unknown KMS_PROVIDER: ${provider}`);
   }
   return cached;
+}
+
+export async function preloadMasterKey(): Promise<{ provider: string }> {
+  const provider = getMasterKeyProvider();
+  await provider.preload();
+  const key = provider.getKey();
+  if (key.length !== 32) throw new Error(`master key must be 32 bytes, got ${key.length}`);
+  return { provider: provider.name };
 }
 
 export function resetMasterKeyProvider(): void {

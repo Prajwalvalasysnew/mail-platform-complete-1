@@ -1,4 +1,4 @@
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 WORKDIR /app
 
 # Copy the lockfile and complete workspace manifest/source tree so npm ci uses
@@ -16,13 +16,12 @@ RUN npm run build --workspace=@platform/shared
 RUN npm run build --workspace=@platform/api
 RUN npm prune --omit=dev --workspaces --include-workspace-root
 
-FROM node:20-alpine
+FROM node:22-alpine
 WORKDIR /app
 RUN apk upgrade --no-cache \
   && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
-COPY --from=base /app /app
+COPY --chown=node:node --from=base /app /app
 # Drop root: node:20-alpine ships a built-in 'node' user (uid 1000).
-RUN chown -R node:node /app
 USER node
 EXPOSE 3000
 # Migrations run in a dedicated release job (see infra/helm .../migration-job.yaml),

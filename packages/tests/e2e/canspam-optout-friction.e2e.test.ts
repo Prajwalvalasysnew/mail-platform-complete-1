@@ -36,6 +36,29 @@ async function seedMessage(customerId: string, domain: string, to: string) {
 const recipient = () => `optout-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@example.com`;
 
 describe('CANSPAM-06: opt-out requires no login', () => {
+  it('routes long valid unsubscribe parameters instead of rejecting them with HTTP 414', async () => {
+    const cust = await seedCustomer();
+    // A long but valid DNS name makes the encoded Message-ID exceed Fastify's
+    // default 100-character route-parameter limit (the production regression
+    // reproduced by recipient unsubscribe links).
+    const domain = `${Array(5).fill('long-sending-subdomain').join('.')}.example.com`;
+    const to = recipient();
+    const { encoded } = await seedMessage(cust.customerId, domain, to);
+    expect(encoded.length).toBeGreaterThan(100);
+
+    const res = await tracker.inject({ method: 'GET', url: `/u/${encoded}` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain(to);
+  });
+
+  it('rejects a long malformed parameter without a router 414 or database 500', async () => {
+    const res = await tracker.inject({ method: 'GET', url: `/u/${'A'.repeat(180)}` });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toBe('Invalid link');
+  });
+
   it('serves the unsubscribe page to a completely unauthenticated request', async () => {
     const cust = await seedCustomer();
     const domain = await seedVerifiedDomain(cust.customerId);

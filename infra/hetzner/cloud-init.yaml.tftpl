@@ -1,0 +1,25 @@
+#cloud-config
+hostname: ${node_name}
+package_update: true
+package_upgrade: true
+packages:
+  - curl
+  - jq
+  - auditd
+  - unattended-upgrades
+write_files:
+  - path: /etc/sysctl.d/99-mail-platform.conf
+    permissions: "0644"
+    content: |
+      net.ipv4.ip_forward=1
+      net.ipv4.conf.all.rp_filter=1
+      kernel.kptr_restrict=2
+      kernel.dmesg_restrict=1
+runcmd:
+  - [sysctl, --system]
+  - [systemctl, enable, --now, auditd]
+  - [systemctl, enable, --now, unattended-upgrades]
+  - [sh, -c, "install -d -m 0700 /etc/mail-platform"]
+# Kubernetes bootstrap is deliberately separate. Cluster join tokens and
+# production secrets must come from the operator's secret manager, not
+# Terraform state or cloud-init.

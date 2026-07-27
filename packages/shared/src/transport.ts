@@ -192,6 +192,54 @@ class HarakaSmtpTransport implements Transport {
   }
 }
 
+// Local development SMTP capture. This exercises the real SMTP serialization
+// and attachment path while guaranteeing that messages stay inside Compose.
+class MailpitSmtpTransport implements Transport {
+  readonly name = 'mailpit';
+  private transporter: Transporter;
+
+  constructor() {
+    this.transporter = nodemailer.createTransport({
+      host: process.env.MAILPIT_SMTP_HOST ?? 'mailpit',
+      port: Number(process.env.MAILPIT_SMTP_PORT ?? 1025),
+      secure: false,
+    });
+  }
+
+  async send(msg: DeliveryMessage): Promise<DeliveryResult> {
+    try {
+      const info = await this.transporter.sendMail({
+        envelope: { from: msg.envelopeFrom, to: msg.to },
+        from: msg.from,
+        to: msg.to,
+        replyTo: msg.replyTo,
+        subject: msg.subject,
+        html: msg.html,
+        text: msg.text,
+        messageId: msg.messageId,
+        headers: msg.headers,
+        attachments: mailAttachments(msg),
+      });
+      return {
+        provider_message_id: info.messageId,
+        response: info.response,
+        accepted: (info.accepted ?? []).map(String),
+        rejected: (info.rejected ?? []).map(String),
+      };
+    } catch (err) {
+      throw makeDeliveryError(err);
+    }
+  }
+
+  async verify(): Promise<boolean> {
+    return this.transporter.verify();
+  }
+
+  async close(): Promise<void> {
+    this.transporter.close();
+  }
+}
+
 // =====================================================
 // Sandbox transport — for mp_test_ keys. Accepts everything, delivers nothing.
 // Lets customers integrate end-to-end (get message IDs, webhooks fire) without
@@ -256,6 +304,8 @@ export function getTransport(): Transport {
 
   cached = kind === 'ses'
     ? new SesSmtpTransport()
+    : kind === 'mailpit'
+      ? new MailpitSmtpTransport()
     : kind === 'log' || kind === 'capture'
       ? new LocalSinkTransport(kind)
       : new HarakaSmtpTransport();

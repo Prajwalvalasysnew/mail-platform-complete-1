@@ -84,13 +84,20 @@ describe('config-guard — billing webhook secret requirement', () => {
   const baseSecure = {
     NODE_ENV: 'production',
     JWT_SECRET: 'jwt_7Kq2mZ9pX4rT8vB1nW6yL3cD5fH0gJ8a',
-    ENCRYPTION_KEY: 'enc_R4tY7uI2oP9aS6dF3gH1jK8lZ5xC0vB7',
+    ENCRYPTION_KEY: '7b635e5d52f38ca1d3f7253e071209bedf36af90e5350910273c902c0bc4298a',
+    KMS_PROVIDER: 'env',
+    KMS_ALLOW_ENV_IN_PRODUCTION: 'true',
+    AUDIT_SIGNING_KEY_PEM: 'test-ed25519-private-key',
+    AUDIT_WORM_PROVIDER: 's3',
+    AUDIT_WORM_S3_BUCKET: 'immutable-audit-test',
+    AUDIT_WORM_S3_KMS_KEY_ID: 'arn:aws:kms:us-east-1:123456789012:key/test-audit-key',
     VERP_SECRET: 'verp_M3nB7vC2xZ9qW5e',
     API_KEY_PEPPER: 'pep_Q1wE4rT7yU2iO9pA6sD3fG8hJ5kL0zX2',
     ADMIN_SESSION_PEPPER: 'asp_Z9xC6vB3nM1qW7eR4tY2uI8oP5aS0dF3',
     ADMIN_PASSWORD_LOGIN_DISABLED: 'true',
     OIDC_ISSUER_URL: 'https://idp.test',
     OIDC_CLIENT_ID: 'mail-platform-admin',
+    OIDC_REQUIRED_AUTH_CONTEXT: 'mfa',
   } as Record<string, string>;
 
   it('requires STRIPE_WEBHOOK_SECRET when Stripe is the live provider', () => {

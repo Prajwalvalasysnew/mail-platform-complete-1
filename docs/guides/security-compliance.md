@@ -18,7 +18,8 @@ For the evidence matrix, known gaps, and production acceptance checklist, see
   and audited just-in-time/break-glass elevation.
 - **Selected-secret encryption:** DKIM private keys, MFA seeds, and other
   selected secrets use AES-256-GCM. Production can obtain the master data key
-  from AWS KMS, GCP KMS, or Vault. This is not blanket encryption of message
+  from AWS KMS or Vault. Production API/worker startup preloads and validates
+  remote-key access before accepting work. This is not blanket encryption of message
   data, storage volumes, logs, analytics, or backups.
 - **Audit integrity:** administrative and account actions enter audit logs with
   tenant hash chains, verification, archive-before-purge, signed checkpoints,

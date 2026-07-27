@@ -94,7 +94,7 @@ services:
       dockerfile: packages/api/Dockerfile
     container_name: mail-api
     ports:
-      - "3000:3000"
+      - "${API_HOST_PORT:-3000}:3000"
     environment:
       NODE_ENV: development
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
@@ -141,7 +141,9 @@ services:
       WORKER_CONCURRENCY: 50
       TRACKING_DOMAIN: http://localhost:4000
       BOUNCE_DOMAIN: bounces.happycubing.com
-      DELIVERY_TRANSPORT: haraka
+      DELIVERY_TRANSPORT: mailpit
+      MAILPIT_SMTP_HOST: mailpit
+      MAILPIT_SMTP_PORT: 1025
       ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
       VERP_SECRET: dev-verp-secret-change-me-min-16
       API_KEY_PEPPER: change-me-pepper-min-32-chars-required-in-prod
@@ -159,6 +161,8 @@ services:
         condition: service_healthy
       haraka-outbound:
         condition: service_started
+      mailpit:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
 

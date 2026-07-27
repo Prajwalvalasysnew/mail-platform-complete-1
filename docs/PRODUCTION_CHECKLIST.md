@@ -71,12 +71,15 @@ are deliberately out of scope (covered by external services or future work).
 - ✅ `haraka-inbound` bounce_parser uses `QUEUE_PREFIX` env var (consistent with all other queue clients)
 
 ## 9. Security ✅
-- ✅ KMS-pluggable master key — all four providers fully implemented:
+- ✅ KMS-pluggable master key — production-supported providers:
   - `env`: `ENCRYPTION_KEY` (dev / single-host)
   - `aws`: `DecryptCommand` on `AWS_KMS_ENCRYPTED_KEY` (pre-wrapped via `aws kms encrypt`); stable key, not GenerateDataKey
-  - `gcp`: `@google-cloud/kms` decrypt on `GCP_KMS_ENCRYPTED_KEY` (pre-wrapped via `gcloud kms encrypt`)
   - `vault`: Vault Transit `decrypt` HTTP call on `VAULT_ENCRYPTED_KEY` (no external SDK, uses native fetch)
   - All providers share a 5-min in-process cache (`KMS_CACHE_TTL_MS`)
+  - API and worker fail startup if the selected remote key cannot be preloaded;
+    `env` is refused in production unless `KMS_ALLOW_ENV_IN_PRODUCTION=true`
+  - GCP KMS is not currently selectable because its client dependency tree did
+    not pass the production vulnerability gate
 - ✅ Constant-time API-key comparison
 - ✅ CSRF token on browser unsubscribe POST
 - ✅ RFC 8058 one-click POST accepted from mail clients
