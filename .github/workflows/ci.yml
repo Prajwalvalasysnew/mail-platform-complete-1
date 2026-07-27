@@ -47,8 +47,8 @@ jobs:
       VERP_SECRET: ci-verp-secret-padding-padding-padding-padding
       NODE_ENV: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: 'npm'
@@ -83,8 +83,8 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: '22', cache: 'npm' }
       - run: npm ci
       # Fail the build on high/critical vulnerabilities. Pin runtimes (Node,
@@ -96,13 +96,13 @@ jobs:
       - name: Generate SBOM (CycloneDX)
         run: |
           npx -y @cyclonedx/cyclonedx-npm@^1.16.0 --output-file sbom.json --output-format json || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with: { name: sbom, path: sbom.json, if-no-files-found: warn }
 
   lint-sql:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # The migration runner refuses to re-apply a changed checksum; this job
       # also catches obvious SQL errors by dry-running against a throwaway DB
       # via the build-and-test job. This step lints filenames are ordered.
@@ -130,7 +130,7 @@ jobs:
           - name: smtp-gateway
             dockerfile: packages/smtp-gateway/Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build ${{ matrix.service.name }} image
         run: |
@@ -155,8 +155,10 @@ jobs:
 
       # Upload SARIF so findings appear in GitHub Security → Code scanning.
       - name: Upload Trivy SARIF artifact
-        if: always()
-        uses: actions/upload-artifact@v4
+        # Preserve reports for vulnerability exits, but do not obscure a
+        # Trivy setup/runtime failure with a secondary missing-file error.
+        if: ${{ always() && hashFiles('trivy-*.sarif') != '' }}
+        uses: actions/upload-artifact@v6
         with:
           name: trivy-${{ matrix.service.name }}
           path: trivy-${{ matrix.service.name }}.sarif
