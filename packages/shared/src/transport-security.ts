@@ -49,12 +49,14 @@ export async function recordDeliveryTlsOutcome(
       deliveries_plaintext: secured ? 0 : 1,
       last_secured_at: secured ? now : null,
       last_plaintext_at: secured ? null : now,
+      last_outcome_secured: secured,
     } as any)
     .onConflict((oc) => oc.column('domain').doUpdateSet({
       deliveries_secured: sql`recipient_domain_tls.deliveries_secured + ${secured ? 1 : 0}`,
       deliveries_plaintext: sql`recipient_domain_tls.deliveries_plaintext + ${secured ? 0 : 1}`,
       last_secured_at: secured ? now : sql`recipient_domain_tls.last_secured_at`,
       last_plaintext_at: secured ? sql`recipient_domain_tls.last_plaintext_at` : now,
+      last_outcome_secured: secured,
       updated_at: now,
     } as any))
     .execute();
@@ -91,7 +93,7 @@ export async function checkDomainTlsSafety(address: string): Promise<TlsDomainVe
 
   const row = await db
     .selectFrom('recipient_domain_tls')
-    .select(['last_secured_at', 'last_plaintext_at'])
+    .select(['last_plaintext_at', 'last_outcome_secured'])
     .where('domain', '=', domain)
     .executeTakeFirst();
 
@@ -100,8 +102,7 @@ export async function checkDomainTlsSafety(address: string): Promise<TlsDomainVe
 
   if (Date.now() - plaintextAt.getTime() > unsafeWindowMs()) return { unsafe: false };
 
-  const securedAt = row?.last_secured_at ? new Date(row.last_secured_at as unknown as string) : null;
-  if (securedAt && securedAt.getTime() >= plaintextAt.getTime()) return { unsafe: false };
+  if (row?.last_outcome_secured !== false) return { unsafe: false };
 
   return { unsafe: true, observedAt: plaintextAt };
 }
@@ -115,7 +116,7 @@ export async function listTlsUnsafeDomains(limit = 100): Promise<Array<{
   const cutoff = new Date(Date.now() - unsafeWindowMs());
   const rows = await db
     .selectFrom('recipient_domain_tls')
-    .select(['domain', 'deliveries_plaintext', 'last_plaintext_at', 'last_secured_at'])
+    .select(['domain', 'deliveries_plaintext', 'last_plaintext_at', 'last_outcome_secured'])
     .where('last_plaintext_at', 'is not', null)
     .where('last_plaintext_at', '>', cutoff as any)
     .orderBy('last_plaintext_at', 'desc')
@@ -124,9 +125,7 @@ export async function listTlsUnsafeDomains(limit = 100): Promise<Array<{
 
   return rows
     .filter((r) => {
-      const p = r.last_plaintext_at ? new Date(r.last_plaintext_at as unknown as string).getTime() : 0;
-      const s = r.last_secured_at ? new Date(r.last_secured_at as unknown as string).getTime() : 0;
-      return s < p; // not recovered
+      return r.last_outcome_secured === false;
     })
     .map((r) => ({
       domain: r.domain,

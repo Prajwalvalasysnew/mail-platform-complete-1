@@ -868,6 +868,7 @@ export interface RecipientDomainTlsTable {
   deliveries_plaintext: Generated<number>;
   last_secured_at: Timestamp | null;
   last_plaintext_at: Timestamp | null;
+  last_outcome_secured: boolean | null;
   updated_at: Generated<Timestamp>;
 }
 
