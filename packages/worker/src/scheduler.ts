@@ -22,7 +22,8 @@ import {
   complaintRateGauge,
   blocklistListings,
   meteringDrift,
-  runRetention,
+  runRetentionWithEvidence,
+  collectMonthlyControlEvidence,
   retentionHeldSkipped,
   ensureEventPartitions,
   sweepExpiredEventPartitions,
@@ -37,6 +38,7 @@ import {
   updateVolumeBaseline,
   eventsQueue,
   retryPendingBodyErasures,
+  sweepSenderHealth,
   runDunningSweep,
   expirePlanChangeRequests,
   reconcileSubmittedPlanChanges,
@@ -247,6 +249,19 @@ export function startScheduler(logger: Logger): { stop: () => void } {
       },
     },
     {
+      // CANSPAM-08: per-sender complaint/bounce monitoring with automated
+      // holds. Daily rather than hourly — the rates are computed over a
+      // rolling multi-day window, so sweeping more often would re-derive the
+      // same verdict and add nothing but reviewer noise.
+      name: 'sender_health_sweep',
+      everyMs: 24 * HOUR,
+      run: async () => {
+        const result = await sweepSenderHealth();
+        if (result.held) logger.warn({ result }, 'CANSPAM-08: senders placed on hold pending review');
+        else if (result.watch) logger.info({ result }, 'CANSPAM-08: senders over the warning threshold');
+      },
+    },
+    {
       name: 'billing_dunning_sweep',
       everyMs: HOUR,
       run: async () => {
@@ -359,12 +374,39 @@ export function startScheduler(logger: Logger): { stop: () => void } {
       name: 'daily_retention',
       everyMs: 24 * HOUR,
       run: async () => {
-        const result = await runRetention();
+        // ...WithEvidence records the run in retention_runs (SOC2-06). The
+        // failure mode this guards is silence: a sweep that stops running
+        // looks exactly like a sweep with nothing to do, while data
+        // accumulates past its window.
+        const result = await runRetentionWithEvidence();
         retentionHeldSkipped.set(result.held_rows_skipped);
         if (result.held_rows_skipped > 0) {
           logger.warn({ held_rows_skipped: result.held_rows_skipped }, 'retention preserved rows under active legal hold');
         }
         logger.info({ result }, 'daily retention sweep complete');
+      },
+    },
+    {
+      // SOC2-06: collect control evidence for the previous complete calendar
+      // month. Ticks daily but writes at most once per month — the helper
+      // returns null when the period is already on file, so a nightly tick
+      // does not overwrite a reviewer's sign-off.
+      name: 'control_evidence_collection',
+      everyMs: 24 * HOUR,
+      run: async () => {
+        const collected = await collectMonthlyControlEvidence();
+        if (!collected) return;
+        const gaps = collected.evidence.filter((e) => e.completeness !== 'complete');
+        if (gaps.length) {
+          // A 'missing' verdict means a control produced no evidence at all,
+          // which is the finding an auditor opens with.
+          logger.warn(
+            { gaps: gaps.map((g) => ({ control: g.control_id, completeness: g.completeness, notes: g.notes })) },
+            'SOC2-06: control evidence collected with gaps',
+          );
+        } else {
+          logger.info({ controls: collected.evidence.length }, 'SOC2-06: control evidence collected clean');
+        }
       },
     },
     {

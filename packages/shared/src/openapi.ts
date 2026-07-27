@@ -912,6 +912,213 @@ export const openapiSpec = {
       },
     },
     '/privacy/delete-recipient': { post: { summary: 'GDPR: delete all data for a recipient', operationId: 'deleteRecipient', responses: { '200': { description: 'Deletion summary' } } } },
+    '/privacy/restrict-recipient': {
+      post: {
+        summary: 'GDPR Art 18: restrict processing for a recipient (store but do not use). Distinct from suppression — lifted by a decision, not by resubscribing',
+        operationId: 'restrictRecipientProcessing',
+        responses: {
+          '201': { description: 'Restriction created' },
+          '200': { description: 'Already restricted; the original restriction is returned unchanged' },
+        },
+      },
+    },
+    '/privacy/release-restriction': {
+      post: {
+        summary: 'Lift an Article 18 processing restriction. A reason is required — Art 18(3) obliges informing the data subject before lifting',
+        operationId: 'releaseProcessingRestriction',
+        responses: {
+          '200': { description: 'Restriction released' },
+          '404': { description: 'No active restriction for that recipient', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/restrictions': {
+      get: {
+        summary: 'List processing restrictions (active by default)',
+        operationId: 'listProcessingRestrictions',
+        parameters: [
+          { name: 'include_released', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+          { name: 'limit', in: 'query', schema: { type: 'integer' } },
+        ],
+        responses: { '200': { description: 'Restrictions, newest first' } },
+      },
+    },
+    '/privacy/processing-record': {
+      get: {
+        summary: 'GDPR Art 30(2) record of processing carried out for this controller, with the Art 32 security-measures schedule resolved against this tenant\'s live configuration and the Art 28(3) assistance duties mapped to the endpoints that deliver them',
+        description:
+          'Each measure carries a state: "enforced" (true by construction in the platform), "configured" (currently on, can be switched off), '
+          + '"not_enabled" (the platform supports it and it is off for this tenant), or "policy_only" (an organizational commitment with no technical enforcement). '
+          + 'Measures that are off are returned with state "not_enabled" rather than omitted, and a configuration-derived measure never reports "enforced". '
+          + 'Subprocessors are not named — that is a deployment fact, not a source-code fact.',
+        operationId: 'getProcessingRecord',
+        responses: { '200': { description: 'Processing record, measures schedule, assistance commitments and a gap summary' } },
+      },
+    },
+    '/privacy/rectify-recipient': {
+      post: {
+        summary: 'GDPR Art 16 / CCPA right to correct: move suppression, consent, group and restriction state to a corrected address. Historical delivery records are preserved and reported',
+        operationId: 'rectifyRecipient',
+        responses: {
+          '200': { description: 'Counts moved, plus historical records deliberately preserved' },
+          '422': { description: 'The corrected address is identical to the current one', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/limit-sensitive-pi': {
+      post: {
+        summary: 'CCPA §1798.121: limit use of sensitive PI. Message content is SPI here by definition (§1798.140(ae)(1)(E)). Disables open and click tracking; delivery, abuse scanning and legal-obligation controls are unaffected',
+        operationId: 'limitSensitivePiUse',
+        responses: {
+          '201': { description: 'Limit recorded' },
+          '200': { description: 'Already limited' },
+        },
+      },
+    },
+    '/privacy/limit-sensitive-pi/release': {
+      post: {
+        summary: 'Lift a sensitive-PI limit, restoring the tenant\'s tracking preferences',
+        operationId: 'releaseSensitivePiLimit',
+        responses: {
+          '200': { description: 'Limit released' },
+          '404': { description: 'No active limit for that recipient', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/sensitive-pi-limits': {
+      get: {
+        summary: 'List sensitive-PI limits (active by default)',
+        operationId: 'listSensitivePiLimits',
+        parameters: [{ name: 'include_released', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } }],
+        responses: { '200': { description: 'Limits, newest first' } },
+      },
+    },
+    '/privacy/cases/{id}/appeal': {
+      post: {
+        summary: 'CCPA-07: appeal a denied data-subject request. The appeal runs on its own statutory clock, and remains available after the case was closed',
+        operationId: 'submitPrivacyCaseAppeal',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '201': { description: 'Appeal recorded with its own due date' },
+          '409': { description: 'The case was never denied, so there is nothing to appeal', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '422': { description: 'An appeal on this case is already awaiting a decision', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/appeals/{id}/decide': {
+      post: {
+        summary: 'Decide an appeal. Upholding a denial requires an escalation notice recording how the consumer was told to complain to the regulator; overturning reopens the case',
+        operationId: 'decidePrivacyCaseAppeal',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '200': { description: 'Appeal decided' },
+          '409': { description: 'The appeal has already been decided', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '422': { description: 'Upholding without an escalation notice', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/appeals': {
+      get: {
+        summary: 'List appeals; filter to open or overdue for the response-timeliness metric',
+        operationId: 'listPrivacyCaseAppeals',
+        parameters: [
+          { name: 'case_id', in: 'query', schema: { type: 'string', format: 'uuid' } },
+          { name: 'open', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+          { name: 'overdue', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+        ],
+        responses: { '200': { description: 'Appeals, newest first' } },
+      },
+    },
+    '/privacy/consent': {
+      post: {
+        summary: 'GDPR Art 7(1): record an affirmative consent grant with provenance, evidence wording and policy version. A double_opt_in grant is NOT valid consent until confirmed',
+        operationId: 'recordConsentGrant',
+        responses: {
+          '201': { description: 'Consent recorded; a confirmation token is returned for double opt-in' },
+          '422': { description: 'Evidence wording is missing or too short to demonstrate consent', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/consent/confirm': {
+      post: {
+        summary: 'Complete a double opt-in with the confirmation token. Single-use',
+        operationId: 'confirmDoubleOptIn',
+        responses: {
+          '200': { description: 'Consent confirmed and now valid' },
+          '404': { description: 'Unknown or already-used token', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/consent/proof': {
+      get: {
+        summary: 'Art 7(1) proof of consent: the full grant chain including superseded and withdrawn records',
+        operationId: 'getConsentProof',
+        parameters: [{ name: 'recipient', in: 'query', required: true, schema: { type: 'string', format: 'email' } }],
+        responses: { '200': { description: 'Consent history, newest first' } },
+      },
+    },
+    '/privacy/consent/withdraw': {
+      post: {
+        summary: 'Art 7(3): withdraw consent. Marks the record rather than deleting it — mail sent while consent was valid must stay accountable',
+        operationId: 'withdrawConsent',
+        responses: {
+          '200': { description: 'Consent withdrawn' },
+          '404': { description: 'No active consent for that recipient and purpose', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/regulatory-locks': {
+      post: {
+        summary: 'SEC-04: place a time-bound regulatory retention obligation (SEC 17a-4 / FINRA 4511). Blocks both retention purge and data-subject erasure until it lapses',
+        operationId: 'placeRegulatoryLock',
+        responses: {
+          '201': { description: 'Lock placed' },
+          '422': { description: 'retain_until is not in the future', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+      get: {
+        summary: 'List regulatory retention locks (active by default)',
+        operationId: 'listRegulatoryLocks',
+        parameters: [{ name: 'include_released', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } }],
+        responses: { '200': { description: 'Locks, newest first' } },
+      },
+    },
+    '/privacy/regulatory-locks/{id}/release': {
+      post: {
+        summary: 'Release a regulatory lock before its statutory expiry. Requires both a releaser and a documented reason',
+        operationId: 'releaseRegulatoryLock',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '200': { description: 'Lock released' },
+          '404': { description: 'No active lock with that id', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        },
+      },
+    },
+    '/privacy/opt-out-sale': {
+      post: {
+        summary: 'CCPA §1798.120: opt out of sale/sharing. Does NOT stop delivery — a consumer may keep receiving mail while refusing to be sold. Global Privacy Control is honoured automatically at the tracker surfaces',
+        operationId: 'optOutOfSaleOrSharing',
+        responses: {
+          '201': { description: 'Opt-out recorded' },
+          '200': { description: 'Already opted out' },
+        },
+      },
+    },
+    '/privacy/sale-share-optouts': {
+      get: {
+        summary: 'List active sale/share opt-outs, including those captured from Global Privacy Control',
+        operationId: 'listSaleShareOptOuts',
+        parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer' } }],
+        responses: { '200': { description: 'Opt-outs, newest first' } },
+      },
+    },
+    '/privacy/object': {
+      post: {
+        summary: 'GDPR Art 21: record an objection to direct marketing. Unconditional, so it takes effect immediately as an enforced suppression',
+        operationId: 'recordMarketingObjection',
+        responses: { '200': { description: 'Objection recorded and enforced' } },
+      },
+    },
     '/privacy/cases': {
       post: { summary: 'Open a data-subject request case (intake, jurisdiction deadline computed)', operationId: 'createPrivacyCase', responses: { '201': { description: 'Case created with statutory due date' } } },
       get: { summary: 'List privacy cases (filter by status or overdue)', operationId: 'listPrivacyCases', parameters: [{ name: 'status', in: 'query', schema: { type: 'string' } }, { name: 'overdue', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } }], responses: { '200': { description: 'Cases, newest first' } } },

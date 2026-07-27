@@ -62,6 +62,20 @@ production-sized snapshot with your actual object storage attached, and measure
 point-in-time-recovery lag (RPO) from WAL archiving — not just the logical
 restore covered here.
 
+**Privacy verification (BASE-12).** The drill also checks that erased data
+stayed gone, not only that data came back: no tombstoned message exists again,
+consent rows marked pseudonymized still hold a pseudonym, and the suppression
+count is reported for comparison against the pre-restore figure.
+
+This drill restores a dump of the *current* database, so it cannot resurrect
+anything by itself. A real restore from an **older** image can, and tombstone
+replay is mandatory before the restored node serves traffic — see
+[restore re-deletion](runbooks/RESTORE_RE_DELETION.md). On a development
+database the first check can trip on test fixtures
+(`privacy-worker-tombstone.e2e.test.ts` deliberately seeds a tombstone beside a
+surviving message); run the drill against production or a production-shaped
+copy.
+
 ## k6 load scenarios
 
 ```

@@ -12,6 +12,9 @@
 //   - audit_log rows older than RETENTION_AUDIT_DAYS (default 365) — archived
 //     to audit_log_archive, never destroyed, so legal holds do not gate this
 //   - resolved/rejected review_queue rows older than RETENTION_REVIEW_QUEUE_DAYS (default 30)
+//   - stored billing webhook payloads older than RETENTION_BILLING_PAYLOAD_DAYS
+//     (default 90) — the payload column only; the billing_events row is the
+//     idempotency marker and is kept (PCI-03)
 //
 // LEGAL HOLDS. Every destructive step skips data covered by an active legal
 // hold (scope 'customer' = whole tenant, 'recipient:<email>' = one recipient),
@@ -57,6 +60,13 @@ export interface RetentionOptions {
   exportRetentionDays?: number;
   /** Days to keep DMARC reports and source records. Default: RETENTION_DMARC_DAYS env or 365. */
   dmarcRetentionDays?: number;
+  /**
+   * Days to keep the stored billing webhook payload (PCI-03). The
+   * billing_events ROW is never purged — it is the idempotency marker — only
+   * the payload column is nulled. Default: RETENTION_BILLING_PAYLOAD_DAYS env
+   * or 90.
+   */
+  billingPayloadRetentionDays?: number;
   /** Max rows per delete/update batch. Default: RETENTION_BATCH_SIZE env or 10_000. */
   batchSize?: number;
 }
@@ -73,10 +83,31 @@ export interface RetentionResult {
   exports_purged: number;
   dmarc_reports_purged: number;
   dmarc_records_purged: number;
+  /** billing_events rows whose stored provider payload was nulled (PCI-03). */
+  billing_payloads_purged: number;
   audit_purged: number;
   review_queue_purged: number;
   /** Rows matching a retention cutoff but preserved by an active legal hold. */
   held_rows_skipped: number;
+  /**
+   * Rows matching a retention cutoff but pinned by an OPEN access request
+   * (FERPA-07). Distinct from held_rows_skipped because the two are released
+   * by different events: a hold by a matter closing, a pin by the request
+   * being fulfilled.
+   */
+  request_pinned_rows_skipped: number;
+  /**
+   * Rows matching a retention cutoff but locked by a regulatory retention
+   * obligation (SEC-04). Released by the statutory period lapsing, not by any
+   * operator action.
+   */
+  regulatory_locked_rows_skipped: number;
+  /**
+   * Audit rows past the audit cutoff that a reviewer has ruled on (HIPAA-07).
+   * A judgement about someone's access to tenant data outlives the ordinary
+   * audit window, and the review row points at the audit row's id.
+   */
+  reviewed_access_rows_skipped: number;
 }
 
 const TERMINAL_STATUSES = ['delivered', 'hard_bounced', 'failed', 'suppressed'] as const;
@@ -91,7 +122,54 @@ const holdOnMessage = sql<boolean>`EXISTS (
     AND h.customer_id = messages.customer_id
     AND (h.scope = 'customer' OR h.scope = 'recipient:' || lower(messages.to_address))
 )`;
-const noHoldOnMessage = sql<boolean>`NOT ${holdOnMessage}`;
+// FERPA-07 (and the same problem under GDPR Art 15 / CCPA access): an OPEN
+// access request pins the data it covers.
+//
+// Without this, the retention sweep can delete the very records a data subject
+// asked for while their request is still in flight — and the controller then
+// has to answer a statutory request with data it destroyed AFTER receiving the
+// request. FERPA states it plainly (no destruction while an eligible access
+// request is outstanding); the same reasoning applies to any access or
+// portability request anywhere.
+//
+// ONLY read-type requests pin. An open ERASURE request must NOT block
+// retention: deletion is the outcome the subject asked for, so letting the
+// sweep get there first fulfils the request rather than frustrating it.
+// Pinning on erasure would also be self-defeating — the case could never be
+// completed by the ordinary lifecycle.
+//
+// Closed cases (fulfilled/denied/closed) release the pin, and a case whose
+// subject has been pseudonymized after fulfilment can no longer match a
+// plaintext address anyway.
+const PINNING_REQUEST_TYPES = ['access', 'portability', 'rectification'] as const;
+const openRequestOnMessage = sql<boolean>`EXISTS (
+  SELECT 1 FROM privacy_cases c
+  WHERE c.customer_id = messages.customer_id
+    AND c.subject_kind = 'recipient'
+    AND c.status NOT IN ('fulfilled', 'denied', 'closed')
+    AND c.subject_pseudonymized_at IS NULL
+    AND lower(c.subject_identifier) = lower(messages.to_address)
+    AND c.request_types && ARRAY[${sql.join([...PINNING_REQUEST_TYPES])}]::text[]
+)`;
+
+// SEC-04: a regulatory retention obligation preserves the record until its
+// statutory period lapses. Unlike a hold this is TIME-BOUND — past
+// retain_until the ordinary policy resumes with no manual step, so an expired
+// obligation cannot quietly become permanent retention.
+const regulatoryLockOnMessage = sql<boolean>`EXISTS (
+  SELECT 1 FROM regulatory_retention_locks r
+  WHERE r.customer_id = messages.customer_id
+    AND r.released_at IS NULL
+    AND r.retain_until > now()
+    AND (r.scope = 'customer' OR r.scope = 'recipient:' || lower(messages.to_address))
+)`;
+
+// A message is preserved when a legal hold covers it, an open access request
+// pins it, or a regulatory obligation locks it. Every step that was hold-gated
+// is gated by all three — the reasons differ but the requirement is identical:
+// the data must survive.
+const preservedMessage = sql<boolean>`(${holdOnMessage} OR ${openRequestOnMessage} OR ${regulatoryLockOnMessage})`;
+const noHoldOnMessage = sql<boolean>`NOT ${preservedMessage}`;
 
 /**
  * Run a batched mutation until it returns fewer rows than the batch size.
@@ -109,6 +187,38 @@ async function drainBatches(
   }
 }
 
+/**
+ * Run the sweep and persist a record that it ran (SOC2-06).
+ *
+ * The failure mode for retention is SILENCE: a sweep that stops running looks
+ * exactly like a sweep with nothing to do, while data accumulates past its
+ * window. Recording every run — including failures — is what makes the absence
+ * detectable. Prefer this over calling runRetention() directly from a
+ * scheduler or an operator endpoint.
+ */
+export async function runRetentionWithEvidence(opts: RetentionOptions = {}): Promise<RetentionResult> {
+  const startedAt = new Date();
+  try {
+    const result = await runRetention(opts);
+    await db.insertInto('retention_runs').values({
+      started_at: startedAt,
+      duration_ms: Date.now() - startedAt.getTime(),
+      result: JSON.stringify(result) as never,
+    } as never).execute().catch(() => {
+      // Evidence recording must never turn a successful sweep into a failure.
+    });
+    return result;
+  } catch (err) {
+    await db.insertInto('retention_runs').values({
+      started_at: startedAt,
+      duration_ms: Date.now() - startedAt.getTime(),
+      result: JSON.stringify({}) as never,
+      error: err instanceof Error ? err.message.slice(0, 2000) : 'unknown_retention_error',
+    } as never).execute().catch(() => {});
+    throw err;
+  }
+}
+
 export async function runRetention(opts: RetentionOptions = {}): Promise<RetentionResult> {
   const {
     messageBodyRetentionDays = Number(process.env.RETENTION_BODY_DAYS ?? 90),
@@ -121,6 +231,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     outboxRetentionDays = Number(process.env.RETENTION_OUTBOX_DAYS ?? 30),
     exportRetentionDays = Number(process.env.RETENTION_EXPORT_DAYS ?? 7),
     dmarcRetentionDays = Number(process.env.RETENTION_DMARC_DAYS ?? 365),
+    billingPayloadRetentionDays = Number(process.env.RETENTION_BILLING_PAYLOAD_DAYS ?? 90),
     batchSize = Number(process.env.RETENTION_BATCH_SIZE ?? 10_000),
   } = opts;
 
@@ -144,8 +255,11 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   const blocklistCutoff = new Date(Date.now() - blocklistRetentionDays * 86_400_000);
   const outboxCutoff = new Date(Date.now() - outboxRetentionDays * 86_400_000);
   const dmarcCutoff = new Date(Date.now() - dmarcRetentionDays * 86_400_000);
+  const billingPayloadCutoff = new Date(Date.now() - billingPayloadRetentionDays * 86_400_000);
 
   let heldSkipped = 0;
+  let requestPinnedSkipped = 0;
+  let regulatoryLockedSkipped = 0;
 
   // --- 1. Purge inline bodies (batched, hold-aware) ----------------------
   const messagesBodyPurgedInline = await drainBatches(batchSize, async (limit) => {
@@ -171,7 +285,10 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   });
   let messagesBodyPurged = messagesBodyPurgedInline;
 
-  // Count inline bodies preserved solely because of a hold (visibility).
+  // Count inline bodies preserved by a legal hold (visibility). Counted
+  // separately from the access-request interlock below so an operator can tell
+  // "a matter is preserving this" from "a request is preserving this" — they
+  // are released by completely different events.
   const heldInline = await sql<{ count: string }>`
     WITH windows AS (${windows})
     SELECT COUNT(*)::text AS count FROM messages
@@ -184,11 +301,37 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   `.execute(db);
   heldSkipped += Number(heldInline.rows[0]?.count ?? 0);
 
-  // --- 2. Purge offloaded bodies (hold-aware) ----------------------------
+  // FERPA-07: inline bodies pinned by an OPEN access request.
+  const pinnedInline = await sql<{ count: string }>`
+    WITH windows AS (${windows})
+    SELECT COUNT(*)::text AS count FROM messages
+    LEFT JOIN windows w ON w.customer_id = messages.customer_id
+    WHERE body_storage = 'inline'
+      AND status IN (${sql.join([...TERMINAL_STATUSES])})
+      AND queued_at < now() - make_interval(days => COALESCE(w.body_days, ${messageBodyRetentionDays})::int)
+      AND (html_body IS NOT NULL OR text_body IS NOT NULL)
+      AND ${openRequestOnMessage}
+  `.execute(db);
+  requestPinnedSkipped += Number(pinnedInline.rows[0]?.count ?? 0);
+
+  // SEC-04: inline bodies locked by a regulatory retention obligation.
+  const lockedInline = await sql<{ count: string }>`
+    WITH windows AS (${windows})
+    SELECT COUNT(*)::text AS count FROM messages
+    LEFT JOIN windows w ON w.customer_id = messages.customer_id
+    WHERE body_storage = 'inline'
+      AND status IN (${sql.join([...TERMINAL_STATUSES])})
+      AND queued_at < now() - make_interval(days => COALESCE(w.body_days, ${messageBodyRetentionDays})::int)
+      AND (html_body IS NOT NULL OR text_body IS NOT NULL)
+      AND ${regulatoryLockOnMessage}
+  `.execute(db);
+  regulatoryLockedSkipped += Number(lockedInline.rows[0]?.count ?? 0);
+
+  // --- 2. Purge offloaded bodies (preservation-aware) --------------------
   // Only delete an object when EVERY message referencing that key is past
-  // retention AND none of them is under an active legal hold. First collect
-  // keys still live (referenced by a non-expired, non-terminal, or held
-  // message), then delete the rest.
+  // retention AND none of them is under a legal hold or an open access
+  // request. First collect keys still live (referenced by a non-expired,
+  // non-terminal, or preserved message), then delete the rest.
   const liveKeyRows = await sql<{ body_object_key: string }>`
     WITH windows AS (${windows})
     SELECT body_object_key FROM messages
@@ -198,7 +341,7 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
       AND (
         status NOT IN (${sql.join([...TERMINAL_STATUSES])})
         OR queued_at >= now() - make_interval(days => COALESCE(w.body_days, ${messageBodyRetentionDays})::int)
-        OR ${holdOnMessage}
+        OR ${preservedMessage}
       )
     GROUP BY body_object_key
   `.execute(db);
@@ -467,6 +610,32 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
   if (dmarcRecordsPurged) dmarcRetentionPurged.inc({ kind: 'record' }, dmarcRecordsPurged);
   if (dmarcReportsPurged) dmarcRetentionPurged.inc({ kind: 'report' }, dmarcReportsPurged);
 
+  // --- 7c. Expire stored billing webhook payloads (PCI-03/BASE-06) --------
+  // The payload is retained only so an operator can replay the event. Past
+  // that window it is provider data with no remaining purpose, so the column
+  // is nulled while the row — the idempotency marker — is kept forever. The
+  // admin API then reports the event exactly as it reports a pre-035 row:
+  // "not replayable". Not hold-gated: this is provider billing metadata, not
+  // tenant message content, and the invoice/subscription records it produced
+  // are unaffected.
+  const billingPayloadsPurged = await drainBatches(batchSize, async (limit) => {
+    const res = await sql<{ count: string }>`
+      WITH batch AS (
+        SELECT provider_event_id FROM billing_events
+        WHERE payload IS NOT NULL
+          AND processed_at < ${billingPayloadCutoff}
+        ORDER BY processed_at
+        LIMIT ${limit}
+      ), cleared AS (
+        UPDATE billing_events b SET payload = NULL
+        FROM batch WHERE b.provider_event_id = batch.provider_event_id
+        RETURNING b.provider_event_id
+      )
+      SELECT COUNT(*)::text AS count FROM cleared
+    `.execute(db);
+    return Number(res.rows[0]?.count ?? 0);
+  });
+
   // --- 8. Archive + purge old audit log (not hold-gated: rows are moved to
   // audit_log_archive with their hash-chain fields, never destroyed) -------
   const auditResult = await sql<{ count: string }>`
@@ -477,6 +646,13 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
       FROM audit_log a
       LEFT JOIN audit_log_hashes h ON h.audit_id = a.id
       WHERE a.occurred_at < ${auditCutoff}
+        -- HIPAA-07: an access record a reviewer has ruled on is evidence
+        -- about a person's conduct, and it outlives the ordinary audit
+        -- window. Preserved rather than archived because the review row
+        -- (admin_access_reviews) points at this id — archiving would leave a
+        -- finding attached to nothing. Counted, not silently dropped, and a
+        -- later sweep picks it up once the review is aged out deliberately.
+        AND NOT EXISTS (SELECT 1 FROM admin_access_reviews r WHERE r.audit_id = a.id)
     ), archived AS (
       INSERT INTO audit_log_archive (
         audit_id, customer_id, api_key_id, actor_type, actor_id, actor_label,
@@ -497,6 +673,17 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     SELECT COUNT(*)::text AS count FROM deleted
   `.execute(db);
   const auditPurged = Number(auditResult.rows[0]?.count ?? 0);
+
+  // How many audit rows the reviewed-access rule held back. Reported for the
+  // same reason as the other skip counters: "nothing to purge" and "purging
+  // is blocked" must never look the same from outside.
+  const reviewedAccessHeld = await sql<{ count: string }>`
+    SELECT COUNT(*)::text AS count
+    FROM audit_log a
+    WHERE a.occurred_at < ${auditCutoff}
+      AND EXISTS (SELECT 1 FROM admin_access_reviews r WHERE r.audit_id = a.id)
+  `.execute(db);
+  const reviewedAccessRowsSkipped = Number(reviewedAccessHeld.rows[0]?.count ?? 0);
 
   // --- 8b. Purge expired export artifacts ---------------------------------
   const exportsPurged = await purgeExpiredExports(exportRetentionDays);
@@ -521,8 +708,12 @@ export async function runRetention(opts: RetentionOptions = {}): Promise<Retenti
     exports_purged: exportsPurged,
     dmarc_reports_purged: dmarcReportsPurged,
     dmarc_records_purged: dmarcRecordsPurged,
+    billing_payloads_purged: billingPayloadsPurged,
     audit_purged: auditPurged,
     review_queue_purged: reviewQueuePurged,
     held_rows_skipped: heldSkipped,
+    request_pinned_rows_skipped: requestPinnedSkipped,
+    regulatory_locked_rows_skipped: regulatoryLockedSkipped,
+    reviewed_access_rows_skipped: reviewedAccessRowsSkipped,
   };
 }

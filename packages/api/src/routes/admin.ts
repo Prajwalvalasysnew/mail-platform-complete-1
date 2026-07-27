@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest, FastifyReply, FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { sql } from 'kysely';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
@@ -59,7 +59,19 @@ import {
   replayDeadLetter,
   purgeDeadLetter,
   purgeAllDeadLetters,
-  runRetention,
+  runRetentionWithEvidence,
+  replayPrivacyTombstones,
+  listSenderHealthRuns,
+  reviewSenderHealth,
+  SenderHealthReviewError,
+  collectControlEvidence,
+  recordAdminDataAccess,
+  listAccessForReview,
+  reviewAdminAccess,
+  AccessReviewError,
+  listControlEvidence,
+  reviewControlEvidence,
+  EvidenceReviewError,
   clearRetentionPolicyCache,
   reconcileMetering,
   rotateAdminSessionCsrf,
@@ -80,6 +92,15 @@ declare module 'fastify' {
     adminAuthVia?: 'bearer' | 'cookie';
     /** The raw session token (for logout / CSRF rotation). */
     adminSessionToken?: string;
+  }
+  interface FastifyContextConfig {
+    /**
+     * HIPAA-07: set false on admin routes that return no tenant personal
+     * data, so they are not recorded as staff data access. Omitting it means
+     * the route IS recorded — the default has to be "audit", because with the
+     * opposite polarity a forgotten route is silently invisible.
+     */
+    accessAudit?: boolean;
   }
 }
 
@@ -235,7 +256,60 @@ function capabilitiesForRole(role: AdminRole): Record<string, boolean> {
   };
 }
 
+/**
+ * HIPAA-07: record every staff READ of tenant data across the admin plane.
+ *
+ * Mutations are already audited at their call sites via auditAdminAction();
+ * reads were audited only where someone remembered to. Rather than add the
+ * missing calls one by one — which fixes today and drifts by the next route —
+ * this hook covers the whole plane and is DEFAULT-ON. A route added tomorrow
+ * is recorded without anyone thinking about it; a route that genuinely returns
+ * no tenant data has to declare `config: { accessAudit: false }`.
+ *
+ * The polarity is the point. With opt-in, a forgotten route is silent, and
+ * silence is indistinguishable from "nobody looked".
+ *
+ * Only successful reads are recorded: a 401/403/404 disclosed nothing, and
+ * logging them would bury the accesses that did.
+ */
+function registerAccessAudit(app: FastifyInstance): void {
+  // onSend, not onResponse: Fastify awaits onSend before the payload leaves,
+  // so the access is recorded BEFORE the operator can read the data. On
+  // onResponse the write races the response — a crash in that window would
+  // disclose the data and lose the record, which is the wrong way round for
+  // an access log.
+  app.addHook('onSend', async (req, reply, payload) => {
+    if (!req.admin) return payload;
+    if (req.method !== 'GET' && req.method !== 'HEAD') return payload;
+    if (reply.statusCode >= 300) return payload;
+    if ((req.routeOptions?.config as { accessAudit?: boolean } | undefined)?.accessAudit === false) return payload;
+
+    const params = (req.params ?? {}) as Record<string, string | undefined>;
+    const query = (req.query ?? {}) as Record<string, string | undefined>;
+    // The route pattern as mounted, e.g. '/admin/customers/:id' — never the
+    // resolved URL, which would put tenant identifiers in the log line.
+    const routePath = req.routeOptions?.url ?? req.url;
+    // Attribute to a tenant only where the route says so. Guessing — treating
+    // /support-tickets/:id as a customer id, say — would file one tenant's
+    // read under another's name, which is worse than leaving it null.
+    const customerId = /(^|\/)customers\/:id(\/|$)/.test(routePath)
+      ? params.id ?? null
+      : params.customerId ?? query.customer_id ?? null;
+
+    await recordAdminDataAccess({
+      admin: req.admin,
+      method: req.method,
+      route: routePath,
+      customerId,
+      resourceId: params.id ?? null,
+    });
+    return payload;
+  });
+}
+
 export const adminRoutes: FastifyPluginAsync = async (app) => {
+  registerAccessAudit(app);
+
   // ---- CAN-SPAM unsubscribe monitoring (CANSPAM-05) ----
   // Aggregated synthetic-check evidence for the report window (default 30
   // days): availability %, days with checks, oldest link age validated,
@@ -310,7 +384,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return listSupportTickets(query, req.admin!.admin_user_id);
   });
 
-  app.get('/support-tickets/unread-count', { preHandler: requireAdmin('support') }, async (req) => {
+  app.get('/support-tickets/unread-count', { preHandler: requireAdmin('support'), config: { accessAudit: false } }, async (req) => {
     return {
       unread: await countUnreadSupportTickets({
         viewerType: 'admin',
@@ -457,7 +531,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Review queue aggregate stats for operator dashboards.
-  app.get('/review-queue/stats', { preHandler: requireAdmin('support') }, async () => {
+  app.get('/review-queue/stats', { preHandler: requireAdmin('support'), config: { accessAudit: false } }, async () => {
     const [pending, activityToday, oldest] = await Promise.all([
       db.selectFrom('review_queue').select(db.fn.countAll<number>().as('n')).where('status', '=', 'pending').executeTakeFirstOrThrow(),
       db.selectFrom('review_queue')
@@ -913,7 +987,11 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.post('/retention/run', { preHandler: requireAdmin('operator') }, async (req, reply) => {
     const parsed = RetentionTriggerSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
-    const result = await runRetention({
+    // ...WithEvidence: a manually triggered sweep is still a sweep, and
+    // SOC2-06's BASE-06 collector reads from retention_runs. If manual runs
+    // did not record, an operator firing this by hand would leave the period
+    // looking as though retention never happened.
+    const result = await runRetentionWithEvidence({
       messageBodyRetentionDays: parsed.data.message_body_retention_days,
       eventRetentionDays: parsed.data.event_retention_days,
       messageRetentionDays: parsed.data.message_retention_days,
@@ -927,12 +1005,227 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send({ ok: true, result });
   });
 
+  // ---- HIPAA-07: staff access review ----
+  //
+  // Defaults to unreviewed break-glass access. Reviewing every read would mean
+  // reviewing none of them; the narrow default is what makes this a queue a
+  // human actually keeps up with.
+  //
+  // Admin-level, not support: this queue is where a colleague's access shows
+  // up, so the people it watches must not be the people who clear it.
+  app.get('/access-review', { preHandler: requireAdmin('admin'), config: { accessAudit: false } }, async (req) => {
+    const { break_glass, unreviewed, admin_user_id, customer_id, limit } =
+      req.query as Record<string, string | undefined>;
+    const access = await listAccessForReview({
+      breakGlassOnly: break_glass !== 'false',
+      unreviewedOnly: unreviewed !== 'false',
+      adminUserId: admin_user_id,
+      customerId: customer_id,
+      limit: limit ? Number(limit) : undefined,
+    });
+    return { access };
+  });
+
+  /**
+   * Record the reviewer's judgement. Written once and not amendable — a
+   * reviewer who could later downgrade 'inappropriate' to 'appropriate' would
+   * make the whole record worthless.
+   */
+  app.post('/access-review/:id', {
+    preHandler: requireAdmin('admin'),
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = z.object({
+      decision: z.enum(['appropriate', 'inappropriate']),
+      note: z.string().max(2000).optional(),
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    if (!/^\d+$/.test(id)) return reply.code(404).send({ error: 'not_found', message: 'No access record with that id.' });
+
+    try {
+      await reviewAdminAccess({
+        auditId: id,
+        reviewedBy: req.admin!.email,
+        decision: parsed.data.decision,
+        note: parsed.data.note ?? null,
+      });
+    } catch (err) {
+      if (err instanceof AccessReviewError) {
+        const status = err.code === 'not_found' ? 404 : err.code === 'already_reviewed' ? 409 : 400;
+        return reply.code(status).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+
+    await auditAdminAction(req.admin!, 'access_reviewed', 'admin_access', {
+      audit_id: id, decision: parsed.data.decision,
+    });
+    return { reviewed: id, decision: parsed.data.decision };
+  });
+
+  // ---- SOC2-06: control-evidence collection ----
+  //
+  // Read access is 'support' because the whole point is that evidence is easy
+  // to pull; the metrics are counts and timestamps with no personal data in
+  // them (enforced by assertEvidenceIsSafe at write time).
+  app.get('/control-evidence', { preHandler: requireAdmin('support'), config: { accessAudit: false } }, async (req) => {
+    const { control_id, unreviewed, limit } = req.query as Record<string, string | undefined>;
+    const runs = await listControlEvidence({
+      controlId: control_id,
+      unreviewedOnly: unreviewed === 'true',
+      limit: limit ? Number(limit) : undefined,
+    });
+    return { runs };
+  });
+
+  /**
+   * Collect evidence for a period on demand.
+   *
+   * The scheduler does this monthly; this exists for the case an auditor asks
+   * about an arbitrary window. Idempotent per (control, period) — re-running
+   * replaces the row, and deliberately clears any prior sign-off, because the
+   * reviewer approved the numbers that were there before.
+   */
+  app.post('/control-evidence/collect', {
+    preHandler: requireAdmin('operator'),
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const parsed = z.object({
+      period_start: z.string().datetime(),
+      period_end: z.string().datetime(),
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const start = new Date(parsed.data.period_start);
+    const end = new Date(parsed.data.period_end);
+    if (end <= start) {
+      return reply.code(400).send({ error: 'invalid_period', message: 'period_end must be after period_start.' });
+    }
+
+    const evidence = await collectControlEvidence({ start, end });
+    await auditAdminAction(req.admin!, 'control_evidence_collected', 'platform', {
+      period_start: parsed.data.period_start,
+      period_end: parsed.data.period_end,
+      controls: evidence.length,
+      gaps: evidence.filter((e) => e.completeness !== 'complete').map((e) => e.control_id),
+    });
+    return reply.code(200).send({ evidence });
+  });
+
+  /**
+   * Reviewer sign-off. Evidence nobody looked at does not demonstrate that a
+   * control operated, which is the thing an auditor actually tests.
+   */
+  app.post('/control-evidence/:id/review', {
+    preHandler: requireAdmin('operator'),
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = z.object({ note: z.string().max(2000).optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    // Non-UUID ids would reach Postgres and fail the cast as a 500. An id that
+    // cannot exist is a 404, not a server error.
+    if (!z.string().uuid().safeParse(id).success) {
+      return reply.code(404).send({ error: 'not_found', message: 'No evidence record with that id.' });
+    }
+
+    try {
+      await reviewControlEvidence({ id, reviewedBy: req.admin!.email, note: parsed.data.note ?? null });
+    } catch (err) {
+      if (err instanceof EvidenceReviewError) {
+        return reply.code(404).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+
+    await auditAdminAction(req.admin!, 'control_evidence_reviewed', 'control_evidence_run', { evidence_id: id });
+    return { reviewed: id };
+  });
+
+  // CANSPAM-08: sender-health reviewer queue.
+  app.get('/sender-health', { preHandler: requireAdmin('support') }, async (req) => {
+    const { open_holds, customer_id, limit } = req.query as Record<string, string | undefined>;
+    const runs = await listSenderHealthRuns({
+      openHoldsOnly: open_holds === 'true',
+      customerId: customer_id,
+      limit: limit ? Number(limit) : undefined,
+    });
+    return { runs };
+  });
+
+  /**
+   * Record the reviewer decision that closes an automated hold.
+   *
+   * 'released' lifts it; 'upheld' and 'escalated' keep the sender blocked
+   * while recording that a human confirmed it. Operator role: releasing a hold
+   * lets a sender with a bad complaint rate resume, which is a judgement call,
+   * not a support action.
+   */
+  app.post('/sender-health/:id/review', {
+    preHandler: requireAdmin('operator'),
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = z.object({
+      decision: z.enum(['released', 'upheld', 'escalated']),
+      notes: z.string().max(2000).optional(),
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    try {
+      await reviewSenderHealth({
+        runId: id,
+        decision: parsed.data.decision,
+        reviewedBy: req.admin!.email,
+        notes: parsed.data.notes ?? null,
+      });
+    } catch (err) {
+      if (err instanceof SenderHealthReviewError) {
+        return reply.code(404).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+
+    await auditAdminAction(req.admin!, 'sender_health_reviewed', 'sender_health_run', {
+      run_id: id, decision: parsed.data.decision,
+    });
+    return { reviewed: id, decision: parsed.data.decision };
+  });
+
+  // Restore-time re-deletion (BASE-06 / mandatory privacy regression test 6).
+  //
+  // Online erasure does not rewrite backup images, so a restore from a backup
+  // taken before an erasure brings the erased rows back. This replays the
+  // privacy tombstones over the restored data and must be run after ANY
+  // restore, before the restored node serves traffic — see
+  // docs/runbooks/RESTORE_RE_DELETION.md.
+  //
+  // Admin-only rather than operator: it destroys restored rows.
+  app.post('/privacy/replay-tombstones', {
+    preHandler: requireAdmin('admin'),
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const parsed = z.object({
+      customer_id: z.string().uuid().optional(),
+      limit: z.number().int().min(1).max(10_000).optional(),
+    }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const result = await replayPrivacyTombstones({
+      customerId: parsed.data.customer_id,
+      limit: parsed.data.limit,
+    });
+    await auditAdminAction(req.admin!, 'privacy_tombstone_replay', 'platform', result as unknown as Record<string, unknown>);
+    return reply.code(200).send({ ok: true, result });
+  });
+
   // ---- Platform settings (Settings screen CRUD) ----
   //
   // Grouped JSONB documents in platform_settings, validated against typed
   // schemas in @platform/shared. Secrets never live here — gateway credentials
   // etc. stay in environment configuration.
-  app.get('/settings', { preHandler: requireAdmin('operator') }, async () => {
+  app.get('/settings', { preHandler: requireAdmin('operator'), config: { accessAudit: false } }, async () => {
     return { settings: await getPlatformSettings() };
   });
 
@@ -970,7 +1263,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   };
   const GATEWAY_KEYS = Object.keys(GATEWAY_ENV) as Array<keyof typeof GATEWAY_ENV>;
 
-  app.get('/payment-gateways', { preHandler: requireAdmin('operator') }, async () => {
+  app.get('/payment-gateways', { preHandler: requireAdmin('operator'), config: { accessAudit: false } }, async () => {
     const [settings, activity] = await Promise.all([
       getPlatformSettings(),
       db.selectFrom('billing_events')
@@ -1264,14 +1557,14 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  app.get('/auth/me', { preHandler: requireAdmin('support') }, async (req) => {
+  app.get('/auth/me', { preHandler: requireAdmin('support'), config: { accessAudit: false } }, async (req) => {
     return { admin_user_id: req.admin!.admin_user_id, email: req.admin!.email, role: req.admin!.role };
   });
 
   // Capability bootstrap: the console calls this on load. A cookie session
   // survives page reloads, so this restores identity without re-login and
   // rotates the CSRF secret (the old one died with the previous JS heap).
-  app.get('/auth/bootstrap', { preHandler: requireAdmin('support') }, async (req) => {
+  app.get('/auth/bootstrap', { preHandler: requireAdmin('support'), config: { accessAudit: false } }, async (req) => {
     const csrf = req.adminAuthVia === 'cookie' ? await rotateAdminSessionCsrf(req.adminSessionToken!) : null;
     return {
       admin: {
@@ -1558,7 +1851,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
 
   // ---- Support: canned responses (agent macros) ----
   const CATS = ['general', 'billing', 'deliverability', 'technical', 'abuse', 'account'] as const;
-  app.get('/support/canned-responses', { preHandler: requireAdmin('support') }, async (req) => {
+  app.get('/support/canned-responses', { preHandler: requireAdmin('support'), config: { accessAudit: false } }, async (req) => {
     const { category } = req.query as { category?: string };
     const cat = CATS.includes(category as any) ? (category as (typeof CATS)[number]) : undefined;
     return { canned_responses: await listCannedResponses(cat) };

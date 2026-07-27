@@ -53,7 +53,7 @@ export function privacyCaseDueDate(jurisdiction: PrivacyCaseJurisdiction, receiv
 
 async function appendCaseEvent(
   trx: DbExecutor,
-  row: { case_id: string; customer_id: string; event: 'created' | 'verified' | 'status_changed' | 'extended' | 'communication' | 'artifact_attached' | 'denied' | 'closed'; detail?: Record<string, unknown>; actor?: string | null }
+  row: { case_id: string; customer_id: string; event: 'created' | 'verified' | 'status_changed' | 'extended' | 'communication' | 'artifact_attached' | 'denied' | 'closed' | 'appeal_submitted' | 'appeal_decided' | 'reopened'; detail?: Record<string, unknown>; actor?: string | null }
 ): Promise<void> {
   await trx.insertInto('privacy_case_events').values({
     case_id: row.case_id,
@@ -248,4 +248,167 @@ export async function getPrivacyCaseWithEvents(customerId: string, caseId: strin
     .where('customer_id', '=', customerId).where('case_id', '=', caseId)
     .orderBy('created_at', 'asc').execute();
   return { ...row, events };
+}
+
+// ─── CCPA-07: appeals and escalation ────────────────────────────────────────
+//
+// A denial with no route to challenge it is not a complete rights process.
+// CPRA §7304 requires an appeal path, and the state laws that followed
+// (Virginia, Colorado, Connecticut) all mandate one with its own response
+// deadline. The appeal runs on its own clock: the original request's deadline
+// has already expired by the time an appeal exists, so reusing due_at would
+// either erase the record of the original timeline or make the case
+// permanently overdue.
+
+export interface PrivacyCaseAppeal {
+  id: string;
+  case_id: string;
+  submitted_at: Date;
+  reason: string;
+  due_at: Date;
+  status: 'received' | 'upheld' | 'overturned';
+  decided_at: Date | null;
+  decided_by: string | null;
+  decision_reason: string | null;
+  escalation_notice: string | null;
+}
+
+/**
+ * Submit an appeal against a denied request.
+ *
+ * Permitted whenever the case carries a denial — including after it was
+ * closed. The subject's right to challenge does not evaporate because the
+ * controller filed the case away.
+ */
+export async function submitPrivacyCaseAppeal(
+  customerId: string,
+  caseId: string,
+  input: { reason: string; submittedBy?: string | null },
+  trx: DbExecutor,
+): Promise<PrivacyCaseAppeal> {
+  const row = await getCaseForUpdate(trx, customerId, caseId);
+  if (!row.denial_reason) {
+    throw new PrivacyCaseError(
+      'invalid_transition',
+      'Only a denied request can be appealed; this case has not been denied.',
+    );
+  }
+
+  const open = await trx.selectFrom('privacy_case_appeals').select('id')
+    .where('case_id', '=', caseId).where('status', '=', 'received').executeTakeFirst();
+  if (open) {
+    throw new PrivacyCaseError('already_extended', 'An appeal on this case is already awaiting a decision.');
+  }
+
+  const submittedAt = new Date();
+  // The appeal gets the jurisdiction's initial response window, running from
+  // the appeal — not from the original request.
+  const dueAt = new Date(
+    submittedAt.getTime() + DEADLINES[row.jurisdiction as PrivacyCaseJurisdiction].initialDays * DAY_MS,
+  );
+
+  const appeal = await trx.insertInto('privacy_case_appeals').values({
+    case_id: caseId,
+    customer_id: customerId,
+    reason: input.reason,
+    due_at: dueAt,
+    submitted_at: submittedAt,
+  } as never).returningAll().executeTakeFirstOrThrow();
+
+  await appendCaseEvent(trx, {
+    case_id: caseId, customer_id: customerId, event: 'appeal_submitted',
+    detail: { appeal_id: (appeal as any).id, due_at: dueAt.toISOString() },
+    actor: input.submittedBy ?? null,
+  });
+
+  return appeal as unknown as PrivacyCaseAppeal;
+}
+
+/**
+ * Decide an appeal.
+ *
+ * 'upheld' requires an escalation notice: where the denial stands, the laws
+ * require telling the consumer how to complain to the regulator, and recording
+ * what they were actually told is what turns that duty into evidence.
+ *
+ * 'overturned' REOPENS the case. This is done here rather than through
+ * transitionPrivacyCase deliberately — denied → in_progress is not in the
+ * general transition table, because the only legitimate way to un-deny a
+ * request is a decided appeal. Widening the table would let anyone reverse a
+ * denial silently through the ordinary endpoint.
+ */
+export async function decidePrivacyCaseAppeal(
+  customerId: string,
+  appealId: string,
+  input: {
+    decision: 'upheld' | 'overturned';
+    decidedBy: string;
+    reason: string;
+    escalationNotice?: string | null;
+  },
+  trx: DbExecutor,
+): Promise<PrivacyCaseAppeal> {
+  const appeal = await trx.selectFrom('privacy_case_appeals').selectAll()
+    .where('id', '=', appealId).where('customer_id', '=', customerId)
+    .forUpdate().executeTakeFirst();
+  if (!appeal) throw new PrivacyCaseError('case_not_found', 'No such appeal for this tenant.');
+  if (appeal.status !== 'received') {
+    throw new PrivacyCaseError('invalid_transition', 'This appeal has already been decided.');
+  }
+
+  if (input.decision === 'upheld' && !input.escalationNotice?.trim()) {
+    throw new PrivacyCaseError(
+      'denial_reason_required',
+      'Upholding a denial requires an escalation notice recording how the consumer was told to complain to the regulator.',
+    );
+  }
+
+  const now = new Date();
+  const decided = await trx.updateTable('privacy_case_appeals').set({
+    status: input.decision,
+    decided_at: now,
+    decided_by: input.decidedBy,
+    decision_reason: input.reason,
+    escalation_notice: input.escalationNotice ?? null,
+  } as never).where('id', '=', appealId).returningAll().executeTakeFirstOrThrow();
+
+  await appendCaseEvent(trx, {
+    case_id: appeal.case_id as string, customer_id: customerId, event: 'appeal_decided',
+    detail: { appeal_id: appealId, decision: input.decision, reason: input.reason },
+    actor: input.decidedBy,
+  });
+
+  if (input.decision === 'overturned') {
+    // Reopen for fulfilment. closed_at is cleared so the case is live again.
+    // A subject pseudonymized at closure stays pseudonymized — that erasure
+    // already happened and is not reversible, which is the correct outcome:
+    // the reopened work is whatever remains possible, not a resurrection.
+    await trx.updateTable('privacy_cases')
+      .set({ status: 'in_progress', closed_at: null, updated_at: now } as never)
+      .where('id', '=', appeal.case_id as string)
+      .where('customer_id', '=', customerId)
+      .execute();
+
+    await appendCaseEvent(trx, {
+      case_id: appeal.case_id as string, customer_id: customerId, event: 'reopened',
+      detail: { appeal_id: appealId, reason: 'appeal overturned the denial' },
+      actor: input.decidedBy,
+    });
+  }
+
+  return decided as unknown as PrivacyCaseAppeal;
+}
+
+export async function listPrivacyCaseAppeals(
+  customerId: string,
+  opts: { caseId?: string; openOnly?: boolean; overdueOnly?: boolean },
+  executor: DbExecutor,
+): Promise<PrivacyCaseAppeal[]> {
+  let q = executor.selectFrom('privacy_case_appeals').selectAll()
+    .where('customer_id', '=', customerId)
+    .orderBy('submitted_at', 'desc');
+  if (opts.caseId) q = q.where('case_id', '=', opts.caseId);
+  if (opts.openOnly || opts.overdueOnly) q = q.where('status', '=', 'received');
+  if (opts.overdueOnly) q = q.where('due_at', '<', new Date() as never);
+  return (await q.execute()) as unknown as PrivacyCaseAppeal[];
 }

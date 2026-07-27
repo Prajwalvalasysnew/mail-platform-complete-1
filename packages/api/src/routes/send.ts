@@ -36,6 +36,15 @@ import {
   type SendResponse,
   getBodyStore,
   evaluateBillingAccess,
+  scanFields,
+  redactCardData,
+  summarizeFindings,
+  cardDataPolicy,
+  restrictedSet,
+  isProcessingRestricted,
+  isSenderOnHold,
+  sensitivePiLimitedSet,
+  applySensitivePiLimitToTracking,
 } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
@@ -68,6 +77,29 @@ const EMAIL_IN_NAME = /[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/;
 export function embeddedNameDomain(fromName: string | undefined): string | null {
   const m = fromName?.match(EMAIL_IN_NAME);
   return m ? m[1]!.toLowerCase() : null;
+}
+
+// PCI-02: message content is not an approved card-data channel. Screening runs
+// AFTER template rendering so a PAN arriving through `variables` is caught too,
+// not only one pasted into an inline body. Returns the (possibly redacted)
+// content plus value-free findings — the digits never leave this function.
+export interface CardScreenResult {
+  findings: ReturnType<typeof scanFields>;
+  subject?: string;
+  html?: string;
+  text?: string;
+}
+export function screenContentForCardData(
+  content: { subject?: string; html?: string; text?: string },
+): CardScreenResult {
+  const findings = scanFields(content);
+  if (findings.length === 0 || cardDataPolicy() !== 'redact') return { findings, ...content };
+  return {
+    findings,
+    subject: content.subject === undefined ? undefined : redactCardData(content.subject, 'subject').text,
+    html: content.html === undefined ? undefined : redactCardData(content.html, 'html').text,
+    text: content.text === undefined ? undefined : redactCardData(content.text, 'text').text,
+  };
 }
 
 const SendSchema = z.object({
@@ -262,6 +294,40 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     if (!subject) return reply.code(400).send({ error: 'missing_subject' });
     if (!html && !text) return reply.code(400).send({ error: 'missing_content', message: 'Provide html, text, or a template_id' });
 
+    // PCI-02: refuse (or redact) card data before the message is persisted or
+    // queued. Under the default 'block' policy nothing is written, so the PAN
+    // never reaches the messages table, the body store, or a backup.
+    const screened = screenContentForCardData({ subject, html, text });
+    if (screened.findings.length > 0) {
+      const summary = summarizeFindings(screened.findings);
+      // Value-free: records WHICH fields carried card data, never the digits.
+      await db.insertInto('audit_log').values({
+        customer_id: auth.customer_id,
+        api_key_id: auth.api_key_id,
+        action: 'card_data_detected',
+        resource: 'send',
+        ip: req.ip,
+        metadata: { ...summary, policy: cardDataPolicy() },
+      }).execute();
+      req.log.warn({ customer_id: auth.customer_id, ...summary }, '[pci] card data detected in outbound message content');
+
+      if (cardDataPolicy() === 'block') {
+        return reply.code(422).send({
+          error: 'card_data_detected',
+          message:
+            'Message content appears to contain a payment card number. This platform is not an approved ' +
+            'channel for cardholder data — remove it and send a reference (such as the last four digits) instead.',
+          fields: summary.fields,
+        });
+      }
+      // 'redact' policy: continue with the scrubbed content. `?? subject`
+      // keeps the non-empty narrowing established by the missing_subject
+      // guard above — redaction can shorten a subject but never removes it.
+      subject = screened.subject ?? subject;
+      html = screened.html;
+      text = screened.text;
+    }
+
     // Verify sending domain + load the customer in parallel — two independent
     // single-row lookups that would otherwise be sequential round-trips on the
     // hot accept path.
@@ -318,6 +384,14 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
 
     // Customer status / billing gate
     if (customer.status !== 'active') return reply.code(403).send({ error: 'account_suspended' });
+    // CANSPAM-08: an automated sending hold blocks NEW sends pending human
+    // review. Distinct from suspension — reversible by a reviewer.
+    if (await isSenderOnHold(auth.customer_id)) {
+      return reply.code(403).send({
+        error: 'sender_on_hold',
+        message: 'Sending is paused pending review of this account\'s complaint or bounce rate. Contact support.',
+      });
+    }
     const billingAccess = await evaluateBillingAccess(auth.customer_id);
     if (!billingAccess.allowed) return reply.code(402).send({ error: 'billing_inactive', reason: billingAccess.reason, grace_ends_at: billingAccess.graceEndsAt });
 
@@ -429,10 +503,20 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     // distinct domains — instead of two sequential round-trips per recipient.
     // For a 1000-recipient send this turns ~2000 awaits into ~3.
     const suppressedSet = await tenantScoped(req, (trx) => isSuppressedBatch(auth.customer_id, recipients, trx));
+    // GDPR-02: Article 18 restriction is checked alongside suppression. A
+    // restricted recipient is reported as suppressed to the caller — the
+    // sender does not need to know a rights request is in progress, and
+    // leaking that would itself be a disclosure.
+    const restricted = await tenantScoped(req, (trx) => restrictedSet(auth.customer_id, recipients, trx));
+    // CCPA-05: message content is sensitive PI (§1798.140(ae)(1)(E) — this
+    // platform is never the intended recipient), so a consumer can limit its
+    // use to what is necessary to deliver the service. Engagement tracking is
+    // not; delivery is. Fetched once for the whole batch.
+    const spiLimited = await tenantScoped(req, (trx) => sensitivePiLimitedSet(auth.customer_id, recipients, trx));
     const intelMap = await isTrapOrDisposableBatch(recipients);
     for (const rcpt of recipients) {
       const lower = rcpt.toLowerCase();
-      if (suppressedSet.has(lower)) {
+      if (suppressedSet.has(lower) || restricted.has(lower)) {
         suppressed.push(rcpt);
         continue;
       }
@@ -585,8 +669,10 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
               ...(auth.test_mode ? { _test_mode: true } : {}),
               ...(body.ad_identified !== undefined ? { _ad_identified: body.ad_identified } : {}),
             },
-            tracking_opens: body.tracking?.opens ?? true,
-            tracking_clicks: body.tracking?.clicks ?? true,
+            // CCPA-05: a consumer's limit on sensitive-PI use overrides
+            // whatever the sender asked for. That override is the whole point
+            // of the right — a customer setting cannot outrank it.
+            ...applySensitivePiLimitToTracking(spiLimited.has(m.to.toLowerCase()), body.tracking),
             ip_pool: ipPool,
             message_class: messageClass,
             template_id: templateId,
@@ -761,6 +847,14 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         .where('id', '=', auth.customer_id)
         .executeTakeFirstOrThrow();
       if (customer.status !== 'active') return reply.code(403).send({ error: 'account_suspended' });
+      // CANSPAM-08: an automated sending hold blocks NEW sends pending human
+      // review. Distinct from suspension — reversible by a reviewer.
+      if (await isSenderOnHold(auth.customer_id)) {
+        return reply.code(403).send({
+          error: 'sender_on_hold',
+          message: 'Sending is paused pending review of this account\'s complaint or bounce rate. Contact support.',
+        });
+      }
       const billingAccess = await evaluateBillingAccess(auth.customer_id);
       if (!billingAccess.allowed) return reply.code(402).send({ error: 'billing_inactive', reason: billingAccess.reason, grace_ends_at: billingAccess.graceEndsAt });
 
@@ -902,7 +996,31 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         if (!subject) { results.push({ index: i, accepted: false, error: 'missing_subject' }); refundCount++; continue; }
         if (!html && !text) { results.push({ index: i, accepted: false, error: 'missing_content' }); refundCount++; continue; }
 
-        if (await tenantScoped(req, (trx) => isSuppressed(auth.customer_id, msg.to, trx))) {
+        // PCI-02 (parity with single /send): card data is rejected per-entry
+        // so one bad row does not fail the whole batch.
+        const screened = screenContentForCardData({ subject, html, text });
+        if (screened.findings.length > 0) {
+          const summary = summarizeFindings(screened.findings);
+          await db.insertInto('audit_log').values({
+            customer_id: auth.customer_id,
+            api_key_id: auth.api_key_id,
+            action: 'card_data_detected',
+            resource: 'send_batch',
+            ip: req.ip,
+            metadata: { ...summary, policy: cardDataPolicy(), batch_index: i },
+          }).execute();
+          req.log.warn({ customer_id: auth.customer_id, ...summary }, '[pci] card data detected in batch message content');
+          if (cardDataPolicy() === 'block') {
+            results.push({ index: i, accepted: false, error: 'card_data_detected' });
+            refundCount++;
+            continue;
+          }
+          subject = screened.subject ?? subject; html = screened.html; text = screened.text;
+        }
+
+        // GDPR-02: restriction gates the batch path too (parity with /send).
+        if (await tenantScoped(req, (trx) => isSuppressed(auth.customer_id, msg.to, trx))
+            || await tenantScoped(req, (trx) => isProcessingRestricted(auth.customer_id, msg.to, trx))) {
           results.push({ index: i, accepted: false, suppressed: true });
           refundCount++;
           continue;
@@ -963,6 +1081,10 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         const bodyStore = getBodyStore();
         const traceCarrier = injectTraceContext();
 
+        // CCPA-05: one lookup for the whole committed batch, not per message.
+        const batchSpiLimited = await tenantScoped(req, (trx) =>
+          sensitivePiLimitedSet(auth.customer_id, toCommit.map((c) => c.msg.to), trx));
+
         // Offload each message body BEFORE opening the transaction (never hold a
         // DB txn open across object-store I/O). Unlike single-send, each batch
         // entry can carry a distinct body, so we offload per-message. Bodies are
@@ -1020,8 +1142,8 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
                 ...(auth.test_mode ? { _test_mode: true } : {}),
                 ...(c.msg.ad_identified !== undefined ? { _ad_identified: c.msg.ad_identified } : {}),
               },
-              tracking_opens: c.msg.tracking?.opens ?? true,
-              tracking_clicks: c.msg.tracking?.clicks ?? true,
+              // CCPA-05 (parity with single /send).
+              ...applySensitivePiLimitToTracking(batchSpiLimited.has(c.msg.to.toLowerCase()), c.msg.tracking),
               ip_pool: c.ipPool,
               message_class: c.messageClass,
               template_id: c.templateId,

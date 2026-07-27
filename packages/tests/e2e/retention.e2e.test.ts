@@ -12,6 +12,9 @@ import {
   InMemoryObjectClient,
   S3Store,
   setBodyStore,
+  getBillingEvent,
+  replayBillingEvent,
+  db,
 } from '@platform/shared';
 
 let app: FastifyInstance;
@@ -234,6 +237,57 @@ describe('T4 retention / cleanup jobs', () => {
       const support = await adminReq('POST', '/admin/retention/run', {}, supportToken);
       expect(support.statusCode).toBe(403);
       expect(support.json().error).toBe('insufficient_role');
+    });
+  });
+
+  // PCI-03 / BASE-06: a stored billing payload has value only while replay is
+  // plausible. After its window the payload column is cleared, but the row —
+  // the idempotency marker that stops a provider retry from double-applying —
+  // must survive.
+  describe('billing payload expiry', () => {
+    const evId = (p: string) => `evt_ret_${p}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    it('nulls payloads past the window and keeps the idempotency row', async () => {
+      const oldId = evId('old');
+      await db.insertInto('billing_events').values({
+        provider_event_id: oldId,
+        type: 'customer.subscription.updated',
+        provider: 'stripe',
+        payload: { id: oldId, type: 'customer.subscription.updated' } as any,
+        processed_at: new Date(Date.now() - 120 * 86_400_000),
+      }).execute();
+
+      const result = await runRetention({ billingPayloadRetentionDays: 90 });
+      expect(result.billing_payloads_purged).toBeGreaterThanOrEqual(1);
+
+      const row = await db.selectFrom('billing_events')
+        .select(['provider_event_id', 'payload', 'type'])
+        .where('provider_event_id', '=', oldId).executeTakeFirst();
+      expect(row).toBeTruthy();          // row kept: still the dedupe marker
+      expect(row!.payload).toBeNull();   // payload gone
+      expect(row!.type).toBe('customer.subscription.updated');
+
+      // The admin API now reports it exactly like a pre-035 row.
+      const stored = await getBillingEvent(oldId);
+      expect(stored!.replayable).toBe(false);
+      expect((await replayBillingEvent(oldId)).status).toBe('not_replayable');
+    });
+
+    it('keeps payloads inside the window', async () => {
+      const freshId = evId('fresh');
+      await db.insertInto('billing_events').values({
+        provider_event_id: freshId,
+        type: 'customer.subscription.updated',
+        provider: 'stripe',
+        payload: { id: freshId } as any,
+        processed_at: new Date(),
+      }).execute();
+
+      await runRetention({ billingPayloadRetentionDays: 90 });
+
+      const row = await db.selectFrom('billing_events').select('payload')
+        .where('provider_event_id', '=', freshId).executeTakeFirst();
+      expect(row!.payload).not.toBeNull();
     });
   });
 });

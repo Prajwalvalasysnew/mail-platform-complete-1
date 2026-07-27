@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { db } from './db.js';
 import { decryptSecret, encryptSecret } from './encryption.js';
 import { generateTotpSecret, otpauthUri, verifyTotp, verifyTotpStep } from './totp.js';
-import { activeElevatedRole } from './admin-jit.js';
+import { activeElevation } from './admin-jit.js';
 
 export type AdminRole = 'support' | 'operator' | 'admin' | 'superadmin';
 const ROLE_RANK: Record<AdminRole, number> = { support: 1, operator: 2, admin: 3, superadmin: 4 };
@@ -126,6 +126,12 @@ export interface AdminContext {
   standing_role: AdminRole;
   /** True when the effective role is currently raised by a JIT elevation. */
   elevated: boolean;
+  /**
+   * True when that elevation is a break-glass self-grant rather than one
+   * approved by someone else. Carried separately because after the fact the
+   * two need very different scrutiny — see access-audit.ts.
+   */
+  break_glass: boolean;
   email: string;
 }
 
@@ -146,9 +152,18 @@ export async function resolveAdminSession(token: string): Promise<AdminContext |
   // Effective role is the higher of the standing role and any active,
   // unexpired JIT elevation. Existing route guards read `role`, so elevation
   // takes effect everywhere without touching each guard.
-  const elevated = await activeElevatedRole(row.admin_user_id);
-  const role = elevated && ROLE_RANK[elevated] > ROLE_RANK[standing] ? elevated : standing;
-  return { admin_user_id: row.admin_user_id, role, standing_role: standing, elevated: role !== standing, email: row.email };
+  const elevation = await activeElevation(row.admin_user_id);
+  const raised = elevation && ROLE_RANK[elevation.role] > ROLE_RANK[standing];
+  const role = raised ? elevation!.role : standing;
+  return {
+    admin_user_id: row.admin_user_id,
+    role,
+    standing_role: standing,
+    elevated: role !== standing,
+    // Only meaningful when the elevation is what raised the role.
+    break_glass: Boolean(raised && elevation!.break_glass),
+    email: row.email,
+  };
 }
 
 /** Write a privileged admin action to the audit log. */

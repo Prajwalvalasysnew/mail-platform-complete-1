@@ -8,6 +8,7 @@ import {
   recordSoftBounce,
   clearSoftBounce,
   recordIpSends,
+  recordDeliveryTlsOutcome,
   writeClickhouseEvent,
   deadLetter,
   deadLetterTotal,
@@ -234,7 +235,16 @@ export function startEventWorker(logger: Logger) {
           // A successful delivery clears any accumulated soft-bounce streak.
           {
             const m = await db.selectFrom('messages').select('to_address').where('message_id', '=', ev.message_id).executeTakeFirst();
-            if (m) await clearSoftBounce(customerId, m.to_address);
+            if (m) {
+              await clearSoftBounce(customerId, m.to_address);
+              // BASE-08: record whether this hop was actually TLS-secured, so
+              // the send worker can refuse the NEXT TLS-required message to a
+              // domain observed accepting mail in the clear. Best-effort: this
+              // is a security signal, not a precondition for recording the
+              // delivery itself.
+              await recordDeliveryTlsOutcome(m.to_address, ev.payload?.tls_secured as boolean | null | undefined)
+                .catch(() => {});
+            }
           }
           break;
         case 'soft_bounce':

@@ -98,16 +98,31 @@ export async function grantElevation(input: GrantElevationInput): Promise<GrantR
   return { ok: true, elevation: { ...row, role: row.role as AdminRole, status: row.status as any, expires_at: new Date(row.expires_at as any) } };
 }
 
-/** The highest currently-active elevated role for an admin, or null. */
-export async function activeElevatedRole(adminUserId: string, now = new Date()): Promise<AdminRole | null> {
-  const rows = await db.selectFrom('admin_elevations').select('role')
+/**
+ * The highest currently-active elevation for an admin, or null.
+ *
+ * Returns the break-glass flag alongside the role because the two carry very
+ * different weight after the fact: a granted elevation was approved by someone
+ * else, while break-glass is a self-grant. HIPAA-07 review looks specifically
+ * for the latter, so the access record has to be able to distinguish them.
+ */
+export async function activeElevation(
+  adminUserId: string,
+  now = new Date(),
+): Promise<{ role: AdminRole; break_glass: boolean } | null> {
+  const rows = await db.selectFrom('admin_elevations').select(['role', 'break_glass'])
     .where('admin_user_id', '=', adminUserId).where('status', '=', 'active').where('expires_at', '>', now as any).execute();
-  let best: AdminRole | null = null;
+  let best: { role: AdminRole; break_glass: boolean } | null = null;
   for (const r of rows) {
     const role = r.role as AdminRole;
-    if (!best || ROLE_RANK[role] > ROLE_RANK[best]) best = role;
+    if (!best || ROLE_RANK[role] > ROLE_RANK[best.role]) best = { role, break_glass: Boolean(r.break_glass) };
   }
   return best;
+}
+
+/** The highest currently-active elevated role for an admin, or null. */
+export async function activeElevatedRole(adminUserId: string, now = new Date()): Promise<AdminRole | null> {
+  return (await activeElevation(adminUserId, now))?.role ?? null;
 }
 
 /** Revoke an active elevation early. Returns false if it was not active. */

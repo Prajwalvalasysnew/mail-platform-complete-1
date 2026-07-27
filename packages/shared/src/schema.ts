@@ -263,6 +263,17 @@ export interface Database {
   blocklist_checks: BlocklistChecksTable;
   dkim_keys: DkimKeysTable;
   recipient_domain_intel: RecipientDomainIntelTable;
+  recipient_domain_tls: RecipientDomainTlsTable;
+  processing_restrictions: ProcessingRestrictionsTable;
+  sale_share_optouts: SaleShareOptOutsTable;
+  sender_health_runs: SenderHealthRunsTable;
+  regulatory_retention_locks: RegulatoryRetentionLocksTable;
+  consent_records: ConsentRecordsTable;
+  privacy_case_appeals: PrivacyCaseAppealsTable;
+  sensitive_pi_limits: SensitivePiLimitsTable;
+  admin_access_reviews: AdminAccessReviewsTable;
+  retention_runs: RetentionRunsTable;
+  control_evidence_runs: ControlEvidenceRunsTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -726,6 +737,130 @@ export interface RecipientDomainIntelTable {
   updated_at: Generated<Timestamp>;
 }
 
+/** CCPA-05: limit use/disclosure of sensitive PI (§1798.121). */
+export interface SensitivePiLimitsTable {
+  id: Generated<string>;
+  customer_id: string;
+  email: string;
+  source: Generated<'api' | 'web_form' | 'authorized_agent' | 'support' | 'privacy_case'>;
+  requested_at: Generated<Timestamp>;
+  released_at: Timestamp | null;
+  released_reason: string | null;
+  pseudonymized_at: Timestamp | null;
+}
+
+/** CCPA-07: appeals against denied data-subject requests. */
+export interface PrivacyCaseAppealsTable {
+  id: Generated<string>;
+  case_id: string;
+  customer_id: string;
+  submitted_at: Generated<Timestamp>;
+  reason: string;
+  due_at: Timestamp;
+  status: Generated<'received' | 'upheld' | 'overturned'>;
+  decided_at: Timestamp | null;
+  decided_by: string | null;
+  decision_reason: string | null;
+  escalation_notice: string | null;
+}
+
+/** GDPR-05: affirmative consent grants with provenance (Art 7(1) proof). */
+export interface ConsentRecordsTable {
+  id: Generated<string>;
+  customer_id: string;
+  email: string;
+  purpose: Generated<string>;
+  method: 'web_form' | 'double_opt_in' | 'api' | 'offline' | 'import_with_evidence';
+  affirmative: Generated<boolean>;
+  evidence_text: string;
+  policy_version: string | null;
+  source_url: string | null;
+  ip: string | null;
+  user_agent: string | null;
+  granted_at: Generated<Timestamp>;
+  confirmation_token: string | null;
+  confirmed_at: Timestamp | null;
+  withdrawn_at: Timestamp | null;
+  withdrawal_source: string | null;
+  pseudonymized_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
+/** SEC-04: time-bound regulatory retention obligations. */
+export interface RegulatoryRetentionLocksTable {
+  id: Generated<string>;
+  customer_id: string;
+  scope: string;
+  basis: 'sec_17a4' | 'finra_4511' | 'other_statutory';
+  authority: string;
+  retain_until: Timestamp;
+  created_by: string | null;
+  created_at: Generated<Timestamp>;
+  released_at: Timestamp | null;
+  released_by: string | null;
+  released_reason: string | null;
+}
+
+/** CANSPAM-08: per-sender health verdicts and reviewer decisions. */
+export interface SenderHealthRunsTable {
+  id: Generated<string>;
+  customer_id: string;
+  window_start: Timestamp;
+  window_end: Timestamp;
+  sent: Generated<number>;
+  bounced: Generated<number>;
+  complained: Generated<number>;
+  unsubscribed: Generated<number>;
+  bounce_rate: Generated<string>;
+  complaint_rate: Generated<string>;
+  unsubscribe_rate: Generated<string>;
+  verdict: 'ok' | 'watch' | 'hold';
+  triggered_by: Generated<string[]>;
+  action_taken: Generated<'none' | 'alerted' | 'held'>;
+  reviewed_at: Timestamp | null;
+  reviewed_by: string | null;
+  review_decision: 'released' | 'upheld' | 'escalated' | null;
+  review_notes: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+/** CCPA-04: opt-out of sale/sharing, including Global Privacy Control. */
+export interface SaleShareOptOutsTable {
+  id: Generated<string>;
+  customer_id: string;
+  email: string;
+  source: 'gpc' | 'api' | 'web_form' | 'authorized_agent' | 'support';
+  context: string | null;
+  recorded_at: Generated<Timestamp>;
+  released_at: Timestamp | null;
+  released_reason: string | null;
+}
+
+/** GDPR-02: Article 18 processing restrictions (distinct from suppression). */
+export interface ProcessingRestrictionsTable {
+  id: Generated<string>;
+  customer_id: string;
+  email: string;
+  basis: 'accuracy_contested' | 'unlawful_processing' | 'legal_claims' | 'objection_pending';
+  reason: string | null;
+  requested_by: string | null;
+  privacy_case_id: string | null;
+  restricted_at: Generated<Timestamp>;
+  released_at: Timestamp | null;
+  released_reason: string | null;
+  released_by: string | null;
+}
+
+/** BASE-08: observed downstream TLS behaviour per recipient domain. */
+export interface RecipientDomainTlsTable {
+  domain: string;
+  deliveries_secured: Generated<number>;
+  deliveries_plaintext: Generated<number>;
+  last_secured_at: Timestamp | null;
+  last_plaintext_at: Timestamp | null;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface SoftBounceTrackerTable {
   customer_id: string;
   email: string;
@@ -1086,6 +1221,53 @@ export interface PrivacyCasesTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/**
+ * HIPAA-07: a reviewer's judgement about one staff access to tenant data.
+ *
+ * Separate from the access record itself, which lives in the hash-chained
+ * audit_log — the evidence must stay append-only, the judgement about it
+ * arrives later.
+ */
+export interface AdminAccessReviewsTable {
+  audit_id: number;
+  reviewed_at: Generated<Timestamp>;
+  reviewed_by: string;
+  decision: 'appropriate' | 'inappropriate';
+  note: string | null;
+}
+
+/**
+ * SOC2-06: one row per retention sweep.
+ *
+ * The sweep returned its counts to the caller and persisted nothing, so a
+ * sweep that stopped running looked exactly like a sweep with nothing to do.
+ * This table makes that absence detectable.
+ */
+export interface RetentionRunsTable {
+  id: Generated<string>;
+  started_at: Timestamp;
+  finished_at: Generated<Timestamp>;
+  duration_ms: number;
+  result: Record<string, unknown>;
+  error: string | null;
+}
+
+/** SOC2-06: periodic per-control evidence with a completeness verdict. */
+export interface ControlEvidenceRunsTable {
+  id: Generated<string>;
+  control_id: string;
+  period_start: Timestamp;
+  period_end: Timestamp;
+  collected_at: Generated<Timestamp>;
+  // Counts and timestamps only — never identifiers, content, or secrets.
+  metrics: Generated<Record<string, unknown>>;
+  completeness: 'complete' | 'partial' | 'missing';
+  notes: string | null;
+  reviewed_at: Timestamp | null;
+  reviewed_by: string | null;
+  review_note: string | null;
+}
+
 // Migration 078 (CANSPAM-05): synthetic unsubscribe monitoring evidence.
 export interface UnsubscribeMonitorRunsTable {
   id: Generated<string>;
@@ -1103,7 +1285,10 @@ export interface PrivacyCaseEventsTable {
   id: Generated<string>;
   case_id: string;
   customer_id: string;
-  event: 'created' | 'verified' | 'status_changed' | 'extended' | 'communication' | 'artifact_attached' | 'denied' | 'closed';
+  event: 'created' | 'verified' | 'status_changed' | 'extended' | 'communication' | 'artifact_attached' | 'denied' | 'closed'
+    // CCPA-07: a denial can be appealed, and an overturned appeal reopens the
+    // case — a reopen must be as auditable as the denial that preceded it.
+    | 'appeal_submitted' | 'appeal_decided' | 'reopened';
   detail: Generated<Record<string, unknown>>;
   actor: string | null;
   created_at: Generated<Timestamp>;

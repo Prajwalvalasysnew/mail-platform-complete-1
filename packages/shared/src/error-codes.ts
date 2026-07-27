@@ -68,7 +68,9 @@ export const ERROR_CODES = {
   csrf_failed: { description: 'Missing or invalid CSRF token for a cookie-authenticated admin mutation.', httpStatus: 403 },
   origin_mismatch: { description: 'The request Origin is not an allowed admin console origin.', httpStatus: 403 },
   cross_site_blocked: { description: 'Cross-site requests are not permitted on the admin plane (Sec-Fetch-Site).', httpStatus: 403 },
-  note_required: { description: 'A note explaining the decision is required (KYC request-info / reject).', httpStatus: 400 },
+  note_required: { description: 'A note explaining the decision is required (KYC request-info / reject; access review marked inappropriate).', httpStatus: 400 },
+  already_reviewed: { description: 'That record has already been reviewed, and a review decision cannot be amended.', httpStatus: 409 },
+  invalid_period: { description: 'The requested reporting period is not a valid range (end must be after start).', httpStatus: 400 },
 
   // ── API-key / bearer auth (plugins) ────────────────────────────────────────
   missing_auth: { description: 'No Authorization header / API key was provided.', httpStatus: 401 },
@@ -136,6 +138,13 @@ export const ERROR_CODES = {
   classification_not_authorized: { description: 'Declaring a non-commercial message class requires the classify scope.', httpStatus: 403 },
   reserved_header: { description: 'The custom header overrides an identity, routing, or opt-out header the platform controls.', httpStatus: 422 },
   from_name_spoofing: { description: 'The display name embeds an address at a domain the account has not verified.', httpStatus: 422 },
+  card_data_detected: { description: 'Content appears to contain a payment card number; this platform is not an approved cardholder-data channel.', httpStatus: 422 },
+  rectify_noop: { description: 'The corrected address is identical to the current one.', httpStatus: 422 },
+  transfer_purpose_prohibited: { description: 'CAN-SPAM §5(a)(4) prohibits selling, exchanging, or transferring the address of a recipient who has opted out, except to a provider used to comply with the law.', httpStatus: 403 },
+  sender_on_hold: { description: 'Sending is paused pending review of the account\'s complaint or bounce rate.', httpStatus: 403 },
+  regulatory_retention_active: { description: 'Erasure is blocked: the records are under a regulatory retention obligation (SEC 17a-4 / FINRA 4511). Compliance with a legal obligation is a lawful ground to refuse erasure.', httpStatus: 409 },
+  retain_until_in_past: { description: 'A regulatory retention lock must expire in the future.', httpStatus: 422 },
+  consent_evidence_required: { description: 'A consent grant must record the exact wording the data subject agreed to; GDPR Art 7(1) requires demonstrating consent.', httpStatus: 422 },
   sole_owner: { description: 'Account deletion is blocked: the caller is the sole owner of one or more organizations.', httpStatus: 409 },
 
   // ── Idempotency ────────────────────────────────────────────────────────────

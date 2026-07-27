@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError } from '@platform/shared';
+import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, recordConsentGrant, confirmDoubleOptIn, getConsentProof, withdrawConsent, ConsentEvidenceError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, submitPrivacyCaseAppeal, decidePrivacyCaseAppeal, listPrivacyCaseAppeals, recordSaleShareOptOut, listSaleShareOptOuts, limitSensitivePiUse, releaseSensitivePiLimit, listSensitivePiLimits, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection, processingRecord } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -41,6 +41,13 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       // row is touched — so held data is never destroyed. Throws LegalHoldError,
       // translated to a 409 below.
       await assertNoActiveHold(auth.customer_id, recipient, trx);
+
+      // SEC-04: a regulatory retention obligation blocks erasure even when the
+      // DATA SUBJECT is the one asking. GDPR Art 17(3)(b) makes compliance
+      // with a legal obligation a lawful ground to refuse, and a broker-dealer
+      // cannot delete a record it is required to retain. Checked in the same
+      // transaction, before any row is touched.
+      await assertNoRegulatoryLock(auth.customer_id, recipient, trx);
 
       // Create subquery to select message_ids for the recipient
       const subquery = trx
@@ -195,6 +202,21 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
           error: 'legal_hold_active',
           message: 'Erasure is blocked: the recipient is under an active legal hold.',
           holds: err.holds.map((h) => ({ id: h.id, scope: h.scope, reason: h.reason })),
+        });
+      }
+      // SEC-04: refusing a data subject's erasure request is only defensible
+      // if the controller can say WHY and UNTIL WHEN, so the basis, the naming
+      // authority, and the expiry all come back with the refusal.
+      if (err instanceof RegulatoryRetentionError) {
+        return reply.code(409).send({
+          error: err.code,
+          message:
+            'Erasure is blocked: these records are under a regulatory retention obligation. ' +
+            'Compliance with a legal obligation is a lawful ground to refuse erasure.',
+          locks: err.locks.map((l) => ({
+            id: l.id, scope: l.scope, basis: l.basis,
+            authority: l.authority, retain_until: l.retain_until,
+          })),
         });
       }
       throw err;
@@ -407,6 +429,183 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
     throw err;
   };
 
+  // ─── GDPR-02 / CCPA-02: rights beyond access and erasure ─────────────────
+
+  const RestrictSchema = z.object({
+    recipient: z.string().email(),
+    basis: z.enum(['accuracy_contested', 'unlawful_processing', 'legal_claims', 'objection_pending']),
+    reason: z.string().max(1000).optional(),
+    requested_by: z.string().max(200).optional(),
+    privacy_case_id: z.string().uuid().optional(),
+  });
+
+  /**
+   * Article 18: store it, do not use it. Deliberately NOT suppression — a
+   * restriction is lifted by a decision, not by the recipient resubscribing.
+   */
+  app.post('/privacy/restrict-recipient', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = RestrictSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const result = await tenantScoped(req, (trx) => restrictProcessing({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      basis: parsed.data.basis,
+      reason: parsed.data.reason ?? null,
+      requestedBy: parsed.data.requested_by ?? null,
+      privacyCaseId: parsed.data.privacy_case_id ?? null,
+    }, trx));
+
+    return reply.code(result.alreadyRestricted ? 200 : 201).send({
+      restriction: result.restriction,
+      already_restricted: result.alreadyRestricted,
+    });
+  });
+
+  const ReleaseRestrictionSchema = z.object({
+    recipient: z.string().email(),
+    // Article 18(3) requires informing the data subject before lifting, so an
+    // unexplained release is not a defensible record.
+    reason: z.string().min(1).max(1000),
+    released_by: z.string().max(200).optional(),
+  });
+
+  app.post('/privacy/release-restriction', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = ReleaseRestrictionSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const released = await tenantScoped(req, (trx) => releaseProcessingRestriction({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      reason: parsed.data.reason,
+      releasedBy: parsed.data.released_by ?? null,
+    }, trx));
+    if (!released) return reply.code(404).send({ error: 'not_found', message: 'No active restriction for that recipient.' });
+    return { released: true };
+  });
+
+  /**
+   * GDPR-13: the Art 30(2) record of processing carried out for this
+   * controller, with the Art 32 measures schedule and the Art 28(3)
+   * assistance duties attached.
+   *
+   * Read-only and scoped to the caller's own tenant — the measures resolve
+   * against that tenant's live configuration, so it is not shareable evidence
+   * about anyone else.
+   */
+  app.get('/privacy/processing-record', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    return processingRecord(auth.customer_id);
+  });
+
+  app.get('/privacy/restrictions', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { include_released, limit } = req.query as Record<string, string | undefined>;
+    const restrictions = await listProcessingRestrictions(auth.customer_id, {
+      includeReleased: include_released === 'true',
+      limit: limit ? Number(limit) : undefined,
+    });
+    return { restrictions };
+  });
+
+  const RectifySchema = z.object({
+    recipient: z.string().email(),
+    corrected: z.string().email(),
+    requested_by: z.string().max(200).optional(),
+  });
+
+  /**
+   * Article 16 / CCPA right to correct. Corrects the stores that govern FUTURE
+   * processing; historical delivery records are preserved and reported, because
+   * "we sent to X on date Y" is accurate and rewriting it would falsify a log.
+   */
+  app.post('/privacy/rectify-recipient', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = RectifySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    if (parsed.data.recipient.toLowerCase() === parsed.data.corrected.toLowerCase()) {
+      return reply.code(422).send({ error: 'rectify_noop', message: 'The corrected address is identical to the current one.' });
+    }
+
+    const result = await tenantScoped(req, (trx) => rectifyRecipient({
+      customerId: auth.customer_id,
+      from: parsed.data.recipient,
+      to: parsed.data.corrected,
+      requestedBy: parsed.data.requested_by ?? null,
+    }, trx));
+
+    return {
+      ...result,
+      note: 'Historical message and event records are preserved: they are an accurate record of what was sent, and rewriting them would falsify the delivery log rather than correct inaccurate data.',
+    };
+  });
+
+  const ObjectSchema = z.object({
+    recipient: z.string().email(),
+    reason: z.string().max(1000).optional(),
+    requested_by: z.string().max(200).optional(),
+  });
+
+  /**
+   * Article 21(2): the right to object to direct marketing is unconditional —
+   * no balancing test, no grace period — so it takes effect immediately.
+   */
+  app.post('/privacy/object', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = ObjectSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    await tenantScoped(req, (trx) => recordObjection({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      reason: parsed.data.reason ?? null,
+      requestedBy: parsed.data.requested_by ?? null,
+    }, trx));
+    return reply.code(200).send({ objection_recorded: true, effective: 'immediately' });
+  });
+
+  const OptOutSaleSchema = z.object({
+    recipient: z.string().email(),
+    source: z.enum(['api', 'web_form', 'authorized_agent', 'support']).default('api'),
+    context: z.string().max(200).optional(),
+  });
+
+  /**
+   * CCPA §1798.120: opt out of sale/sharing. Distinct from suppression — a
+   * consumer may want to keep receiving mail while refusing to be sold, so
+   * this does NOT stop delivery.
+   *
+   * Global Privacy Control is honoured automatically at the recipient-facing
+   * tracker surfaces; this endpoint is for submitted requests.
+   */
+  app.post('/privacy/opt-out-sale', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = OptOutSaleSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const result = await tenantScoped(req, (trx) => recordSaleShareOptOut({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      source: parsed.data.source,
+      context: parsed.data.context ?? null,
+    }, trx));
+
+    return reply.code(result.recorded ? 201 : 200).send({
+      opted_out: true,
+      newly_recorded: result.recorded,
+      note: 'This restricts sale and sharing only. It does not stop delivery — use suppression for that.',
+    });
+  });
+
+  app.get('/privacy/sale-share-optouts', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { limit } = req.query as Record<string, string | undefined>;
+    const optouts = await listSaleShareOptOuts(auth.customer_id, { limit: limit ? Number(limit) : undefined });
+    return { optouts };
+  });
+
   app.post('/privacy/cases', { preHandler: requireScope('messages') }, async (req, reply) => {
     const auth = req.auth!;
     const parsed = CreateCaseSchema.safeParse(req.body);
@@ -527,6 +726,69 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
   // Place / list / release legal holds. A hold blocks erasure for its scope.
   // Requires the messages scope (same as erasure); a customer can only manage
   // holds on their own tenant.
+  // ─── CCPA-07: appeals against a denied request ───────────────────────────
+
+  app.post('/privacy/cases/:id/appeal', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = z.object({
+      reason: z.string().min(1).max(2000),
+      submitted_by: z.string().max(200).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    try {
+      const appeal = await tenantScoped(req, (trx) => submitPrivacyCaseAppeal(auth.customer_id, id, {
+        reason: parsed.data.reason,
+        submittedBy: parsed.data.submitted_by ?? null,
+      }, trx));
+      return reply.code(201).send({ appeal });
+    } catch (err) {
+      return caseErrorReply(reply, err);
+    }
+  });
+
+  /**
+   * Decide an appeal. Upholding a denial requires an escalation notice — the
+   * consumer must be told how to complain to the regulator, and recording what
+   * they were told is what turns that duty into evidence. Overturning reopens
+   * the case for fulfilment.
+   */
+  app.post('/privacy/appeals/:id/decide', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = z.object({
+      decision: z.enum(['upheld', 'overturned']),
+      decided_by: z.string().min(1).max(200),
+      reason: z.string().min(1).max(2000),
+      escalation_notice: z.string().max(2000).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    try {
+      const appeal = await tenantScoped(req, (trx) => decidePrivacyCaseAppeal(auth.customer_id, id, {
+        decision: parsed.data.decision,
+        decidedBy: parsed.data.decided_by,
+        reason: parsed.data.reason,
+        escalationNotice: parsed.data.escalation_notice ?? null,
+      }, trx));
+      return { appeal };
+    } catch (err) {
+      return caseErrorReply(reply, err);
+    }
+  });
+
+  app.get('/privacy/appeals', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { case_id, open, overdue } = req.query as Record<string, string | undefined>;
+    const appeals = await tenantScoped(req, (trx) => listPrivacyCaseAppeals(auth.customer_id, {
+      caseId: case_id,
+      openOnly: open === 'true',
+      overdueOnly: overdue === 'true',
+    }, trx));
+    return { appeals };
+  });
+
   app.get('/privacy/legal-holds', { preHandler: requireScope('messages') }, async (req) => {
     const auth = req.auth!;
     const { active } = req.query as { active?: string };
@@ -534,6 +796,212 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       listLegalHolds(auth.customer_id, { activeOnly: active === 'true' }, trx)
     );
     return { holds };
+  });
+
+  // ─── CCPA-05: limit use of sensitive PI ──────────────────────────────────
+
+  /**
+   * §1798.121. Message content is sensitive PI here by definition, not by
+   * configuration: §1798.140(ae)(1)(E) covers the contents of mail and email
+   * unless the business is the intended recipient, and this platform never is.
+   *
+   * The limit turns off engagement tracking — inference ABOUT the consumer —
+   * and leaves delivery, abuse scanning and legal-obligation controls running.
+   */
+  app.post('/privacy/limit-sensitive-pi', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = z.object({
+      recipient: z.string().email(),
+      source: z.enum(['api', 'web_form', 'authorized_agent', 'support', 'privacy_case']).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const result = await tenantScoped(req, (trx) => limitSensitivePiUse({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      source: parsed.data.source,
+    }, trx));
+
+    return reply.code(result.alreadyLimited ? 200 : 201).send({
+      limit: result.limit,
+      already_limited: result.alreadyLimited,
+      effect: 'Open and click tracking are disabled for this recipient. Delivery, abuse scanning and legal-obligation controls are unaffected.',
+    });
+  });
+
+  app.post('/privacy/limit-sensitive-pi/release', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = z.object({
+      recipient: z.string().email(),
+      reason: z.string().max(1000).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const released = await tenantScoped(req, (trx) => releaseSensitivePiLimit({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      reason: parsed.data.reason ?? null,
+    }, trx));
+    if (!released) return reply.code(404).send({ error: 'not_found', message: 'No active sensitive-PI limit for that recipient.' });
+    return { released: true };
+  });
+
+  app.get('/privacy/sensitive-pi-limits', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { include_released } = req.query as Record<string, string | undefined>;
+    const limits = await listSensitivePiLimits(auth.customer_id, { includeReleased: include_released === 'true' });
+    return { limits };
+  });
+
+  // ─── GDPR-05: consent capture and proof ──────────────────────────────────
+
+  const ConsentSchema = z.object({
+    recipient: z.string().email(),
+    purpose: z.string().max(100).optional(),
+    method: z.enum(['web_form', 'double_opt_in', 'api', 'offline', 'import_with_evidence']),
+    // The exact wording the subject agreed to. Article 7(1) requires
+    // demonstrating consent, which a bare assertion does not.
+    evidence_text: z.string().min(10).max(2000),
+    policy_version: z.string().max(100).optional(),
+    source_url: z.string().max(2000).optional(),
+    ip: z.string().max(45).optional(),
+    user_agent: z.string().max(500).optional(),
+  });
+
+  app.post('/privacy/consent', { preHandler: requireScope('suppressions') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = ConsentSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    try {
+      const { record, confirmationToken } = await tenantScoped(req, (trx) => recordConsentGrant({
+        customerId: auth.customer_id,
+        email: parsed.data.recipient,
+        purpose: parsed.data.purpose,
+        method: parsed.data.method,
+        evidenceText: parsed.data.evidence_text,
+        policyVersion: parsed.data.policy_version ?? null,
+        sourceUrl: parsed.data.source_url ?? null,
+        ip: parsed.data.ip ?? null,
+        userAgent: parsed.data.user_agent ?? null,
+      }, trx));
+
+      return reply.code(201).send({
+        consent: { ...record, confirmation_token: undefined },
+        // Returned once, at creation. A double opt-in is NOT valid consent
+        // until the recipient confirms.
+        ...(confirmationToken ? { confirmation_token: confirmationToken, pending_confirmation: true } : {}),
+      });
+    } catch (err) {
+      if (err instanceof ConsentEvidenceError) {
+        return reply.code(422).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/privacy/consent/confirm', { preHandler: requireScope('suppressions') }, async (req, reply) => {
+    const parsed = z.object({ token: z.string().min(1).max(200) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+    const confirmed = await tenantScoped(req, (trx) => confirmDoubleOptIn(parsed.data.token, trx));
+    if (!confirmed) return reply.code(404).send({ error: 'not_found', message: 'Unknown or already-used confirmation token.' });
+    return { confirmed: true };
+  });
+
+  /** Art 7(1) proof: the full grant chain, not just the current position. */
+  app.get('/privacy/consent/proof', { preHandler: requireScope('suppressions') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { recipient } = req.query as Record<string, string | undefined>;
+    if (!recipient) return reply.code(400).send({ error: 'validation_failed', message: 'recipient is required' });
+    return tenantScoped(req, (trx) => getConsentProof(auth.customer_id, recipient, trx));
+  });
+
+  app.post('/privacy/consent/withdraw', { preHandler: requireScope('suppressions') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = z.object({
+      recipient: z.string().email(),
+      purpose: z.string().max(100).optional(),
+      source: z.string().max(100).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const withdrawn = await tenantScoped(req, (trx) => withdrawConsent({
+      customerId: auth.customer_id,
+      email: parsed.data.recipient,
+      purpose: parsed.data.purpose,
+      source: parsed.data.source ?? 'api',
+    }, trx));
+    if (!withdrawn) return reply.code(404).send({ error: 'not_found', message: 'No active consent for that recipient and purpose.' });
+    return { withdrawn: true };
+  });
+
+  // ─── SEC-04: regulatory retention locks ──────────────────────────────────
+
+  const PlaceLockSchema = z.object({
+    scope: z.string().min(1).max(320),
+    basis: z.enum(['sec_17a4', 'finra_4511', 'other_statutory']),
+    // Required: "we retained it because a rule says so" is only defensible if
+    // the rule is named.
+    authority: z.string().min(1).max(500),
+    retain_until: z.string().datetime(),
+  });
+
+  app.post('/privacy/regulatory-locks', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const parsed = PlaceLockSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const retainUntil = new Date(parsed.data.retain_until);
+    if (retainUntil.getTime() <= Date.now()) {
+      return reply.code(422).send({
+        error: 'retain_until_in_past',
+        message: 'retain_until must be in the future; a lapsed obligation preserves nothing.',
+      });
+    }
+    const scope = parsed.data.scope === 'customer'
+      ? 'customer'
+      : recipientLockScope(parsed.data.scope.replace(/^recipient:/i, ''));
+
+    const lock = await tenantScoped(req, (trx) => placeRegulatoryLock({
+      customerId: auth.customer_id,
+      scope,
+      basis: parsed.data.basis,
+      authority: parsed.data.authority,
+      retainUntil,
+      createdBy: auth.api_key_id ?? 'api',
+    }, trx));
+    return reply.code(201).send({ lock });
+  });
+
+  app.get('/privacy/regulatory-locks', { preHandler: requireScope('messages') }, async (req) => {
+    const auth = req.auth!;
+    const { include_released } = req.query as Record<string, string | undefined>;
+    const locks = await listRegulatoryLocks(auth.customer_id, { includeReleased: include_released === 'true' });
+    return { locks };
+  });
+
+  /**
+   * Early release, before the statutory period lapses. Both a releaser and a
+   * documented reason are required — an undocumented early release of a
+   * regulatory lock is precisely what an examiner would ask about.
+   */
+  app.post('/privacy/regulatory-locks/:id/release', { preHandler: requireScope('messages') }, async (req, reply) => {
+    const auth = req.auth!;
+    const { id } = req.params as { id: string };
+    const parsed = z.object({
+      reason: z.string().min(1).max(1000),
+      released_by: z.string().min(1).max(200),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+
+    const released = await tenantScoped(req, (trx) => releaseRegulatoryLock({
+      customerId: auth.customer_id,
+      lockId: id,
+      releasedBy: parsed.data.released_by,
+      reason: parsed.data.reason,
+    }, trx));
+    if (!released) return reply.code(404).send({ error: 'not_found', message: 'No active regulatory lock with that id.' });
+    return { released: true };
   });
 
   app.post('/privacy/legal-holds', { preHandler: requireScope('messages') }, async (req, reply) => {
