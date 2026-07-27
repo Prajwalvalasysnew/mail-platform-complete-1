@@ -9,15 +9,22 @@ BullMQ, Haraka, ClickHouse, React, and Docker.
 
 ## Current validation status
 
-- 927 automated tests: 545 unit/integration and 382 end-to-end.
+- 1,195 automated tests, including dedicated regulated-mode,
+  secure-portal, rights-workflow, archive, and activation-evidence suites.
 - Free, Paid Pro, and Enterprise persona journeys are covered.
-- 73 PostgreSQL migration files are tracked; the latest is `074`
-  (the historical sequence intentionally has no `036` file).
+- 95 PostgreSQL migration files are tracked; the latest is `096`
+  (the historical numbering intentionally contains gaps).
 - Production workspace builds pass.
-- Production dependency audit reports no high/critical vulnerabilities.
+- `npm audit --omit=dev --audit-level=high` reports no production dependency
+  vulnerabilities.
 - CI scans production container images with Trivy.
-- A focused privacy/security regression run passed 110/110 tests across 20
-  files on 2026-07-22; this is technical validation, not compliance evidence.
+- The template-mode production readiness check passes.
+- The final clean local aggregate on 2026-07-27 passed 171/171 files and
+  1,195/1,195 tests. Real local-development Free, Paid Pro, Enterprise, HIPAA,
+  FERPA, SEC/FINRA fail-closed, and SOC2-06 evidence-review journeys also
+  passed against the development database, Redis, worker, tracker, and Mailpit.
+- The complete run IDs and evidence are recorded in the
+  [end-to-end validation report](docs/END_TO_END_VALIDATION_REPORT_2026-07-27.md).
 
 This describes code-level readiness. Production operation still requires live
 IP/domain warmup, reputation evidence, backup and failover drills on the target
@@ -44,12 +51,13 @@ and [Operational drills](docs/OPERATIONAL_DRILLS.md).
 | API credentials | Scoped live/test API keys, key creation/list/rotation/revocation, SMTP scope, and on-behalf-of authorization |
 | Multi-tenancy | Fail-closed PostgreSQL row-level security, non-bypass application role, parent/child isolation, subaccounts, child keys, usage rollups, and bulk template push |
 | Billing | Free/Pro/Enterprise plans, quotas, priority entitlements, checkout/portal, invoices, tax, credit notes/refunds, Stripe/PayPal/Cashfree webhooks, plan-change lifecycle, dunning, and reconciliation |
-| Privacy controls | Recipient export/erasure, downloadable exports, body/object-store and attachment deletion, queue tombstones, legal holds, per-plan retention sweeps, DMARC retention, consent ledger, and tenant-safe deletion |
-| Audit | Tenant hash chains, integrity verification, retention-safe archive, Ed25519 checkpoints, WORM export, and admin mutation audit records |
+| Privacy controls | Recipient export/erasure, downloadable exports, body/object-store and attachment deletion, queue tombstones, legal and regulatory retention holds, per-plan retention sweeps, DMARC retention, consent records, processing restrictions, sale/share opt-outs, sensitive-PI limits, appeals, and tenant-safe deletion |
+| Audit and control evidence | Tenant hash chains, integrity verification, retention-safe archive, Ed25519 checkpoints, WORM export, default-on admin read auditing, break-glass review, persisted retention runs, monthly control-evidence collection, completeness findings, and reviewer sign-off |
+| Regulated-workload controls | Enterprise-only per-mode activation, independently reviewed checksum-addressed evidence, PAN/PHI/education/broker-record classification, encrypted HIPAA/FERPA portal, pseudonymized rights/disclosure workflows, and fail-closed SEC/FINRA specialist archive receipts |
 | Support and trust | Customer support tickets/messages/CSAT, admin support inbox, notes, SLA/triage helpers, abuse review queue, KYC decisions, customer suspension, and DLQ replay/purge |
 | Admin console | Fleet overview, tenant management, deliverability/IP pools, support, abuse, KYC, audit, billing events, payment gateways, platform settings, retention controls, and admin team management |
 | Observability | Health/readiness endpoints, `mp_` Prometheus metrics, Grafana dashboards, Alertmanager rules, Jaeger/OpenTelemetry integration, and sensitive-data log/trace redaction |
-| Deployment and operations | Development and production Compose files, Helm chart, migration job, backup/restore and Redis failover drills, k6 scenarios, SBOM generation, dependency audit, and Trivy image scanning |
+| Deployment and operations | Development and production Compose files, Helm chart, three-node Hetzner Terraform foundation, migration job, backup/restore/PITR and Redis failover drills, k6 scenarios, SBOM generation, dependency audit, and Trivy image scanning |
 | Developer experience | OpenAPI 3.1 document, route-parity and breaking-change guards, stable error registry, typed SDK, testkit, isolated test stack, and local Mailpit |
 
 ## Plans and persona behavior
@@ -109,6 +117,28 @@ also depends on the production architecture, configuration, contracts,
 policies, people, risk assessment, incident response, and retained operational
 evidence.
 
+### Supported compliance and regulatory areas
+
+"Supported" below means the repository contains relevant technical controls,
+workflows, tests, or evidence automation. It does **not** mean the platform,
+operator, or a future deployment is certified or legally compliant.
+
+| Framework or regulation | Platform support | Current boundary |
+| --- | --- | --- |
+| SOC 2 | Hash-chained audit records, immutable audit export, access reviews, retention evidence, security monitoring hooks, and monthly SOC2-06 evidence collection with completeness findings and reviewer sign-off | A CPA firm must assess the deployed organization and issue any SOC 2 report; operating-effectiveness evidence must come from production |
+| ISO/IEC 27001 | Technical controls supporting identity, access control, cryptography, logging, change protection, vulnerability checks, incident preparation, backup, and resilience | Certification requires an organization-owned ISMS, risk treatment, policies, internal audit, management review, and an accredited certification audit |
+| GDPR | Data access/export, rectification, restriction, objection, erasure, consent evidence/withdrawal, processing records, retention controls, legal holds, pseudonymization, and processor-assistance mappings | The controller/processor roles, lawful bases, notices, transfer mechanisms, DPIAs, vendor terms, request verification, and production procedures remain organizational/legal responsibilities |
+| CCPA/CPRA | Access/deletion support, correction, sale/share opt-out, Global Privacy Control handling, sensitive-PI limitation, appeals, consent/suppression separation, and retention controls | Applicability, notices, authorized-agent verification, "sale/share" determinations, contracts, and request operations must be approved and operated by the business |
+| CAN-SPAM | Commercial-message classification, sender identity/footer controls, RFC 8058 one-click and group unsubscribe, suppression enforcement, synthetic unsubscribe monitoring, and sender-health enforcement | Senders remain responsible for lawful content, accurate identity, physical-address configuration, campaign purpose, and operating the required opt-out process |
+| PCI DSS | PAN classification and fail-closed blocking in messages/support paths, billing-field allowlists, payment-data scope documentation, and retention cleanup | The platform does not accept cardholder data in messages or tickets. PCI scope, SAQ/ROC, segmentation, payment-provider configuration, and assessor approval remain deployment responsibilities |
+| HIPAA | Individually gated Enterprise mode, PHI classification, encrypted expiring two-credential secure portal, rights/disclosure/breach workflows, OIDC/MFA context, immutable access evidence, and remote KMS/Vault integration | Disabled by default. Activation requires genuine BAAs, applicability and risk analyses, safeguard evidence, target-environment contingency testing, and independent HIPAA assessment |
+| FERPA | Individually gated Enterprise mode, education-record classification, secure portal, access/amendment/hearing workflow, disclosure accounting, redisclosure restriction, and retention interlocks | Disabled by default. Activation requires school-official/direct-control terms, institutional process allocation, applicable state-law review, training, and independent FERPA assessment |
+| SEC Rule 17a-4 / FINRA | Individually gated Enterprise mode, broker-dealer content classification, archive-before-accept enforcement, immutable provider receipts, reconciliation, retention locks, and zero-acceptance fail-closed behavior | Disabled by default. Activation requires a real qualifying specialist archive, approved retention/supervision configuration, provider contracts/certification, legal applicability review, and specialist assessment |
+
+PAN remains prohibited in every mode. HIPAA, FERPA, and SEC/FINRA are separate
+Enterprise modes; satisfying or activating one never enables another. Missing,
+expired, rejected, or self-approved prerequisite evidence prevents activation.
+
 | Control | Code/E2E status | Important boundary |
 | --- | --- | --- |
 | Recipient access and portability | Implemented: recipient JSON export plus asynchronous downloadable event/message-metadata exports | The customer must verify the requester, choose the lawful scope, and meet applicable deadlines |
@@ -117,11 +147,55 @@ evidence.
 | Retention | Implemented in bounded batches for bodies, events, message metadata, links, exports, operational logs, and DMARC data; plan/tenant windows are supported | Production values, scheduler health, backup lifecycle, and regulatory schedules must be approved and monitored by the operator |
 | Consent and suppression | Implemented: append-only consent events, suppression enforcement, one-click/group unsubscribe, bounce and complaint attribution | The sender remains responsible for lawful basis, consent capture, notices, and campaign content |
 | Tenant isolation and access | Implemented: fail-closed PostgreSQL RLS, scoped keys, team RBAC, MFA, SSO/SCIM, admin roles, and audited privilege changes | Production IdP policy, access reviews, offboarding, and separation of duties are deployment/operations responsibilities |
-| Audit integrity | Implemented: tenant hash chains, verification, archive-before-purge, Ed25519 checkpoints, and WORM-style export | External immutable storage, key custody, review cadence, and evidence retention must be configured operationally |
+| Audit integrity | Implemented: tenant hash chains, verification, archive-before-purge, Ed25519 checkpoints, and full audit segments exported with KMS encryption and S3 Object Lock COMPLIANCE retention | Independent bucket/KMS custody, review cadence, and evidence retention must be configured and validated operationally |
+| Control evidence automation | Implemented for eight controls: monthly collection records explicit `complete`, `partial`, or `missing` findings; evidence writes reject email addresses and credential-shaped fields; admin reviewers can sign off collected periods | Collection proves what the application observed, not organizational operating effectiveness; production scheduling, reviewer assignment, exception remediation, and auditor acceptance remain operational responsibilities |
+| Staff and emergency access review | Implemented: admin-plane reads are recorded by default in the hash-chained audit log; break-glass access has an admin-only review queue with immutable decisions; production OIDC requires an asserted MFA/authentication context | Role-matrix approval, emergency-access exercises, periodic sampling, workforce controls, and retained production review evidence remain organizational requirements |
+| Processor assistance and security schedule | Partial: tenants can retrieve an Article 30(2) processing record, an Article 32 measures schedule resolved from live configuration, and mapped Article 28(3) assistance duties | Vendor identity is deployment-specific; customer exercises and the organizational-measures schedule remain outstanding |
 | Encryption and transport | Partial: selected secrets use AES-256-GCM with pluggable KMS; API/SMTP TLS deployment manifests exist; outbound delivery records TLS evidence | Message bodies/database volumes/backups require infrastructure encryption; `tls_required` currently records policy/evidence but does not itself prevent every clear-text downstream SMTP delivery |
 | Data residency and backup erasure | Not implemented as an application guarantee | Region pinning and backup-expiry/erasure depend on the selected database, object store, analytics, and backup topology |
 
+### Evidence automation (SOC2-06)
+
+The worker scheduler checks daily and collects at most once for each closed
+calendar month. It currently evaluates `CANSPAM-05`, `CANSPAM-08`, `BASE-03`,
+`BASE-05`, `BASE-06`, `BASE-10`, `PCI-02`, and the technical evidence used by
+`HIPAA-07`. A missing run for a continuously operating control is recorded as a
+finding rather than being reported as a zero count. Recollecting a period clears
+the earlier sign-off because the underlying evidence has changed.
+
+Administrative operations are intentionally outside the public OpenAPI
+document:
+
+- `GET /admin/control-evidence` lists collected evidence (support or above).
+- `POST /admin/control-evidence/collect` collects a period (operator or above).
+- `POST /admin/control-evidence/:id/review` records reviewer sign-off (operator
+  or above).
+- `GET /admin/access-review` lists staff-access review items (admin or above).
+- `POST /admin/access-review/:auditId` records an immutable access decision
+  (admin or above).
+
+The manual retention endpoint also persists a `retention_runs` record, including
+failures, so “the sweep did not run” is distinguishable from “nothing was due
+for deletion.” See the [Compliance implementation plan](docs/COMPLIANCE_IMPLEMENTATION_PLAN.md)
+for control-by-control status and remaining organizational evidence.
+
 ### HIPAA
+
+HIPAA, FERPA, and SEC/FINRA modes are now disabled-by-default and activated
+individually. The technical implementation includes evidence-backed gates,
+value-free classification, an encrypted HIPAA/FERPA portal,
+rights/disclosure workflows, and a fail-closed specialist archive. Legal
+agreements, target-environment drill results, and independent assessment remain
+real external prerequisites; the service refuses activation while their
+approved evidence is missing or expired. PAN remains prohibited in every mode.
+See the [regulated-workload policy](docs/REGULATED_WORKLOAD_POLICY.md) and
+[activation runbook](docs/runbooks/REGULATED_MODE_ACTIVATION.md).
+
+Recipient unsubscribe links support the full bounded RFC Message-ID size
+rather than the router's small default. Canonical base64url and decoded
+Message-ID validation prevents malformed public tracking URLs from reaching
+PostgreSQL, while long legitimate links continue through the unauthenticated
+one-page CAN-SPAM flow.
 
 HIPAA is **not fully implemented or certified by this repository**. The code
 provides useful technical building blocks—access controls, audit integrity,
@@ -191,7 +265,8 @@ application authorization and PostgreSQL RLS.
 ## Prerequisites
 
 - Docker Desktop or Docker Engine with Compose.
-- Node.js 20+ and npm for local development and tests.
+- Node.js 20 LTS and npm for the CI/runtime baseline. `package.json` accepts
+  Node.js 20+, but newer non-LTS majors may expose test timing differences.
 - For real direct-to-MX sending: DNS control, an allowed outbound port 25, and
   reverse DNS/PTR control.
 - For production attachment scanning: a reachable ClamAV `clamd` service.
@@ -209,6 +284,26 @@ docker compose up -d --build
 # Confirm API health and migration completion.
 curl http://localhost:3000/health
 docker compose ps
+```
+
+If host port 3000 is already in use, choose another host port without changing
+the API's internal Compose port:
+
+```bash
+API_HOST_PORT=3003 docker compose up -d api
+DEV_REPLAY_API_BASE=http://localhost:3003 DEV_REPLAY_CONFIRM=1 \
+  npx tsx scripts/replay-personas-dev.ts
+```
+
+PowerShell:
+
+```powershell
+$env:API_HOST_PORT = '3003'
+docker compose up -d api
+$env:DEV_REPLAY_API_BASE = 'http://localhost:3003'
+$env:DEV_REPLAY_CONFIRM = '1'
+npx tsx scripts/replay-personas-dev.ts
+Remove-Item Env:API_HOST_PORT, Env:DEV_REPLAY_API_BASE, Env:DEV_REPLAY_CONFIRM
 ```
 
 PowerShell equivalent for the first step:
@@ -356,7 +451,45 @@ Remove-Item Env:DEV_REPLAY_CONFIRM
 
 The replay creates Free, Paid, and Enterprise activity that is visible in the
 development database/admin APIs and verifies matching Mailpit messages where
-the local capture transport is configured.
+the local capture transport is configured. Development Compose uses the
+`mailpit` SMTP transport by default, exercising real message serialization and
+attachments without sending externally. Production deployments select Haraka
+or SES separately.
+
+For an assertion-based, additive end-to-end campaign against the running
+development stack:
+
+```bash
+DEV_REPLAY_CONFIRM=1 \
+DEV_REPLAY_API_BASE=http://localhost:3000 \
+npx tsx scripts/e2e-dev-live.ts
+```
+
+This runner refuses non-local and test databases. It covers the Free, Paid, and
+Enterprise account lifecycle, sessions, scoped credentials, verified development
+domains, templates, suppressions and consent history, processing records,
+support, idempotent sending, usage, worker/Mailpit delivery, Free quota
+enforcement, and Enterprise RBAC, SSO, SCIM, subaccounts, tenant isolation, and
+audit-chain verification. It is additive and does not delete existing
+development records.
+
+The admin/compliance campaign can then be run against the Enterprise tenant
+created by the live runner:
+
+```bash
+DEV_REPLAY_CONFIRM=1 \
+DEV_REPLAY_API_BASE=http://localhost:3000 \
+DEV_COMPLIANCE_CUSTOMER_ID=<enterprise-customer-id> \
+DEV_COMPLIANCE_ADMIN_EMAIL=<local-admin-email> \
+DEV_COMPLIANCE_ADMIN_PASSWORD=<local-admin-password> \
+npx tsx scripts/e2e-compliance-dev-live.ts
+```
+
+It validates SOC2-06 evidence collection and sign-off, HIPAA-07 tenant-data
+access review, and the GDPR-13 processing record using real local development
+data. It is additive and has the same local/non-test safety checks. See the
+[27 July 2026 end-to-end validation report](docs/END_TO_END_VALIDATION_REPORT_2026-07-27.md)
+for a recorded full-stack run.
 
 ## Testing
 
@@ -378,6 +511,10 @@ The test stack uses PostgreSQL `5434`, Redis `6380`, Mailpit SMTP `1026`, and
 Mailpit UI `8026`. `.env.test` selects the non-delivering `log` transport so
 live-key persona tests exercise queue/worker completion without contacting an
 external SMTP server.
+
+The dependency lock includes the Windows Rolldown and Rollup native bindings
+explicitly so that `npm ci` can start Vitest and build the admin console on
+supported Windows x64 development hosts.
 
 See [Testing](docs/TESTING.md), [Test infrastructure](docs/TEST_INFRA_SETUP.md),
 and the [Persona feature matrix](docs/testing/PERSONA_FEATURE_MATRIX.md).
@@ -434,6 +571,9 @@ Start with [Enterprise deployment](docs/ENTERPRISE_DEPLOYMENT.md),
 - [Consent ledger](docs/CONSENT_LEDGER.md)
 - [Legal holds](docs/LEGAL_HOLD.md)
 - [Compliance posture and evidence](docs/COMPLIANCE_POSTURE.md)
+- [Compliance implementation plan](docs/COMPLIANCE_IMPLEMENTATION_PLAN.md)
+- [Retention and disposal](docs/RETENTION_AND_DISPOSAL.md)
+- [Processor/vendor register](docs/VENDOR_REGISTER.md)
 - [Security and compliance guide](docs/guides/security-compliance.md)
 - [Storage](docs/STORAGE.md)
 - [Audit hash chain](docs/AUDIT_HASH_CHAIN.md)

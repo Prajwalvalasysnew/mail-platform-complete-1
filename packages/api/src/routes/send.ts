@@ -45,6 +45,11 @@ import {
   isSenderOnHold,
   sensitivePiLimitedSet,
   applySensitivePiLimitToTracking,
+  classifyRegulatedContent,
+  unauthorizedRegulatedFindings,
+  summarizeRegulatedFindings,
+  archiveCommunicationIfRequired,
+  RegulatedArchiveError,
 } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
@@ -331,6 +336,48 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     // Verify sending domain + load the customer in parallel — two independent
     // single-row lookups that would otherwise be sequential round-trips on the
     // hot accept path.
+    const regulatedFindings = classifyRegulatedContent({ subject, html, text });
+    const unauthorizedRegulated = await unauthorizedRegulatedFindings(auth.customer_id, regulatedFindings);
+    if (unauthorizedRegulated.length) {
+      const summary = summarizeRegulatedFindings(unauthorizedRegulated);
+      const requiredModes = [...new Set(unauthorizedRegulated.map((finding) => finding.required_mode))].sort();
+      await db.insertInto('audit_log').values({
+        customer_id: auth.customer_id,
+        api_key_id: auth.api_key_id,
+        action: 'regulated_content_blocked',
+        resource: 'send',
+        ip: req.ip,
+        metadata: { ...summary, required_modes: requiredModes },
+      }).execute();
+      return reply.code(422).send({
+        error: 'regulated_content_detected',
+        message: 'Regulated content requires an active, administratively approved workload mode.',
+        categories: summary.categories,
+        fields: summary.fields,
+        required_modes: requiredModes,
+      });
+    }
+    const portalOnlyFindings = regulatedFindings.filter(
+      (finding) => finding.category === 'phi' || finding.category === 'education_record',
+    );
+    if (portalOnlyFindings.length) {
+      const summary = summarizeRegulatedFindings(portalOnlyFindings);
+      await db.insertInto('audit_log').values({
+        customer_id: auth.customer_id,
+        api_key_id: auth.api_key_id,
+        action: 'secure_portal_required',
+        resource: 'send',
+        ip: req.ip,
+        metadata: summary,
+      }).execute();
+      return reply.code(422).send({
+        error: 'secure_portal_required',
+        message: 'HIPAA and FERPA record content must be delivered through the encrypted secure-message portal.',
+        categories: summary.categories,
+        fields: summary.fields,
+      });
+    }
+
     const fromDomain = body.from.split('@')[1]!.toLowerCase();
     const recipients = Array.isArray(body.to) ? body.to : [body.to];
     const [domain, customer] = await Promise.all([
@@ -613,6 +660,40 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         reply.header('Retry-After', '30');
         return reply.code(503).send({ error: malwareScan.error, message: 'Attachment scanning is temporarily unavailable.' });
       }
+    }
+
+    // SEC/FINRA: an active broker-dealer mode is fail-closed. The approved
+    // specialist archive must acknowledge the complete communication before
+    // the platform persists or queues it for delivery.
+    try {
+      await Promise.all(toInsert.map((m) => archiveCommunicationIfRequired({
+        customerId: auth.customer_id,
+        messageId: m.message_id,
+        direction: 'outbound',
+        from: body.from,
+        to: m.to,
+        subject,
+        html,
+        text,
+        headers: body.headers,
+        attachments: storedAttachments,
+        occurredAt: new Date().toISOString(),
+      })));
+    } catch (error) {
+      await releaseQuota(auth.customer_id, toInsert.length);
+      await db.insertInto('audit_log').values({
+        customer_id: auth.customer_id,
+        api_key_id: auth.api_key_id,
+        action: 'regulated_archive_failed',
+        resource: 'send',
+        ip: req.ip,
+        metadata: { message_count: toInsert.length },
+      }).execute();
+      reply.header('Retry-After', '30');
+      return reply.code(503).send({
+        error: error instanceof RegulatedArchiveError ? error.code : 'regulated_archive_unavailable',
+        message: 'The regulated archive did not acknowledge this communication; no message was accepted.',
+      });
     }
 
     // Offload the body once (content-addressed) when a non-inline store is
@@ -1018,6 +1099,41 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
           subject = screened.subject ?? subject; html = screened.html; text = screened.text;
         }
 
+        const regulatedFindings = classifyRegulatedContent({ subject, html, text });
+        const unauthorizedRegulated = await unauthorizedRegulatedFindings(auth.customer_id, regulatedFindings);
+        if (unauthorizedRegulated.length) {
+          const summary = summarizeRegulatedFindings(unauthorizedRegulated);
+          const requiredModes = [...new Set(unauthorizedRegulated.map((finding) => finding.required_mode))].sort();
+          await db.insertInto('audit_log').values({
+            customer_id: auth.customer_id,
+            api_key_id: auth.api_key_id,
+            action: 'regulated_content_blocked',
+            resource: 'send_batch',
+            ip: req.ip,
+            metadata: { ...summary, required_modes: requiredModes, batch_index: i },
+          }).execute();
+          results.push({ index: i, accepted: false, error: 'regulated_content_detected' });
+          refundCount++;
+          continue;
+        }
+        const portalOnlyFindings = regulatedFindings.filter(
+          (finding) => finding.category === 'phi' || finding.category === 'education_record',
+        );
+        if (portalOnlyFindings.length) {
+          const summary = summarizeRegulatedFindings(portalOnlyFindings);
+          await db.insertInto('audit_log').values({
+            customer_id: auth.customer_id,
+            api_key_id: auth.api_key_id,
+            action: 'secure_portal_required',
+            resource: 'send_batch',
+            ip: req.ip,
+            metadata: { ...summary, batch_index: i },
+          }).execute();
+          results.push({ index: i, accepted: false, error: 'secure_portal_required' });
+          refundCount++;
+          continue;
+        }
+
         // GDPR-02: restriction gates the batch path too (parity with /send).
         if (await tenantScoped(req, (trx) => isSuppressed(auth.customer_id, msg.to, trx))
             || await tenantScoped(req, (trx) => isProcessingRestricted(auth.customer_id, msg.to, trx))) {
@@ -1080,6 +1196,36 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
       if (toCommit.length > 0) {
         const bodyStore = getBodyStore();
         const traceCarrier = injectTraceContext();
+
+        try {
+          await Promise.all(toCommit.map((c) => archiveCommunicationIfRequired({
+            customerId: auth.customer_id,
+            messageId: c.message_id,
+            direction: 'outbound',
+            from: c.msg.from,
+            to: c.msg.to,
+            subject: c.subject,
+            html: c.html,
+            text: c.text,
+            headers: c.msg.headers,
+            occurredAt: new Date().toISOString(),
+          })));
+        } catch {
+          await releaseQuota(auth.customer_id, toCommit.length);
+          await db.insertInto('audit_log').values({
+            customer_id: auth.customer_id,
+            api_key_id: auth.api_key_id,
+            action: 'regulated_archive_failed',
+            resource: 'send_batch',
+            ip: req.ip,
+            metadata: { message_count: toCommit.length },
+          }).execute();
+          reply.header('Retry-After', '30');
+          return reply.code(503).send({
+            error: 'regulated_archive_unavailable',
+            message: 'The regulated archive did not acknowledge the batch; no batch message was accepted.',
+          });
+        }
 
         // CCPA-05: one lookup for the whole committed batch, not per message.
         const batchSpiLimited = await tenantScoped(req, (trx) =>

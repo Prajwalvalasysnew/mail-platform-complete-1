@@ -3,7 +3,7 @@ import sensible from '@fastify/sensible';
 import rateLimit from '@fastify/rate-limit';
 import cors from '@fastify/cors';
 import crypto from 'node:crypto';
-import { redis, closeDb, closeQueues, metricsText, metricsAuthorized, enforceConfig, db, sendQueue, openapiSpec, startTracing, stopTracing, rlsIsEnforced, privacyLoggerOptions } from '@platform/shared';
+import { redis, closeDb, closeQueues, metricsText, metricsAuthorized, enforceConfig, db, sendQueue, openapiSpec, startTracing, stopTracing, rlsIsEnforced, privacyLoggerOptions, preloadMasterKey } from '@platform/shared';
 
 startTracing('mail-api');
 import { authPlugin } from './plugins/auth.js';
@@ -36,6 +36,7 @@ import { toolRoutes } from './routes/tools.js';
 import { sendgridCompatRoutes } from './routes/sendgrid-compat.js';
 import { subaccountRoutes } from './routes/subaccounts.js';
 import { dmarcRoutes } from './routes/dmarc.js';
+import { secureMessageRoutes, securePortalRoutes } from './routes/secure-messages.js';
 
 const PORT = Number(process.env.API_PORT ?? 3000);
 const HOST = process.env.API_HOST ?? '0.0.0.0';
@@ -191,6 +192,7 @@ await app.register(billingRoutes, { prefix: '/v1' });
 
 // Customer signup is public
 await app.register(customerRoutes, { prefix: '/v1' });
+await app.register(securePortalRoutes, { prefix: '/v1' });
 
 // Human auth plane (register/login/MFA/sessions) and teammate management.
 // These authenticate via their own session-bearer tokens (mpu_...), not API
@@ -228,6 +230,7 @@ await app.register(async (instance) => {
   await instance.register(toolRoutes, { prefix: '/v1' });
   await instance.register(subaccountRoutes, { prefix: '/v1' });
   await instance.register(dmarcRoutes, { prefix: '/v1' });
+  await instance.register(secureMessageRoutes, { prefix: '/v1' });
   // SendGrid v3 migration shim (absolute /v3 path; auth + all controls apply).
   await instance.register(sendgridCompatRoutes);
 });
@@ -249,6 +252,9 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 try {
+  const keyPosture = await preloadMasterKey();
+  app.log.info({ kms_provider: keyPosture.provider }, 'master encryption key preloaded');
+
   // Tenant-isolation posture check: RLS is the second line of defense behind
   // application-level customer_id filters, but it silently does NOTHING if the
   // API connects as a superuser / BYPASSRLS role. In production, refuse to

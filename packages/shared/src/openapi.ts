@@ -912,6 +912,108 @@ export const openapiSpec = {
       },
     },
     '/privacy/delete-recipient': { post: { summary: 'GDPR: delete all data for a recipient', operationId: 'deleteRecipient', responses: { '200': { description: 'Deletion summary' } } } },
+    '/compliance/workloads': {
+      get: {
+        summary: 'List the tenant regulated-workload activation posture',
+        operationId: 'listRegulatedWorkloads',
+        responses: { '200': { description: 'HIPAA, FERPA and SEC/FINRA modes with fail-closed activation status' } },
+      },
+    },
+    '/compliance/workloads/{mode}/request': {
+      post: {
+        summary: 'Request administrative review for an Enterprise regulated-workload mode',
+        operationId: 'requestRegulatedWorkload',
+        parameters: [{ name: 'mode', in: 'path', required: true, schema: { type: 'string', enum: ['hipaa', 'ferpa', 'sec_finra'] } }],
+        responses: {
+          '202': { description: 'Request queued; the mode remains inactive until every prerequisite is approved' },
+          '403': { description: 'Enterprise agreement required' },
+          '409': { description: 'Mode already pending or active' },
+        },
+      },
+    },
+    '/compliance/workload-evidence': {
+      get: {
+        summary: 'List evidence-backed regulated-mode prerequisites',
+        operationId: 'listRegulatedWorkloadEvidence',
+        responses: { '200': { description: 'Prerequisite evidence' } },
+      },
+      post: {
+        summary: 'Submit a checksum-addressed prerequisite artifact for independent review',
+        operationId: 'submitRegulatedWorkloadEvidence',
+        responses: { '201': { description: 'Evidence submitted' }, '403': { description: 'Enterprise required' } },
+      },
+    },
+    '/secure-messages': {
+      post: {
+        summary: 'Create an encrypted HIPAA/FERPA secure-portal message under an active regulated mode',
+        operationId: 'createSecureMessage',
+        responses: {
+          '201': { description: 'Encrypted message created; portal credentials are returned once' },
+          '409': { description: 'The required regulated mode is not active' },
+        },
+      },
+    },
+    '/secure-messages/{id}/revoke': {
+      post: {
+        summary: 'Revoke access to a tenant-owned secure message',
+        operationId: 'revokeSecureMessage',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: { '200': { description: 'Revoked' }, '404': { description: 'Not found' } },
+      },
+    },
+    '/secure-portal/access': {
+      post: {
+        summary: 'Access a secure message with its separately delivered portal token and access code',
+        operationId: 'accessSecureMessage',
+        security: [],
+        responses: {
+          '200': { description: 'Decrypted message with no-store response headers' },
+          '404': { description: 'Unknown, expired, revoked, or invalid credentials' },
+        },
+      },
+    },
+    '/compliance/rights-cases': {
+      get: { summary: 'List HIPAA/FERPA rights cases', operationId: 'listRegulatedRightsCases', responses: { '200': { description: 'Cases' } } },
+      post: { summary: 'Create a pseudonymized HIPAA/FERPA rights case', operationId: 'createRegulatedRightsCase', responses: { '201': { description: 'Case created' }, '409': { description: 'Mode inactive' } } },
+    },
+    '/compliance/rights-cases/{id}/transition': {
+      post: {
+        summary: 'Apply an auditable, validated rights-case transition',
+        operationId: 'transitionRegulatedRightsCase',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: { '200': { description: 'Case transitioned' }, '409': { description: 'Invalid transition' } },
+      },
+    },
+    '/compliance/rights-cases/{id}/hipaa-breach-assessment': {
+      post: {
+        summary: 'Record the four-factor HIPAA breach risk assessment with encrypted analysis',
+        operationId: 'recordHipaaBreachAssessment',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: { '201': { description: 'Assessment recorded' }, '404': { description: 'Case not found' } },
+      },
+    },
+    '/compliance/rights-cases/{id}/ferpa-amendment-outcome': {
+      post: {
+        summary: 'Record FERPA amendment/hearing outcome and encrypted disputed-record statement',
+        operationId: 'recordFerpaAmendmentOutcome',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: { '201': { description: 'Outcome recorded' }, '409': { description: 'Required statement missing' } },
+      },
+    },
+    '/compliance/disclosures': {
+      post: {
+        summary: 'Record a pseudonymized HIPAA/FERPA disclosure and its authority',
+        operationId: 'recordRegulatedDisclosure',
+        responses: { '201': { description: 'Disclosure recorded' }, '409': { description: 'Mode inactive' } },
+      },
+    },
+    '/compliance/archive-records': {
+      get: {
+        summary: 'List SEC/FINRA specialist archive receipts and reconciliation status',
+        operationId: 'listRegulatedArchiveRecords',
+        responses: { '200': { description: 'Value-free archive receipts' } },
+      },
+    },
     '/privacy/restrict-recipient': {
       post: {
         summary: 'GDPR Art 18: restrict processing for a recipient (store but do not use). Distinct from suppression — lifted by a decision, not by resubscribing',

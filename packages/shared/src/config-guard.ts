@@ -48,7 +48,6 @@ interface SecretRule {
 // in production; all are checked against the insecure-value heuristic.
 const RULES: SecretRule[] = [
   { name: 'JWT_SECRET', required: true, minLength: 32 },
-  { name: 'ENCRYPTION_KEY', required: true, minLength: 32 },
   { name: 'VERP_SECRET', required: true, minLength: 16 },
   { name: 'API_KEY_PEPPER', required: true, minLength: 32 },
   { name: 'ADMIN_SESSION_PEPPER', required: true, minLength: 32 },
@@ -58,6 +57,39 @@ const RULES: SecretRule[] = [
   { name: 'WORKER_SMTP_PASSWORD', required: false },
   { name: 'REDIS_PASSWORD', required: false },
 ];
+
+function kmsRules(env: NodeJS.ProcessEnv, isProd: boolean, errors: string[], warnings: string[]): SecretRule[] {
+  const provider = (env.KMS_PROVIDER ?? 'env').trim().toLowerCase();
+  if (!['env', 'aws', 'vault'].includes(provider)) {
+    errors.push(`KMS_PROVIDER must be one of env, aws, or vault (got ${provider || 'empty'})`);
+    return [];
+  }
+  if (isProd && provider === 'env' && env.KMS_ALLOW_ENV_IN_PRODUCTION !== 'true') {
+    errors.push(
+      'KMS_PROVIDER=env is refused in production; use aws or vault, or explicitly set ' +
+        'KMS_ALLOW_ENV_IN_PRODUCTION=true for a documented single-host exception'
+    );
+  } else if (!isProd && provider === 'env') {
+    warnings.push('KMS_PROVIDER=env is suitable only for development or an explicitly accepted single-host exception');
+  }
+  switch (provider) {
+    case 'env':
+      return [{ name: 'ENCRYPTION_KEY', required: true, minLength: 64 }];
+    case 'aws':
+      return [
+        { name: 'AWS_KMS_ENCRYPTED_KEY', required: true, minLength: 16 },
+        { name: 'AWS_REGION', required: true, minLength: 3 },
+      ];
+    case 'vault':
+      return [
+        { name: 'VAULT_ADDR', required: true, minLength: 8 },
+        { name: 'VAULT_TOKEN', required: true, minLength: 8 },
+        { name: 'VAULT_TRANSIT_KEY', required: true, minLength: 2 },
+        { name: 'VAULT_ENCRYPTED_KEY', required: true, minLength: 12 },
+      ];
+  }
+  return [];
+}
 
 export interface GuardResult {
   ok: boolean;
@@ -106,7 +138,11 @@ export function checkConfig(env: NodeJS.ProcessEnv = process.env): GuardResult {
   // subsystems are active in this deployment (e.g. the selected billing
   // provider's webhook secret). Building the list dynamically means we only
   // demand a Stripe webhook secret when Stripe is actually the active provider.
-  const rules: SecretRule[] = [...RULES, ...billingWebhookRules(env)];
+  const rules: SecretRule[] = [
+    ...RULES,
+    ...kmsRules(env, isProd, errors, warnings),
+    ...billingWebhookRules(env),
+  ];
 
   for (const rule of rules) {
     const val = env[rule.name];
@@ -133,6 +169,15 @@ export function checkConfig(env: NodeJS.ProcessEnv = process.env): GuardResult {
     }
     if (!env.OIDC_ISSUER_URL) errors.push('OIDC_ISSUER_URL is required in production');
     if (!env.OIDC_CLIENT_ID) errors.push('OIDC_CLIENT_ID is required in production');
+    if (!env.OIDC_REQUIRED_AUTH_CONTEXT) {
+      errors.push('OIDC_REQUIRED_AUTH_CONTEXT is required in production (for example mfa)');
+    }
+    if (env.AUDIT_WORM_PROVIDER !== 's3') {
+      errors.push('AUDIT_WORM_PROVIDER must be s3 in production');
+    }
+    if (!env.AUDIT_WORM_S3_BUCKET) errors.push('AUDIT_WORM_S3_BUCKET is required in production');
+    if (!env.AUDIT_WORM_S3_KMS_KEY_ID) errors.push('AUDIT_WORM_S3_KMS_KEY_ID is required in production');
+    if (!env.AUDIT_SIGNING_KEY_PEM) errors.push('AUDIT_SIGNING_KEY_PEM is required in production');
   }
 
   return { ok: errors.length === 0, errors, warnings };

@@ -35,14 +35,12 @@ describe('KMS provider selection', () => {
     expect((k as Buffer).length).toBe(32);
   });
 
-  it('aws provider is selectable but errors with a clear "configure me" message', async () => {
+  it('remote providers cannot be used before startup preload', () => {
     resetMasterKeyProvider();
     process.env.KMS_PROVIDER = 'aws';
     const p = getMasterKeyProvider();
     expect(p.name).toBe('aws');
-    // getKey() is async for cloud providers, so it rejects rather than throwing
-    // synchronously. Assert on the rejection.
-    await expect(Promise.resolve().then(() => p.getKey())).rejects.toThrow(/KMS_PROVIDER=aws/);
+    expect(() => p.getKey()).toThrow(/not preloaded/);
   });
 
   it('unknown provider name throws on selection', () => {

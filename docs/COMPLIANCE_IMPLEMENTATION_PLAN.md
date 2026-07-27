@@ -1,5 +1,33 @@
 # Compliance implementation plan
 
+## 2026-07 regulated-workload capstone
+
+The repository-controlled capstone is implemented:
+
+- migrations `090`–`096` add individually gated posture, encrypted secure
+  messages, HIPAA/FERPA rights/disclosure evidence, SEC/FINRA archive receipts,
+  independently reviewed prerequisite artifacts, case evidence, and
+  independent full-audit exports;
+- runtime classification detects PAN, PHI, education records, and
+  broker-dealer communication signals without logging matched values;
+- HIPAA/FERPA record content is refused on ordinary send and routed through the
+  encrypted, expiring, revocable two-credential portal;
+- SEC/FINRA tenants fail closed unless the specialist archive acknowledges
+  every outbound record before acceptance;
+- production SSO requires a configured IdP authentication context, remote
+  KMS/Vault startup is fail-closed, and signed audit checkpoints require
+  independent KMS-encrypted S3 Object Lock storage for full audit segments and
+  signed chain heads;
+- three-node Hetzner infrastructure source, HA/DR manifests and drill tooling,
+  assessment scope, evidence index, and activation runbook are present.
+
+This does not change the legal/evidentiary boundary: signed contracts,
+organization-specific risk analysis, actual target-environment drill results,
+archive-provider approval, and independent penetration/framework assessments
+must be supplied as real artifacts. The activation service recomputes approved,
+unexpired evidence and refuses every mode until those prerequisites exist.
+Modes are activated one at a time, never by a global compliance switch.
+
 Reviewed: 2026-07-22 · P0 status updated: 2026-07-25
 
 ## P0 delivery status
@@ -15,18 +43,18 @@ effectively, or sufficient for any framework — see §16 release gates.
 | BASE-04 | Done | `account-data-subject.e2e` |
 | BASE-05 | Done | `privacy-cases.e2e`, migration 076 |
 | BASE-06 | Done (doc) | [Retention and disposal policy](RETENTION_AND_DISPOSAL.md) |
-| BASE-08 | Done (policy: prohibit + partial enforcement) | [Sensitive-message transport policy](TRANSPORT_SECURITY.md) — `tls_required` is now fail-closed per recipient domain; PHI stays prohibited because first-delivery and end-to-end gaps remain |
-| BASE-15 | Partial | [Data-use restrictions](DATA_USE_RESTRICTIONS.md) — card data enforced; PHI/FERPA/SEC contractual only; terms and UI notices outstanding |
+| BASE-08 | Done (technical path) | [Sensitive-message transport policy](TRANSPORT_SECURITY.md) — `tls_required` is fail-closed per recipient domain and PHI/FERPA content uses the encrypted, expiring two-credential portal; production transport/key evidence remains operational |
+| BASE-15 | Done (technical enforcement) | [Data-use restrictions](DATA_USE_RESTRICTIONS.md) — PAN is always blocked; PHI/FERPA/SEC are default-deny with independent, per-mode activation gates; contracts, terms and production approvals remain external |
 | GDPR-01, CCPA-01 | Done | Satisfied by BASE-02…05 |
 | GDPR-02, CCPA-02 (P1) | Done | Art 18 restriction (enforced in both send paths), Art 16 / right-to-correct rectification, Art 21 objection; `privacy-rights.ts`, migration 081, `privacy-rights.e2e.test.ts` |
 | GDPR-05 (P1) | Done | Affirmative consent capture with provenance, evidence wording, policy version and double-opt-in confirmation; Art 7(1) proof export; Art 7(3) withdrawal that preserves the proof. `consent-records.ts`, migration 085, `consent-records.e2e.test.ts`. Erasure pseudonymizes the new table (BASE-03) |
 | CCPA-05 (P1) | Done | Right to limit use of sensitive PI (§1798.121). Message content is SPI here by definition — §1798.140(ae)(1)(E) covers email contents unless the business is the intended recipient, and this platform never is. The limit disables open/click tracking in both send paths, overriding the sender; delivery, abuse scanning and legal-obligation controls are deliberately unaffected. `sensitive-pi.ts`, migration 087, `sensitive-pi-limit.e2e.test.ts` |
 | CCPA-07 (P1) | Partial | Appeals against a denied request, with their own statutory clock, a required regulator-escalation notice on upholding, and an overturn path that reopens the case; migration 086, `privacy-appeals.e2e.test.ts`. Intake channels, verification and deadlines were already covered by BASE-05. Authorized-agent authority verification and staff training remain outstanding |
-| HIPAA-07 (P1) | Partial (technical half) | Staff reads of tenant data are now recorded across the whole admin plane by a default-on hook, not by remembered call sites — mutations were always audited, reads were audited only where someone added the call. Records land in the hash-chained `audit_log`; the reviewer's judgement lives in `admin_access_reviews` (migration 089) so the evidence stays append-only while the assertion about it can arrive later. Break-glass access surfaces in an admin-only review queue (`GET/POST /admin/access-review`), a decision cannot be amended, and unreviewed emergency access is reported as a gap by the HIPAA-07 control-evidence collector. `access-audit.ts`, `access-audit.e2e.test.ts`. PHI remains a prohibited workload (BASE-15) — this control stands on its own for SOC 2 CC6, ISO 27001 A.8.15 and GDPR Art 32. Emergency-access exercise evidence, the role matrix and access-review sampling records are organizational and outstanding |
+| HIPAA-07 (P1) | Done (technical control) | Staff reads are recorded across the admin plane by a default-on hook. Records land in the hash-chained `audit_log`; immutable reviewer decisions live in `admin_access_reviews` (migration 089). Break-glass access surfaces in an admin-only queue, production OIDC requires the configured MFA/authentication context, and missing review evidence is reported as a gap. `access-audit.ts`, `oidc-policy.ts`, and E2E/live evidence. Emergency-access exercises, role-matrix approval and retained production sampling remain organizational |
 | GDPR-13 (P1) | Partial | Art 30(2) record of processing and an Art 32 measures schedule resolved against each tenant's live configuration, with Art 28(3) assistance duties mapped to the endpoints and runbooks that deliver them; `GET /v1/privacy/processing-record`, `processor-assistance.ts`, `processor-assistance.e2e.test.ts`. The schedule is built not to over-claim: a configuration-derived measure can never report `enforced`, and measures that are OFF are returned as `not_enabled` rather than omitted — both asserted by tests. Vendors are deliberately not named (a deployment fact, see [Vendor register](VENDOR_REGISTER.md)). The exercise evidence — an actual assisted DSR, breach and DPIA walkthrough with a customer — remains outstanding, as does the organizational measure schedule beyond what the platform enforces |
 | SOC2-06 (P1) | Done | Monthly per-control evidence collection with an explicit completeness verdict, reviewer sign-off, and a PII/secret guard on the write path. Records `'missing'` as a finding distinct from a zero count — a control that stopped running otherwise reads as clean. `control-evidence.ts`, migration 088, `control-evidence.e2e.test.ts`. Also closes a gap it exposed: the retention sweep persisted nothing, so `retention_runs` now records every sweep including failures |
 | CCPA-04 (P1) | Done | Sale/share opt-out as a state distinct from suppression, Global Privacy Control honoured at the tracker click and unsubscribe surfaces; `sale-share.ts`, migration 082, `sale-share-optout.e2e.test.ts`. CCPA-03 (the sale/share applicability inventory) remains a Legal decision |
-| SEC-04 (P1) | Done | Time-bound regulatory retention locks that survive the retention sweep AND refuse data-subject erasure (Art 17(3)(b)); `regulatory-retention.ts`, migration 084, `regulatory-retention.e2e.test.ts`. SEC-01/02/03/05…09 remain open, so broker-dealer records are still a prohibited workload |
+| SEC-04 (P1) | Done | Time-bound regulatory retention locks survive the retention sweep and refuse data-subject erasure (Art 17(3)(b)); `regulatory-retention.ts`, migration 084, `regulatory-retention.e2e.test.ts`. The archive-before-accept adapter, immutable receipts and reconciliation now cover the repository-controlled SEC path; provider contract/certification and specialist assessment remain external gates |
 | FERPA-07 (P1) | Done | Retention interlock: an open access/portability/rectification case pins its subject's data; an open erasure case deliberately does not. `retention.ts`, `retention-request-interlock.e2e.test.ts`. Applies to GDPR Art 15 access equally, not only education records |
 | CANSPAM-08 (P1) | Done | Per-sender complaint/bounce/unsubscribe rates with graduated thresholds, automated send holds enforced in both send paths, daily sweep, and retained reviewer decisions; `sender-health.ts`, migration 083, `sender-health.e2e.test.ts`, `GET/POST /admin/sender-health` |
 | CANSPAM-09 (P1) | Done (technical half) | Suppression-list export requires a declared transfer purpose, refuses purposes unlawful on their face, and retains the declaration in the audit log. Contract terms with senders remain outstanding |
@@ -42,9 +70,11 @@ effectively, or sufficient for any framework — see §16 release gates.
 | BASE-11 | Procedure written; **exercise outstanding** | [Incident and breach runbook](runbooks/INCIDENT_AND_BREACH.md) — severity model, breach clock, platform playbooks. Contacts, templates, and the first tabletop are organizational |
 | BASE-12 | Partial | `scripts/backup-restore-drill.sh` now also verifies erasures survived the restore (no resurrected messages, pseudonymization intact, suppressions preserved). Measured RPO/RTO against production-sized data remains outstanding |
 | BASE-13 | Template only | [Vendor register](VENDOR_REGISTER.md) — structure and codebase integration points; the register itself is a deployment fact and is unfilled |
+| BASE-07 | Partial (selected-secret key access) | Production API/worker startup preloads and validates AWS KMS or Vault access before accepting work. Provider-specific configuration is fail-closed and plaintext `env` keys require an explicit production exception. Infrastructure-store encryption evidence, key ownership/rotation/recovery records, and direct remote-KMS support in the Haraka DKIM plugin remain outstanding |
 
-**Still open (P0):** BASE-07, BASE-09, BASE-10, BASE-14, plus the outstanding
-halves of BASE-11, BASE-12, BASE-13 and BASE-15. These need production
+**Still open (P0):** the remaining infrastructure and operational half of BASE-07,
+BASE-09, BASE-10, BASE-14, plus the outstanding
+halves of BASE-11, BASE-12 and BASE-13. These need production
 configuration, organizational process, and operating evidence that source code
 cannot supply — key-management validation, IAM operation, logging operations,
 and secure-development evidence.

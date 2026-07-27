@@ -1,6 +1,6 @@
 # Multi-stage build for the documentation site
 # Stage 1: build
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /repo
 
 # Copy workspace files. npm workspaces requires EVERY workspace's

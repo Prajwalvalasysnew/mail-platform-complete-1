@@ -24,16 +24,70 @@ describe('config guard', () => {
     const r = checkConfig({
       NODE_ENV: 'production',
       JWT_SECRET: strong(20),
-      ENCRYPTION_KEY: strong(20),
+      ENCRYPTION_KEY: strong(32),
       VERP_SECRET: strong(12),
       API_KEY_PEPPER: strong(20),
       ADMIN_SESSION_PEPPER: strong(20),
       ADMIN_PASSWORD_LOGIN_DISABLED: 'true',
       OIDC_ISSUER_URL: 'https://idp.test',
       OIDC_CLIENT_ID: 'mail-platform-admin',
+      OIDC_REQUIRED_AUTH_CONTEXT: 'mfa',
+      KMS_PROVIDER: 'env',
+      KMS_ALLOW_ENV_IN_PRODUCTION: 'true',
+      AUDIT_SIGNING_KEY_PEM: 'test-ed25519-private-key',
+      AUDIT_WORM_PROVIDER: 's3',
+      AUDIT_WORM_S3_BUCKET: 'immutable-audit-test',
+      AUDIT_WORM_S3_KMS_KEY_ID: 'arn:aws:kms:us-east-1:123456789012:key/test-audit-key',
     } as NodeJS.ProcessEnv);
     expect(r.ok).toBe(true);
     expect(r.errors).toHaveLength(0);
+  });
+
+  it('refuses a plaintext environment master key in production by default', async () => {
+    const { checkConfig } = await import('@platform/shared');
+    const r = checkConfig({
+      NODE_ENV: 'production',
+      JWT_SECRET: strong(20),
+      ENCRYPTION_KEY: strong(32),
+      VERP_SECRET: strong(12),
+      API_KEY_PEPPER: strong(20),
+      ADMIN_SESSION_PEPPER: strong(20),
+      ADMIN_PASSWORD_LOGIN_DISABLED: 'true',
+      OIDC_ISSUER_URL: 'https://idp.test',
+      OIDC_CLIENT_ID: 'mail-platform-admin',
+      OIDC_REQUIRED_AUTH_CONTEXT: 'mfa',
+      KMS_PROVIDER: 'env',
+      AUDIT_SIGNING_KEY_PEM: 'test-ed25519-private-key',
+      AUDIT_WORM_PROVIDER: 's3',
+      AUDIT_WORM_S3_BUCKET: 'immutable-audit-test',
+      AUDIT_WORM_S3_KMS_KEY_ID: 'arn:aws:kms:us-east-1:123456789012:key/test-audit-key',
+    } as NodeJS.ProcessEnv);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('KMS_PROVIDER=env is refused'))).toBe(true);
+  });
+
+  it('requires the selected remote KMS provider configuration', async () => {
+    const { checkConfig } = await import('@platform/shared');
+    const r = checkConfig({
+      NODE_ENV: 'production',
+      JWT_SECRET: strong(20),
+      VERP_SECRET: strong(12),
+      API_KEY_PEPPER: strong(20),
+      ADMIN_SESSION_PEPPER: strong(20),
+      ADMIN_PASSWORD_LOGIN_DISABLED: 'true',
+      OIDC_ISSUER_URL: 'https://idp.test',
+      OIDC_CLIENT_ID: 'mail-platform-admin',
+      OIDC_REQUIRED_AUTH_CONTEXT: 'mfa',
+      KMS_PROVIDER: 'aws',
+      AUDIT_SIGNING_KEY_PEM: 'test-ed25519-private-key',
+      AUDIT_WORM_PROVIDER: 's3',
+      AUDIT_WORM_S3_BUCKET: 'immutable-audit-test',
+      AUDIT_WORM_S3_KMS_KEY_ID: 'arn:aws:kms:us-east-1:123456789012:key/test-audit-key',
+    } as NodeJS.ProcessEnv);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('AWS_KMS_ENCRYPTED_KEY'))).toBe(true);
+    expect(r.errors.some((e) => e.includes('AWS_REGION'))).toBe(true);
+    expect(r.errors.some((e) => e.includes('ENCRYPTION_KEY'))).toBe(false);
   });
 
   it('never blocks in development (warnings only)', async () => {

@@ -43,11 +43,19 @@ environment, cloud account, workforce, vendors, contracts, or legal posture.
 
 ## Security controls relevant to regulated deployments
 
+The repository now includes per-framework activation gates backed by approved,
+expiring evidence artifacts, value-free regulated-content classification, an
+encrypted HIPAA/FERPA secure portal, HIPAA/FERPA rights and disclosure case
+workflows, and a fail-closed SEC/FINRA specialist archive seam. These controls
+make a properly assessed deployment possible; they do not replace signed
+agreements, production evidence, counsel determinations, or independent
+assessment. See [regulated-workload policy](REGULATED_WORKLOAD_POLICY.md).
+
 | Area | Status | What exists | Boundary or remaining work |
 | --- | --- | --- | --- |
 | Tenant and user access | Implemented and tested | RLS, scoped API keys, team capabilities, admin role hierarchy, TOTP, WebAuthn/passkeys, SSO enforcement, SCIM, session revocation, and JIT/break-glass audit | Configure production IdP/MFA policy, periodic access reviews, joiner/mover/leaver processes, and separation of duties |
 | Audit controls | Implemented and tested | Append-only audit events, tenant hash chains, integrity verification, archive preservation, signed checkpoints, WORM-style export, and admin mutation records | Store checkpoints/exports in independently controlled immutable storage and document review/escalation procedures |
-| Secret encryption | Partial | AES-256-GCM protects selected application secrets such as DKIM private keys and MFA seeds; the master key can come from AWS KMS, GCP KMS, Vault, or development environment configuration | This is not blanket encryption of message bodies, database files, object-store versions, logs, ClickHouse, or backups |
+| Secret encryption | Partial | AES-256-GCM protects selected application secrets such as DKIM private keys and MFA seeds. API and worker startup now preload and prove access to AWS KMS or Vault before accepting work; plaintext `KMS_PROVIDER=env` is refused in production unless an explicit single-host exception is recorded | This is not blanket encryption of message bodies, database files, object-store versions, logs, ClickHouse, or backups. Haraka DKIM still consumes a separately isolated raw key until its plugin supports remote KMS |
 | API and service transport | Partial/deployment-dependent | Kubernetes ingress TLS, SMTP STARTTLS configuration, and optional service-mesh mTLS manifests exist | Certificates, cipher policy, internal TLS, HSTS boundary, and endpoint validation require a real deployment |
 | Outbound SMTP transport | Partial | Haraka emits per-delivery `tls_required`/`tls_secured` evidence, which is now recorded per recipient domain (`recipient_domain_tls`). For a tenant with `tls_required`, the send worker refuses delivery to a domain previously observed accepting mail without TLS (`tls_required_domain_unsafe`), and the domain recovers automatically once it delivers over TLS; `transport-security*.e2e.test.ts` | The FIRST delivery to an unseen domain still cannot be protected — the evidence only exists after the hop. Enforcement is hop-by-hop, not end-to-end, so this is not message-level encryption. PHI stays prohibited; see [transport policy](TRANSPORT_SECURITY.md) |
 | Availability and contingency | Partial/deployment-dependent | HA/DR manifests and backup, restore, PITR, Redis failover, and operational drill scripts exist | Run them in the target environment, record RPO/RTO, validate all regulated stores, and establish emergency-mode procedures |

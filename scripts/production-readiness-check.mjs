@@ -18,6 +18,7 @@ const required = [
   'HARAKA_OUTBOUND_PASS',
   'JWT_SECRET',
   'ENCRYPTION_KEY',
+  'KMS_PROVIDER',
   'VERP_SECRET',
   'API_KEY_PEPPER',
   'ADMIN_SESSION_PEPPER',
@@ -34,6 +35,11 @@ const required = [
   'DELIVERY_TRANSPORT',
   'OIDC_ISSUER_URL',
   'OIDC_CLIENT_ID',
+  'OIDC_REQUIRED_AUTH_CONTEXT',
+  'AUDIT_SIGNING_KEY_PEM',
+  'AUDIT_WORM_PROVIDER',
+  'AUDIT_WORM_S3_BUCKET',
+  'AUDIT_WORM_S3_KMS_KEY_ID',
 ];
 
 const secretNames = new Set([
@@ -107,7 +113,23 @@ for (const name of required) {
 
 check(env.NODE_ENV === 'production', 'NODE_ENV must be production', failures);
 check(env.ADMIN_PASSWORD_LOGIN_DISABLED === 'true', 'ADMIN_PASSWORD_LOGIN_DISABLED must be true in production', failures);
+check(env.AUDIT_WORM_PROVIDER === 's3', 'AUDIT_WORM_PROVIDER must be s3', failures);
 check(/^[0-9a-fA-F]{64}$/.test(env.ENCRYPTION_KEY || '') || useTemplate, 'ENCRYPTION_KEY must be a 64-char hex value', failures);
+check(['aws', 'vault', 'env'].includes((env.KMS_PROVIDER || '').toLowerCase()), 'KMS_PROVIDER must be aws, vault, or env', failures);
+if (!useTemplate) {
+  const kmsProvider = (env.KMS_PROVIDER || '').toLowerCase();
+  check(kmsProvider !== 'env' || env.KMS_ALLOW_ENV_IN_PRODUCTION === 'true',
+    'KMS_PROVIDER=env requires explicit KMS_ALLOW_ENV_IN_PRODUCTION=true', failures);
+  if (kmsProvider === 'aws') {
+    check(Boolean(env.AWS_REGION), 'AWS_REGION is required for KMS_PROVIDER=aws', failures);
+    check(!looksPlaceholder(env.AWS_KMS_ENCRYPTED_KEY), 'AWS_KMS_ENCRYPTED_KEY is required and must not be a placeholder', failures);
+  }
+  if (kmsProvider === 'vault') {
+    for (const name of ['VAULT_ADDR', 'VAULT_TOKEN', 'VAULT_TRANSIT_KEY', 'VAULT_ENCRYPTED_KEY']) {
+      check(!looksPlaceholder(env[name]), `${name} is required and must not be a placeholder for KMS_PROVIDER=vault`, failures);
+    }
+  }
+}
 
 if (!useTemplate) {
   for (const name of secretNames) {
@@ -140,6 +162,13 @@ if (config?.services) {
   check(config.services.api?.environment?.ADMIN_PASSWORD_LOGIN_DISABLED === 'true', 'api must disable password admin login in production', failures);
   check(Boolean(config.services.api?.environment?.OIDC_ISSUER_URL), 'api must configure OIDC_ISSUER_URL in production', failures);
   check(Boolean(config.services.api?.environment?.OIDC_CLIENT_ID), 'api must configure OIDC_CLIENT_ID in production', failures);
+  check(Boolean(config.services.api?.environment?.OIDC_REQUIRED_AUTH_CONTEXT), 'api must enforce an OIDC MFA/authentication context', failures);
+  check(config.services.api?.environment?.AUDIT_WORM_PROVIDER === 's3', 'api must use the independent S3 WORM audit provider', failures);
+  check(Boolean(config.services.api?.environment?.AUDIT_WORM_S3_BUCKET), 'api must configure the Object-Lock audit bucket', failures);
+  check(Boolean(config.services.api?.environment?.AUDIT_WORM_S3_KMS_KEY_ID), 'api must configure audit-bucket KMS encryption', failures);
+  for (const service of ['api', 'worker']) {
+    check(Boolean(config.services[service]?.environment?.KMS_PROVIDER), `${service} must configure KMS_PROVIDER`, failures);
+  }
   for (const service of ['postgres', 'redis', 'worker']) {
     const ports = config.services[service]?.ports || [];
     check(ports.length === 0, `${service} must not publish host ports in production overlay`, failures);

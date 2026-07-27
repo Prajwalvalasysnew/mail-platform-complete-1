@@ -39,6 +39,28 @@ function verifyUnsubToken(encoded: string, token: unknown): boolean {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+/**
+ * Decode only canonical base64url message identifiers before using them in a
+ * database query. Buffer's base64url decoder is intentionally permissive and
+ * does not throw for malformed input, so relying on try/catch alone can pass
+ * NUL bytes to PostgreSQL and turn a bad public URL into HTTP 500.
+ */
+function decodeTrackerMessageId(encoded: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(encoded)) throw new Error('invalid message id encoding');
+  const messageId = decodeMessageIdFromUrl(encoded);
+  const inner = messageId.slice(1, -1);
+  if (
+    messageId.length > 998 ||
+    !messageId.startsWith('<') ||
+    !messageId.endsWith('>') ||
+    !inner.includes('@') ||
+    /[\u0000-\u001f\u007f-\u009f]/.test(inner)
+  ) {
+    throw new Error('invalid message id');
+  }
+  return messageId;
+}
+
 // Escape values that are interpolated into the HTML responses below. Recipient
 // addresses are stored data; even though they're validated at send time, never
 // reflect them into markup unescaped.
@@ -54,6 +76,11 @@ function escapeHtml(s: string): string {
 export const app = Fastify({
   logger: privacyLoggerOptions(),
   trustProxy: true,
+  // Tracking and unsubscribe parameters contain a base64url-encoded RFC 5322
+  // Message-ID. A valid Message-ID can exceed find-my-way's 100-character
+  // default (for example when the sending domain is long). Keep the limit
+  // bounded, but large enough for the RFC 5322 maximum and encoding overhead.
+  routerOptions: { maxParamLength: 2048 },
 });
 
 // urlencoded body needed for the RFC 8058 one-click POST + classic form.
@@ -145,7 +172,7 @@ app.get<{ Params: { encoded: string } }>('/o/:encoded', async (req, reply) => {
     .send(PIXEL);
 
   try {
-    const messageId = decodeMessageIdFromUrl(req.params.encoded);
+    const messageId = decodeTrackerMessageId(req.params.encoded);
 
     // Pull delivery timing so we can detect pre-fetch opens. Cheap single-row
     // lookup; the pixel has already been sent, so this never delays the client.
@@ -190,7 +217,7 @@ app.get<{ Params: { encoded: string; linkId: string } }>(
   async (req, reply) => {
     let messageId: string;
     try {
-      messageId = decodeMessageIdFromUrl(req.params.encoded);
+      messageId = decodeTrackerMessageId(req.params.encoded);
     } catch {
       return reply.code(400).send('Invalid link');
     }
@@ -269,7 +296,7 @@ type UnsubParams = { Params: { encoded: string }; Querystring: { group?: string 
 app.get<UnsubParams>('/u/:encoded', async (req, reply) => {
   let messageId: string;
   try {
-    messageId = decodeMessageIdFromUrl(req.params.encoded);
+    messageId = decodeTrackerMessageId(req.params.encoded);
   } catch {
     return reply.code(400).send('Invalid link');
   }
@@ -328,7 +355,7 @@ app.post<UnsubParams>(
   async (req, reply) => {
   let messageId: string;
   try {
-    messageId = decodeMessageIdFromUrl(req.params.encoded);
+    messageId = decodeTrackerMessageId(req.params.encoded);
   } catch {
     return reply.code(400).send('Invalid link');
   }

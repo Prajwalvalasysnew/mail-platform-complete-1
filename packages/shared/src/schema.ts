@@ -253,6 +253,7 @@ export interface Database {
   audit_log_hashes: AuditLogHashesTable;
   audit_log_archive: AuditLogArchiveTable;
   audit_checkpoints: AuditCheckpointsTable;
+  audit_worm_exports: AuditWormExportsTable;
   legal_holds: LegalHoldsTable;
   clickhouse_sync_state: ClickhouseSyncStateTable;
   review_queue: ReviewQueueTable;
@@ -274,6 +275,15 @@ export interface Database {
   admin_access_reviews: AdminAccessReviewsTable;
   retention_runs: RetentionRunsTable;
   control_evidence_runs: ControlEvidenceRunsTable;
+  regulated_workload_posture: RegulatedWorkloadPostureTable;
+  regulated_prerequisite_evidence: RegulatedPrerequisiteEvidenceTable;
+  secure_messages: SecureMessagesTable;
+  regulated_rights_cases: RegulatedRightsCasesTable;
+  regulated_rights_case_events: RegulatedRightsCaseEventsTable;
+  regulated_disclosures: RegulatedDisclosuresTable;
+  regulated_archive_records: RegulatedArchiveRecordsTable;
+  hipaa_breach_assessments: HipaaBreachAssessmentsTable;
+  ferpa_amendment_outcomes: FerpaAmendmentOutcomesTable;
   soft_bounce_tracker: SoftBounceTrackerTable;
   deletion_requests: DeletionRequestsTable;
   deletion_object_items: DeletionObjectItemsTable;
@@ -1266,6 +1276,141 @@ export interface ControlEvidenceRunsTable {
   reviewed_at: Timestamp | null;
   reviewed_by: string | null;
   review_note: string | null;
+}
+
+export interface AuditWormExportsTable {
+  id: Generated<string>;
+  chain_key: string;
+  start_seq: number;
+  end_seq: number;
+  record_count: number;
+  bundle_sha256: string;
+  object_key: string;
+  exported_at: Generated<Timestamp>;
+}
+
+export interface RegulatedWorkloadPostureTable {
+  customer_id: string;
+  mode: 'hipaa' | 'ferpa' | 'sec_finra';
+  status: 'disabled' | 'pending' | 'active' | 'rejected' | 'suspended';
+  prerequisites: Generated<Record<string, boolean>>;
+  requested_at: Timestamp | null;
+  requested_by: string | null;
+  reviewed_at: Timestamp | null;
+  reviewed_by: string | null;
+  review_note: string | null;
+  activated_at: Timestamp | null;
+  suspended_at: Timestamp | null;
+  updated_at: Timestamp;
+}
+
+export interface RegulatedPrerequisiteEvidenceTable {
+  id: Generated<string>;
+  customer_id: string;
+  mode: 'hipaa' | 'ferpa' | 'sec_finra';
+  prerequisite: string;
+  artifact_uri: string;
+  artifact_sha256: string;
+  status: Generated<'submitted' | 'approved' | 'rejected'>;
+  submitted_by: string;
+  submitted_at: Generated<Timestamp>;
+  reviewed_by: string | null;
+  reviewed_at: Timestamp | null;
+  review_note: string | null;
+  expires_at: Timestamp | null;
+  updated_at: Timestamp;
+}
+
+export interface SecureMessagesTable {
+  id: Generated<string>;
+  customer_id: string;
+  recipient_email: string;
+  encrypted_payload: string;
+  portal_token_hash: string;
+  access_code_hash: string;
+  mode: 'hipaa' | 'ferpa';
+  expires_at: Timestamp;
+  accessed_at: Timestamp | null;
+  revoked_at: Timestamp | null;
+  created_by_api_key: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+export interface RegulatedRightsCasesTable {
+  id: Generated<string>;
+  customer_id: string;
+  mode: 'hipaa' | 'ferpa';
+  kind: 'access' | 'amendment' | 'restriction' | 'confidential_communication' | 'disclosure_accounting' | 'breach_assessment' | 'hearing';
+  subject_pseudonym: string;
+  status: Generated<'open' | 'identity_verified' | 'in_review' | 'approved' | 'denied' | 'fulfilled' | 'hearing_requested' | 'closed'>;
+  deadline_at: Timestamp;
+  decision_reason: string | null;
+  created_by: string;
+  assigned_to: string | null;
+  closed_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Timestamp;
+}
+
+export interface RegulatedRightsCaseEventsTable {
+  id: Generated<number>;
+  case_id: string;
+  event: string;
+  actor: string;
+  detail: Generated<Record<string, unknown>>;
+  created_at: Generated<Timestamp>;
+}
+
+export interface RegulatedDisclosuresTable {
+  id: Generated<string>;
+  customer_id: string;
+  mode: 'hipaa' | 'ferpa';
+  subject_pseudonym: string;
+  recipient: string;
+  purpose: string;
+  authority: string;
+  redisclosure_restricted: Generated<boolean>;
+  disclosed_at: Generated<Timestamp>;
+  recorded_by: string;
+}
+
+export interface RegulatedArchiveRecordsTable {
+  id: Generated<string>;
+  customer_id: string;
+  message_id: string;
+  direction: 'outbound' | 'inbound';
+  provider: string;
+  external_id: string;
+  content_sha256: string;
+  archived_at: Timestamp;
+  immutable_until: Timestamp;
+  reconciliation_status: 'verified' | 'missing' | 'mismatch';
+  reconciled_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
+export interface HipaaBreachAssessmentsTable {
+  case_id: string;
+  customer_id: string;
+  nature_extent_risk: 'low' | 'medium' | 'high';
+  unauthorized_person_risk: 'low' | 'medium' | 'high';
+  acquired_or_viewed: boolean;
+  mitigation_completed: boolean;
+  breach_presumed: boolean;
+  encrypted_analysis: string;
+  assessed_by: string;
+  assessed_at: Generated<Timestamp>;
+}
+
+export interface FerpaAmendmentOutcomesTable {
+  case_id: string;
+  customer_id: string;
+  hearing_offered: boolean;
+  hearing_at: Timestamp | null;
+  outcome: 'amended' | 'denied' | 'pending_hearing';
+  encrypted_statement: string | null;
+  recorded_by: string;
+  recorded_at: Generated<Timestamp>;
 }
 
 // Migration 078 (CANSPAM-05): synthetic unsubscribe monitoring evidence.
