@@ -17,7 +17,8 @@ RUN openssl req -x509 -newkey rsa:2048 -nodes \
     -keyout config/tls_key.pem -out config/tls_cert.pem -days 3650 \
     -subj "/CN=mail.happycubing.com" \
     && apk del .build-deps \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 RUN chown -R node:node /app
 
