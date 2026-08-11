@@ -2,13 +2,9 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# Haraka needs some build tooling
-RUN apk add --no-cache python3 make g++
-# openssl is separate so the above layer stays cached on rebuilds
-RUN apk add --no-cache openssl
-
 COPY packages/haraka-outbound/package.json ./
-RUN npm install
+RUN apk add --no-cache --virtual .build-deps python3 make g++ openssl \
+    && npm install --omit=dev
 
 COPY packages/haraka-outbound/config ./config
 COPY packages/haraka-outbound/plugins ./plugins
@@ -19,7 +15,9 @@ RUN mkdir -p queue
 # Generate self-signed TLS cert so outbound TLS init doesn't block delivery
 RUN openssl req -x509 -newkey rsa:2048 -nodes \
     -keyout config/tls_key.pem -out config/tls_cert.pem -days 3650 \
-    -subj "/CN=mail.happycubing.com"
+    -subj "/CN=mail.happycubing.com" \
+    && apk del .build-deps \
+    && npm cache clean --force
 
 RUN chown -R node:node /app
 

@@ -32,12 +32,12 @@
   },
   "overrides": {
     "fast-uri": "3.1.5",
-    "serialize-javascript": "7.0.7",
+    "serialize-javascript": "6.0.2",
     "copy-webpack-plugin": {
-      "serialize-javascript": "7.0.7"
+      "serialize-javascript": "6.0.2"
     },
     "css-minimizer-webpack-plugin": {
-      "serialize-javascript": "7.0.7"
+      "serialize-javascript": "6.0.2"
     },
     "protobufjs": "7.6.5",
     "tar": "7.5.22",

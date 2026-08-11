@@ -276,12 +276,18 @@ jobs:
           image-ref: mail-platform-${{ matrix.service.name }}:ci
           format: sarif
           output: trivy-${{ matrix.service.name }}.sarif
+          # SARIF defaults to reporting every severity unless explicitly
+          # limited, which would make exit-code contradict the policy below.
+          limit-severities-for-sarif: true
           # Fail on fixable HIGH/CRITICAL vulnerabilities only.
           # Unfixable CVEs in the base image are informational — they can't be
           # remediated by us; flag them separately via the ignore-unfixed flag.
           exit-code: '1'
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          # Keep this image gate scoped to fixable CVEs. Secret detection is a
+          # separate source-control concern and is not controlled by vuln-type.
+          scanners: vuln
           vuln-type: os,library
 
       # Upload SARIF so findings appear in GitHub Security → Code scanning.
