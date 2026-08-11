@@ -17,4 +17,4 @@ RUN apk upgrade --no-cache \
 COPY --chown=node:node --from=base /app /app
 USER node
 # Migrations run in a dedicated release job, not at app startup.
-CMD ["node", "packages/worker/dist/index.js"]
+CMD ["node", "packages/worker/dist/bootstrap.js"]

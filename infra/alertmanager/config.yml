@@ -15,8 +15,10 @@ route:
 receivers:
   - name: 'default'
     webhook_configs:
-      # Set ALERT_WEBHOOK_URL in environment or override this file to receive alerts.
-      - url: '${ALERT_WEBHOOK_URL:-http://localhost:9999/alerts}'
+      # Alertmanager does not expand shell-style environment expressions in
+      # YAML. This local no-op target keeps the development profile valid;
+      # production must mount its reviewed receiver configuration.
+      - url: 'http://host.docker.internal:9999/alerts'
         send_resolved: true
 
 inhibit_rules:

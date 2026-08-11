@@ -18,6 +18,7 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16
@@ -32,6 +33,11 @@ jobs:
         ports: ['6379:6379']
         options: >-
           --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+      mailpit:
+        image: axllent/mailpit:latest
+        ports:
+          - 1026:1025
+          - 8026:8025
     env:
       DATABASE_URL: postgres://postgres:ci@localhost:5432/mail_platform
       REDIS_URL: redis://localhost:6379
@@ -66,12 +72,16 @@ jobs:
           # smtp-gateway: e2e/smtp-gateway.e2e.test.ts imports the built
           # package (exports point at dist/), so it must be compiled here.
           npm run build --workspace=@platform/smtp-gateway
+      - name: Build browser surfaces
+        run: |
+          npm run build:admin
+          npm run build:docs
       - name: Validate production deployment contract
         run: npm run prod:check
       - name: Apply migrations
         run: node packages/shared/dist/bin/migrate.js infra/migrations
-      - name: Run tests (unit + end-to-end)
-        run: npm test
+      - name: Run tests (unit + end-to-end) with product coverage
+        run: npm run test:coverage
         env:
           # The CI job does not run an outbound Haraka service. Use the local
           # sink so live-key persona tests exercise the full queue/worker path
@@ -79,6 +89,114 @@ jobs:
           DELIVERY_TRANSPORT: log
           TRACKING_DOMAIN: http://localhost:4000
           BOUNCE_DOMAIN: bounces.localhost
+          MAILPIT_API_URL: http://127.0.0.1:8026
+      - name: Upload product coverage
+        if: ${{ always() && hashFiles('coverage/product/**') != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: product-coverage
+          path: coverage/product
+          if-no-files-found: error
+
+  browser-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: mail_platform
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:ci@localhost:5432/mail_platform
+      REDIS_HOST: localhost
+      REDIS_PORT: '6379'
+      QUEUE_PREFIX: browser_ci_
+      JWT_SECRET: browser-ci-jwt-secret-padding-padding-padding-padding
+      ENCRYPTION_KEY: '2222222222222222222222222222222222222222222222222222222222222222'
+      API_KEY_PEPPER: browser-ci-pepper-padding-padding-padding
+      VERP_SECRET: browser-ci-verp-secret-padding-padding-padding
+      ADMIN_SESSION_PEPPER: browser-ci-admin-session-pepper-padding-padding
+      USER_SESSION_PEPPER: browser-ci-user-session-pepper-padding-padding
+      MFA_RECOVERY_PEPPER: browser-ci-mfa-recovery-pepper-padding-padding
+      ADMIN_PASSWORD_LOGIN_DISABLED: 'false'
+      ADMIN_COOKIE_SECURE: 'false'
+      ADMIN_CONSOLE_ORIGINS: http://127.0.0.1:5174
+      ADMIN_API_ORIGIN: http://127.0.0.1:3001
+      API_HOST: 127.0.0.1
+      API_PORT: '3001'
+      NODE_ENV: test
+      DELIVERY_TRANSPORT: log
+      PLATFORM_MAIL_DELIVERY: capture
+      ADMIN_PASSWORD: Local-E2E-Only-Password-2026
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: '22', cache: 'npm' }
+      - run: npm ci
+      - name: Build browser-test runtime
+        run: |
+          npm run build --workspace=@platform/shared
+          npm run build --workspace=@platform/api
+          npm run build:admin
+      - name: Apply migrations and seed role fixtures
+        run: |
+          node packages/shared/dist/bin/migrate.js infra/migrations
+          node packages/shared/dist/bin/create-admin.js e2e-support@local.test support "E2E Support"
+          node packages/shared/dist/bin/create-admin.js e2e-operator@local.test operator "E2E Operator"
+          node packages/shared/dist/bin/create-admin.js e2e-admin@local.test admin "E2E Admin"
+          node packages/shared/dist/bin/create-admin.js e2e-superadmin-chromium@local.test superadmin "E2E Chromium"
+          node packages/shared/dist/bin/create-admin.js e2e-superadmin-firefox@local.test superadmin "E2E Firefox"
+          node packages/shared/dist/bin/create-admin.js e2e-superadmin-webkit@local.test superadmin "E2E WebKit"
+      - name: Install browser engines
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Start API
+        run: |
+          node packages/api/dist/bootstrap.js >api-browser-e2e.log 2>&1 &
+          echo $! >api-browser-e2e.pid
+          for attempt in {1..90}; do
+            if curl --fail --silent http://127.0.0.1:3001/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat api-browser-e2e.log
+          exit 1
+      - name: Run real admin console browsers
+        env:
+          ADMIN_E2E_ROLE_CREDENTIALS: >-
+            [{"email":"e2e-support@local.test","password":"Local-E2E-Only-Password-2026","role":"support"},{"email":"e2e-operator@local.test","password":"Local-E2E-Only-Password-2026","role":"operator"},{"email":"e2e-admin@local.test","password":"Local-E2E-Only-Password-2026","role":"admin"},{"email":"e2e-superadmin-chromium@local.test","password":"Local-E2E-Only-Password-2026","role":"superadmin","project":"chromium"},{"email":"e2e-superadmin-firefox@local.test","password":"Local-E2E-Only-Password-2026","role":"superadmin","project":"firefox"},{"email":"e2e-superadmin-webkit@local.test","password":"Local-E2E-Only-Password-2026","role":"superadmin","project":"webkit"}]
+          ADMIN_E2E_MUTATION_EMAIL: e2e-mutation@local.test
+          ADMIN_E2E_MUTATION_PASSWORD: Local-E2E-Only-Password-2026
+        run: npm run test:browser:local --workspace=@platform/admin-console
+      - name: Upload browser failure evidence
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-e2e-failures
+          path: |
+            packages/admin-console/test-results
+            packages/admin-console/playwright-report
+            api-browser-e2e.log
+          if-no-files-found: warn
+
+  deployment-manifests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.x' }
+      - run: python -m pip install --disable-pip-version-check PyYAML
+      - name: Lint and render Helm deployment
+        run: bash scripts/helm-render-check.sh
 
   security:
     runs-on: ubuntu-latest
@@ -87,29 +205,38 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: '22', cache: 'npm' }
       - run: npm ci
-      # Fail the build on high/critical vulnerabilities. Pin runtimes (Node,
-      # Haraka) in production images so this also catches the base image.
-      - name: npm audit (high+)
-        run: npm audit --omit=dev --audit-level=high
+      # Fail the build on moderate/high/critical production vulnerabilities.
+      # Runtime images are scanned separately below for OS/library CVEs.
+      - name: npm audit (moderate+)
+        run: npm audit --omit=dev --audit-level=moderate
         continue-on-error: false
       # Software Bill of Materials artifact for supply-chain auditing.
       - name: Generate SBOM (CycloneDX)
         run: |
-          npx -y @cyclonedx/cyclonedx-npm@^1.16.0 --output-file sbom.json --output-format json || true
+          npx -y @cyclonedx/cyclonedx-npm@^1.16.0 --output-file sbom.json --output-format json
       - uses: actions/upload-artifact@v6
-        with: { name: sbom, path: sbom.json, if-no-files-found: warn }
+        with: { name: sbom, path: sbom.json, if-no-files-found: error }
 
   lint-sql:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       # The migration runner refuses to re-apply a changed checksum; this job
-      # also catches obvious SQL errors by dry-running against a throwaway DB
-      # via the build-and-test job. This step lints filenames are ordered.
+      # also catches SQL errors by applying every migration in build-and-test.
+      # Here, enforce the filename contract that determines runner ordering.
       - name: Verify migration ordering
         run: |
-          ls -1 infra/migrations/*.sql | sort -c
-          echo "migrations are in lexical order ✓"
+          node --input-type=module <<'NODE'
+          import { readdirSync } from 'node:fs';
+          const files = readdirSync('infra/migrations').filter((name) => name.endsWith('.sql'));
+          if (files.length === 0) throw new Error('no SQL migrations found');
+          const invalid = files.filter((name) => !/^\d{3}_[a-z0-9_]+\.sql$/.test(name));
+          if (invalid.length) throw new Error(`invalid migration filenames: ${invalid.join(', ')}`);
+          const prefixes = files.map((name) => name.slice(0, 3));
+          const duplicates = [...new Set(prefixes.filter((prefix, i) => prefixes.indexOf(prefix) !== i))];
+          if (duplicates.length) throw new Error(`duplicate migration prefixes: ${duplicates.join(', ')}`);
+          console.log(`${files.length} migration filenames are deterministic and uniquely ordered ✓`);
+          NODE
 
   image-scan:
     runs-on: ubuntu-latest
@@ -129,28 +256,51 @@ jobs:
             dockerfile: packages/tracker/Dockerfile
           - name: smtp-gateway
             dockerfile: packages/smtp-gateway/Dockerfile
+          - name: haraka-inbound
+            dockerfile: packages/haraka-inbound/Dockerfile
+          - name: haraka-outbound
+            dockerfile: packages/haraka-outbound/Dockerfile
     steps:
       - uses: actions/checkout@v5
 
       - name: Build ${{ matrix.service.name }} image
+        id: build-image
         run: |
           docker build \
             -f ${{ matrix.service.dockerfile }} \
             -t mail-platform-${{ matrix.service.name }}:ci \
             .
 
+      # Table output keeps a failing gate actionable in the job log. SARIF
+      # intentionally writes findings to a file and otherwise hides the rows.
       - name: Scan ${{ matrix.service.name }} image with Trivy
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: mail-platform-${{ matrix.service.name }}:ci
-          format: sarif
-          output: trivy-${{ matrix.service.name }}.sarif
+          format: table
           # Fail on fixable HIGH/CRITICAL vulnerabilities only.
           # Unfixable CVEs in the base image are informational — they can't be
           # remediated by us; flag them separately via the ignore-unfixed flag.
           exit-code: '1'
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          # Keep this image gate scoped to fixable CVEs. Secret detection is a
+          # separate source-control concern and is not controlled by vuln-type.
+          scanners: vuln
+          vuln-type: os,library
+
+      - name: Generate ${{ matrix.service.name }} Trivy SARIF
+        if: ${{ always() && steps.build-image.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: mail-platform-${{ matrix.service.name }}:ci
+          format: sarif
+          output: trivy-${{ matrix.service.name }}.sarif
+          limit-severities-for-sarif: true
+          exit-code: '0'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln
           vuln-type: os,library
 
       # Upload SARIF so findings appear in GitHub Security → Code scanning.

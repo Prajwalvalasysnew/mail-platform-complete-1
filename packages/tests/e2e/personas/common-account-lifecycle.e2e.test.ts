@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { CapturingPlatformMailer, db, setPlatformMailer } from '@platform/shared';
+import { CapturingPlatformMailer, db, setPlatformMailer, totpCode } from '@platform/shared';
 import { buildTestApp } from '../harness.js';
 import {
   PERSONA_PLAN,
@@ -28,6 +28,60 @@ afterAll(async () => {
 });
 
 describe.each(PERSONA_TIERS)('common account lifecycle: %s', (tier: PersonaTier) => {
+  it('enrolls, challenges, and disables TOTP without a plan-specific bypass', async () => {
+    const persona = await registerVerifiedHumanPersona(app, tier, 'totp');
+    const enroll = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/mfa/enroll',
+      headers: sessionHeaders(persona.sessionToken),
+    });
+    expect(enroll.statusCode).toBe(200);
+
+    const confirm = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/mfa/confirm',
+      headers: { ...sessionHeaders(persona.sessionToken), 'content-type': 'application/json' },
+      payload: {
+        factor_id: enroll.json().factor_id,
+        code: totpCode(enroll.json().secret),
+      },
+    });
+    expect(confirm.statusCode).toBe(200);
+    expect(confirm.json().recovery_codes).toHaveLength(10);
+
+    const login = await passwordLogin(app, persona.email, persona.password, `${tier}-mfa-browser`);
+    expect(login.statusCode).toBe(200);
+    expect(login.json().mfa_required).toBe(true);
+    expect((await app.inject({
+      method: 'GET',
+      url: '/v1/auth/me',
+      headers: sessionHeaders(login.json().token),
+    })).statusCode).toBe(403);
+
+    const challenge = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/mfa',
+      headers: { ...sessionHeaders(login.json().token), 'content-type': 'application/json' },
+      payload: { code: totpCode(enroll.json().secret) },
+    });
+    expect(challenge.statusCode).toBe(200);
+    expect((await app.inject({
+      method: 'GET',
+      url: '/v1/auth/me',
+      headers: sessionHeaders(login.json().token),
+    })).statusCode).toBe(200);
+
+    const disable = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/mfa/disable',
+      headers: sessionHeaders(login.json().token),
+    });
+    expect(disable.statusCode).toBe(200);
+    const stored = await db.selectFrom('users').select('mfa_enabled')
+      .where('id', '=', persona.userId).executeTakeFirstOrThrow();
+    expect(stored.mfa_enabled).toBe(false);
+  });
+
   it('registers, verifies, logs in, and resolves the correct organization plan', async () => {
     const persona = await registerVerifiedHumanPersona(app, tier, 'identity');
     const login = await passwordLogin(app, persona.email, persona.password, `${tier}-primary-browser`);

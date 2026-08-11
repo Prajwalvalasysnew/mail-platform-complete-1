@@ -81,7 +81,9 @@ describe('send body offload', () => {
     expect(row.html_body).toBe('<h1>Inline</h1>');
   });
 
-  it('offloads bodies for BATCH sends too (regression: batch path silently dropped bodies)', async () => {
+  it.each(['free', 'paid', 'enterprise'] as const)(
+    'offloads BATCH bodies for the %s tier (regression: batch path silently dropped bodies)',
+    async (tier) => {
     // Regression guard. The /send/batch path previously hard-coded
     // body_storage:'inline' and null'd the body WITHOUT calling bodyStore.put()
     // when a non-inline store was active — so every batch message delivered an
@@ -89,7 +91,7 @@ describe('send body offload', () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'batch-bodies-'));
     setBodyStore(new FilesystemStore(dir));
 
-    const cust = await seedCustomer({ scopes: ['send'] });
+    const cust = await seedCustomer({ tier, scopes: ['send'] });
     const domain = `mailb-${Date.now()}.test.example`;
     await db.insertInto('sending_domains').values({
       customer_id: cust.customerId, domain,
@@ -129,5 +131,6 @@ describe('send body offload', () => {
       expect(loaded.html).toBeTruthy();
       expect(loaded.text).toBeTruthy();
     }
-  });
+    },
+  );
 });

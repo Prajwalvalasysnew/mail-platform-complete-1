@@ -72,46 +72,68 @@ export interface QuotaDecision {
   exceeded?: 'daily' | 'monthly';
 }
 
+export interface QuotaBaseline {
+  daily: number;
+  monthly: number;
+}
+
+/** Load both durable quota baselines in one query on the caller's executor. */
+export async function loadQuotaBaseline(
+  customerId: string,
+  executor: DbExecutor = db,
+): Promise<QuotaBaseline> {
+  const result = await sql<{ daily: string | number; monthly: string | number }>`
+    select
+      coalesce(sum(sent) filter (where usage_date = current_date), 0) as daily,
+      coalesce(
+        sum(sent) filter (
+          where date_trunc('month', usage_date) = date_trunc('month', current_date)
+        ),
+        0
+      ) as monthly
+    from usage_daily
+    where customer_id = ${customerId}::uuid
+  `.execute(executor);
+  const row = result.rows[0];
+  return { daily: Number(row?.daily ?? 0), monthly: Number(row?.monthly ?? 0) };
+}
+
 /**
  * Atomically reserve `count` sends against both the daily and monthly quota.
  * If either limit would be exceeded, nothing is consumed and allowed=false.
+ *
+ * `baselineLoader` is lazy: API callers can open an RLS-scoped transaction only
+ * after a Redis cold cache. Warm sends remain Redis-only while a cache flush
+ * still seeds from the durable tenant-scoped usage ledger.
  */
 export async function reserveQuota(
   customerId: string,
   count: number,
   dailyLimit: number,
   monthlyLimit: number,
-  executor: DbExecutor = db
+  executor: DbExecutor = db,
+  baselineLoader?: () => Promise<QuotaBaseline>,
 ): Promise<QuotaDecision> {
   const dKey = dayKey(customerId);
   const mKey = monthKey(customerId);
+  let baselinePromise: Promise<QuotaBaseline> | undefined;
+  const baseline = () => {
+    baselinePromise ??= baselineLoader
+      ? baselineLoader()
+      : loadQuotaBaseline(customerId, executor);
+    return baselinePromise;
+  };
 
   // Seed from durable store on cold cache (treats a flush as the true sent count,
   // never as permissive zero).
   await ensureSeeded(
     dKey,
-    async () => {
-      const row = await executor
-        .selectFrom('usage_daily')
-        .select('sent')
-        .where('customer_id', '=', customerId)
-        .where(sql<boolean>`usage_date = CURRENT_DATE`)
-        .executeTakeFirst();
-      return Number(row?.sent ?? 0);
-    },
+    async () => (await baseline()).daily,
     DAY_TTL
   );
   await ensureSeeded(
     mKey,
-    async () => {
-      const row = await executor
-        .selectFrom('usage_daily')
-        .select(db.fn.sum<number>('sent').as('total'))
-        .where('customer_id', '=', customerId)
-        .where(sql<boolean>`date_trunc('month', usage_date) = date_trunc('month', CURRENT_DATE)`)
-        .executeTakeFirst();
-      return Number(row?.total ?? 0);
-    },
+    async () => (await baseline()).monthly,
     MONTH_TTL
   );
 

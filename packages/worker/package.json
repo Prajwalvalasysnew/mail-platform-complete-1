@@ -14,8 +14,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js"
+    "dev": "tsx watch src/bootstrap.ts",
+    "start": "node dist/bootstrap.js"
   },
   "dependencies": {
     "@platform/shared": "*",

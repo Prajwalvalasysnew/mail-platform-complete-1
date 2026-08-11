@@ -29,4 +29,26 @@ describe('billing access and entitlements', () => {
     const canceled = await seedCustomer({ billingStatus: 'canceled' });
     expect(await evaluateBillingAccess(canceled.customerId)).toMatchObject({ allowed: false, reason: 'billing_canceled' });
   });
+
+  it('uses the parent billing relationship for a sub-account', async () => {
+    const parent = await seedCustomer({ tier: 'enterprise' });
+    await db.insertInto('subscriptions').values({
+      customer_id: parent.customerId, provider: 'stripe', provider_subscription_id: `sub-parent-${Date.now()}`,
+      plan: 'enterprise', status: 'active', price_id: null,
+    }).execute();
+    const child = await db.insertInto('customers').values({
+      email: `billing-child-${Date.now()}@example.test`,
+      name: 'Billing child',
+      status: 'active',
+      billing_status: 'canceled',
+      tier: 'free',
+      parent_customer_id: parent.customerId,
+    } as any).returning('id').executeTakeFirstOrThrow();
+
+    expect(await evaluateBillingAccess(child.id)).toMatchObject({
+      allowed: true,
+      plan: 'enterprise',
+    });
+    expect(await hasEntitlement(child.id, 'sso')).toBe(true);
+  });
 });

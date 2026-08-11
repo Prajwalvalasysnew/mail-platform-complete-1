@@ -83,7 +83,7 @@ export function KycPage() {
           <EmptyState title="Nothing to review" hint="No tenants match this verification filter." />
         ) : (
           <>
-            <div className="table-wrap">
+            <div className="table-wrap" tabIndex={0}>
               <table className="data">
                 <thead>
                   <tr>

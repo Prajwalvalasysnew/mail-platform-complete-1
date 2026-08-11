@@ -39,7 +39,7 @@ environment, cloud account, workforce, vendors, contracts, or legal posture.
 | Consent ledger and suppression | Implemented and tested | Append-only suppress/unsuppress events record action, reason, source, note, message, and timestamp; sending and workflow paths enforce current suppression | The sender must establish lawful basis, capture any required affirmative consent, publish notices, and control re-subscription |
 | Tenant-safe deletion | Implemented and tested | Application tenant scoping plus fail-closed PostgreSQL RLS and cross-tenant E2E tests constrain export, erasure, legal-hold, and export-artifact access | Production must use the non-bypass database role and pass the startup RLS posture check |
 | Data residency | External gap | No application-level region assignment or region-pinned routing is implemented | Deploy region-scoped API/workers, PostgreSQL, Redis, object storage, ClickHouse, logs, and backups, then prevent cross-region failover |
-| Backup erasure | Partial | Online authoritative stores are addressed. Backup images are still not selectively rewritten, but restore-time re-deletion is implemented: `replayPrivacyTombstones()` re-purges resurrected rows, re-pseudonymizes recovered identifiers, and re-queues object/analytics/queue deletions; `POST /admin/privacy/replay-tombstones`, `privacy-restore-replay.e2e.test.ts` | Define backup expiry and cryptographic erasure where applicable, and legal-hold interaction with the backup provider. A restored node must not serve traffic before replay runs — [restore re-deletion runbook](runbooks/RESTORE_RE_DELETION.md) |
+| Backup erasure | Partial | Online authoritative stores are addressed. Backup images are still not selectively rewritten, but restore-time re-deletion is implemented: `replayPrivacyTombstones()` re-purges resurrected rows, re-pseudonymizes recovered identifiers, and re-queues object/analytics/queue deletions; `POST /admin/privacy/replay-tombstones`, `privacy-restore-replay.e2e.test.ts` | Define backup expiry and cryptographic erasure where applicable, and legal-hold interaction with the backup provider. A restored node must not serve traffic before replay runs. Operators must follow the internal `docs/runbooks/RESTORE_RE_DELETION.md` runbook. |
 
 ## Security controls relevant to regulated deployments
 
@@ -49,7 +49,8 @@ encrypted HIPAA/FERPA secure portal, HIPAA/FERPA rights and disclosure case
 workflows, and a fail-closed SEC/FINRA specialist archive seam. These controls
 make a properly assessed deployment possible; they do not replace signed
 agreements, production evidence, counsel determinations, or independent
-assessment. See [regulated-workload policy](REGULATED_WORKLOAD_POLICY.md).
+assessment. Operators must follow the internal
+`docs/REGULATED_WORKLOAD_POLICY.md` policy.
 
 | Area | Status | What exists | Boundary or remaining work |
 | --- | --- | --- | --- |
@@ -57,7 +58,7 @@ assessment. See [regulated-workload policy](REGULATED_WORKLOAD_POLICY.md).
 | Audit controls | Implemented and tested | Append-only audit events, tenant hash chains, integrity verification, archive preservation, signed checkpoints, WORM-style export, and admin mutation records | Store checkpoints/exports in independently controlled immutable storage and document review/escalation procedures |
 | Secret encryption | Partial | AES-256-GCM protects selected application secrets such as DKIM private keys and MFA seeds. API and worker startup now preload and prove access to AWS KMS or Vault before accepting work; plaintext `KMS_PROVIDER=env` is refused in production unless an explicit single-host exception is recorded | This is not blanket encryption of message bodies, database files, object-store versions, logs, ClickHouse, or backups. Haraka DKIM still consumes a separately isolated raw key until its plugin supports remote KMS |
 | API and service transport | Partial/deployment-dependent | Kubernetes ingress TLS, SMTP STARTTLS configuration, and optional service-mesh mTLS manifests exist | Certificates, cipher policy, internal TLS, HSTS boundary, and endpoint validation require a real deployment |
-| Outbound SMTP transport | Partial | Haraka emits per-delivery `tls_required`/`tls_secured` evidence, which is now recorded per recipient domain (`recipient_domain_tls`). For a tenant with `tls_required`, the send worker refuses delivery to a domain previously observed accepting mail without TLS (`tls_required_domain_unsafe`), and the domain recovers automatically once it delivers over TLS; `transport-security*.e2e.test.ts` | The FIRST delivery to an unseen domain still cannot be protected — the evidence only exists after the hop. Enforcement is hop-by-hop, not end-to-end, so this is not message-level encryption. PHI stays prohibited; see [transport policy](TRANSPORT_SECURITY.md) |
+| Outbound SMTP transport | Partial | Haraka emits per-delivery `tls_required`/`tls_secured` evidence, which is now recorded per recipient domain (`recipient_domain_tls`). For a tenant with `tls_required`, the send worker refuses delivery to a domain previously observed accepting mail without TLS (`tls_required_domain_unsafe`), and the domain recovers automatically once it delivers over TLS; `transport-security*.e2e.test.ts` | The FIRST delivery to an unseen domain still cannot be protected — the evidence only exists after the hop. Enforcement is hop-by-hop, not end-to-end, so this is not message-level encryption. PHI stays prohibited; operators must follow `docs/TRANSPORT_SECURITY.md`. |
 | Availability and contingency | Partial/deployment-dependent | HA/DR manifests and backup, restore, PITR, Redis failover, and operational drill scripts exist | Run them in the target environment, record RPO/RTO, validate all regulated stores, and establish emergency-mode procedures |
 | Malware and abuse controls | Partial/deployment-dependent | Attachment signature checks, optional ClamAV, rate limiting, reputation guard, abuse queue, KYC, suspension, and suppression automation | ClamAV and production alerting must be deployed and monitored; these controls do not replace content governance or incident response |
 | Logging privacy | Implemented in code; deployment-dependent | Sensitive log/trace redaction and bounded operational retention exist | Verify every production sink, support workflow, crash dump, APM vendor, and alert payload |
@@ -125,9 +126,10 @@ be assessed and adequately protected. See the official HHS resources:
 - **PCI DSS:** Checkout is a provider-hosted redirect for every provider, so no
   component stores, processes, or transmits cardholder data; the flow, the
   evidence queries, and the responsibility split are documented in
-  [Payment data flow and PCI DSS scope](PAYMENT_DATA_FLOW.md). Accidental card
+  the internal `docs/PAYMENT_DATA_FLOW.md` payment-data-flow and PCI scope.
+  Accidental card
   data is detected and contained at the send, SMTP, support, and billing-webhook
-  ingresses (see [the card-data runbook](runbooks/CARD_DATA.md)). This repository
+  ingresses (see the internal `docs/runbooks/CARD_DATA.md` runbook). This repository
   still has no PCI DSS assessment or attestation, and cardholder data remains
   prohibited in email content, metadata, support tickets, and webhook fields.
 - **SOC 2 / ISO 27001:** The repository contains useful security controls and

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createSendOutboxRows,
+  dispatchCreatedSendOutbox,
   drainSendOutbox,
   sendQueue,
   seedCustomer,
@@ -32,6 +33,20 @@ describe('send outbox', () => {
 
     const job = await sendQueue.getJob(sendOutboxJobId(messageId));
     expect(job?.data.message_id).toBe(messageId);
+  });
+
+  it('directly dispatches a newly committed durable row without re-claiming it', async () => {
+    const c = await seedCustomer();
+    const messageId = await seedQueuedMessage(c.customerId);
+    const row = { message_id: messageId, customer_id: c.customerId, priority: 5 };
+    await createSendOutboxRows([row]);
+
+    expect(await dispatchCreatedSendOutbox([row])).toBe(1);
+    const persisted = await getSendOutboxRow(messageId);
+    expect(persisted?.status).toBe('enqueued');
+    expect(Number(persisted?.attempts)).toBe(1);
+    expect(persisted?.enqueued_at).toBeTruthy();
+    expect((await sendQueue.getJob(sendOutboxJobId(messageId)))?.data.message_id).toBe(messageId);
   });
 
   it('does not drain rows scheduled for the future', async () => {

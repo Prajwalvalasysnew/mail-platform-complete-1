@@ -141,7 +141,9 @@ export function startWebhookWorker(logger: Logger) {
       // original hostname is still used for the Host header and TLS SNI.
       const dispatcher = ipPinnedDispatcher(validatedAddresses);
 
-      const res = await request(wh.url, {
+      let res;
+      try {
+        res = await request(wh.url, {
         method: 'POST',
         dispatcher,
         headers: {
@@ -154,7 +156,26 @@ export function startWebhookWorker(logger: Logger) {
         bodyTimeout: TIMEOUT_MS,
         headersTimeout: TIMEOUT_MS,
         maxRedirections: 0, // never follow redirects — a 3xx could bounce us to an internal host
-      });
+        });
+      } catch (err: any) {
+        const durationMs = Date.now() - startMs;
+        const errorCode = typeof err?.code === 'string' ? err.code : 'request_failed';
+        log.warn({ error_code: errorCode }, 'webhook request failed; will retry');
+        webhookDeliveryDuration.observe(durationMs);
+        webhookDeliveries.inc({ outcome: 'failure' });
+        await logDelivery(
+          webhook_id,
+          event_id ?? null,
+          event_type,
+          attempt,
+          'failure',
+          durationMs,
+          null,
+          errorCode,
+        ).catch(() => {});
+        if (dispatcher) dispatcher.close().catch(() => dispatcher.destroy().catch(() => {}));
+        throw err;
+      }
 
       // Always drain the response body. undici keeps the connection pinned until
       // the body is consumed; skipping this leaks sockets and, under load,

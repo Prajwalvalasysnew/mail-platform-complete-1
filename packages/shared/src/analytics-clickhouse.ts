@@ -15,6 +15,8 @@
 // "since <today-7> (whole days)" rather than Postgres's exact
 // now()-interval. Dashboard-grade tradeoff, documented here on purpose.
 
+import { clickhouseRequestHeaders } from './clickhouse.js';
+
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_.]*$/;
 
 function dailyTable(): string {
@@ -30,7 +32,7 @@ async function chSelect<T>(query: string, params: Record<string, string>): Promi
   url.searchParams.set('default_format', 'JSON');
   for (const [k, v] of Object.entries(params)) url.searchParams.set(`param_${k}`, v);
   try {
-    const res = await fetch(url, { method: 'POST' });
+    const res = await fetch(url, { method: 'POST', headers: clickhouseRequestHeaders() });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
     const json = (await res.json()) as { data?: T[] };
     return json.data ?? [];

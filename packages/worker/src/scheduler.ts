@@ -60,6 +60,41 @@ interface Job {
   last?: number;
 }
 
+// Auditable scheduler inventory. Keep this explicit so release tests and
+// operational documentation can prove that every periodic control is still
+// present. startScheduler validates the runtime list against it on boot.
+export const SCHEDULER_JOB_NAMES = [
+  'send_outbox_drain',
+  'export_drain',
+  'webhook_secret_rotation_cleanup',
+  'reputation_guard',
+  'blocklist_monitor',
+  'warmup_advance',
+  'dkim_retire',
+  'clickhouse_reconcile',
+  'privacy_erasure_retry',
+  'canspam_unsubscribe_monitor',
+  'idempotency_sweep',
+  'metering_reconcile',
+  'sender_health_sweep',
+  'billing_dunning_sweep',
+  'billing_plan_change_expiry',
+  'billing_plan_change_reconcile',
+  'billing_scheduled_downgrade_apply',
+  'billing_plan_change_sla',
+  'admin_elevation_expiry',
+  'audit_checkpoint',
+  'partition_maintenance',
+  'daily_retention',
+  'control_evidence_collection',
+  'postmaster_ingest',
+  'volume_baseline_update',
+  'stale_send_recovery',
+  'workflow_run_sweep',
+  'workflow_run_retention',
+  'review_queue_timeout',
+] as const;
+
 /**
  * Lightweight in-process scheduler for periodic operational jobs. In a larger
  * deployment these would be separate cron pods (and the functions are pure, so
@@ -540,6 +575,16 @@ export function startScheduler(logger: Logger): { stop: () => void } {
       },
     },
   ];
+
+  const runtimeNames = jobs.map((job) => job.name);
+  if (
+    runtimeNames.length !== SCHEDULER_JOB_NAMES.length ||
+    runtimeNames.some((name, index) => name !== SCHEDULER_JOB_NAMES[index])
+  ) {
+    throw new Error(
+      `Scheduler inventory drift: expected ${SCHEDULER_JOB_NAMES.join(',')}; got ${runtimeNames.join(',')}`,
+    );
+  }
 
   const tick = async () => {
     const now = Date.now();

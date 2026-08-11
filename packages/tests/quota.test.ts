@@ -5,7 +5,7 @@
 // of billing/quota enforcement and had no direct test.
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { reserveQuota, releaseQuota, getQuotaUsage } from '@platform/shared';
+import { db, reserveQuota, releaseQuota, getQuotaUsage } from '@platform/shared';
 import { seedCustomer, resetQuota } from './e2e/harness.js';
 
 describe('reserveQuota', () => {
@@ -27,6 +27,38 @@ describe('reserveQuota', () => {
     const d = await reserveQuota(c.customerId, 5, 100, 1000);
     expect(d.allowed).toBe(true);
     expect(d.daily_used).toBe(7);
+  });
+
+  it('does not invoke the durable baseline loader when Redis counters are warm', async () => {
+    const c = await seedCustomer();
+    await resetQuota(c.customerId);
+    await reserveQuota(c.customerId, 1, 100, 1000);
+
+    let loads = 0;
+    const d = await reserveQuota(c.customerId, 1, 100, 1000, db, async () => {
+      loads++;
+      return { daily: 999, monthly: 999 };
+    });
+
+    expect(d.allowed).toBe(true);
+    expect(d.daily_used).toBe(2);
+    expect(loads).toBe(0);
+  });
+
+  it('loads both durable baselines once when Redis counters are cold', async () => {
+    const c = await seedCustomer();
+    await resetQuota(c.customerId);
+
+    let loads = 0;
+    const d = await reserveQuota(c.customerId, 1, 100, 1000, db, async () => {
+      loads++;
+      return { daily: 7, monthly: 11 };
+    });
+
+    expect(d.allowed).toBe(true);
+    expect(d.daily_used).toBe(8);
+    expect(d.monthly_used).toBe(12);
+    expect(loads).toBe(1);
   });
 
   it('rejects when the daily limit would be exceeded, consuming nothing', async () => {

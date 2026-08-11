@@ -9,30 +9,45 @@ BullMQ, Haraka, ClickHouse, React, and Docker.
 
 ## Current validation status
 
-- 1,195 automated tests, including dedicated regulated-mode,
+- 1,236 automated tests, including dedicated regulated-mode,
   secure-portal, rights-workflow, archive, and activation-evidence suites.
 - Free, Paid Pro, and Enterprise persona journeys are covered.
-- 95 PostgreSQL migration files are tracked; the latest is `096`
+- 96 PostgreSQL migration files are tracked; the latest is `097`
   (the historical numbering intentionally contains gaps).
 - Production workspace builds pass.
 - `npm audit --omit=dev --audit-level=high` reports no production dependency
   vulnerabilities.
 - CI scans production container images with Trivy.
 - The template-mode production readiness check passes.
-- The final clean local aggregate on 2026-07-27 passed 171/171 files and
-  1,195/1,195 tests. Real local-development Free, Paid Pro, Enterprise, HIPAA,
+- The final product-aware real-development aggregate on 2026-07-30 passed
+  176/176 files and 1,236/1,236 tests with 75.43% statement, 64.39% branch,
+  77.72% function, and 79.42% line coverage. Real local-development Free, Paid
+  Pro, Enterprise, HIPAA,
   FERPA, SEC/FINRA fail-closed, and SOC2-06 evidence-review journeys also
   passed against the development database, Redis, worker, tracker, and Mailpit.
 - The complete run IDs and evidence are recorded in the
-  [end-to-end validation report](docs/END_TO_END_VALIDATION_REPORT_2026-07-27.md).
+  [local end-to-end validation report](docs/testing/LOCAL_END_TO_END_VALIDATION_REPORT_2026-07-29.md).
+- Remaining target-host, provider, independent-assessment, and release gates
+  are tracked in the
+  [end-to-end production test plan](docs/testing/END_TO_END_PRODUCTION_TEST_PLAN.md).
 
-This describes code-level readiness. Production operation still requires live
-IP/domain warmup, reputation evidence, backup and failover drills on the target
-infrastructure, production load testing, ClamAV deployment, and an independent
+This describes code-level readiness, not production approval. Send-path
+round-trip reduction improved the best real Paid live-key run to p95 1.95s and
+p99 2.46s, with 286/286 requests accepted and no HTTP failures. Repeated runs
+on this Windows Docker host still missed the <250ms p95 and <500ms p99
+send-accept SLO (observed optimized range: p95 1.95–3.38s, p99 2.46–4.14s).
+Production operation still requires target-host performance qualification,
+live IP/domain warmup, reputation evidence, backup and failover drills on the
+target infrastructure, ClamAV deployment, and an independent
 security/compliance assessment. See [Production checklist](docs/PRODUCTION_CHECKLIST.md)
 and [Operational drills](docs/OPERATIONAL_DRILLS.md).
 
 ## Feature catalogue
+
+For the exhaustive engineering inventory—including customer, delivery,
+administration, billing, privacy, compliance, observability, infrastructure,
+scheduled jobs, testing, and known boundaries—see the
+[Complete Platform Feature Inventory](docs/COMPLETE_FEATURE_INVENTORY.md).
 
 | Area | Implemented capabilities |
 | --- | --- |
@@ -72,7 +87,12 @@ API-key scope or human membership capability rather than being hidden by plan.
 | Monthly quota used by persona tests | 3,000 | 1,000,000 | 50,000,000 |
 | Standard send priority | 10 | 5 | 1 |
 | Requested critical lane | Downgraded | Eligible | Eligible |
+| Default event/activity retention | 7 days | 90 days | 365 days* |
+| Default message-body retention | 7 days | 90 days | 90 days* |
+| HIPAA/FERPA/SEC-FINRA eligibility | No | No | Evidence-gated |
 | Billing plan | `free` | `pro` | `enterprise` |
+
+`*` Retention is bounded by the deployment's configured physical ceilings.
 
 The authoritative feature-by-tier contract is the
 [Persona E2E feature matrix](docs/testing/PERSONA_FEATURE_MATRIX.md).
@@ -104,9 +124,13 @@ attachment malware scanning, SMTP rate limits, RLS, crash consistency, event
 idempotency, retention, privacy tombstones, bot detection, security headers,
 admin MFA/JIT, audit WORM checkpoints, ClickHouse reconciliation, and more.
 
-These are API/service E2E tests using real infrastructure. The admin console has
-build/type checks and its backend flows are covered, but a separate browser
-Playwright suite is not currently claimed.
+These are API/service E2E tests using real infrastructure. Sixteen real
+Playwright journeys pass across Chromium, Firefox, and WebKit, verifying admin
+login, HttpOnly session restoration, all 13 console routes, WCAG 2 A/AA
+automated checks, support/operator/admin/superadmin navigation and direct-route
+denials, a real admin create/change/disable lifecycle, authenticated
+API/console-error checks, and logout. The state-changing lifecycle runs once in
+Chromium; its Firefox and WebKit duplicates are intentionally skipped.
 
 ## Compliance posture
 
@@ -338,14 +362,21 @@ Do not run migrations concurrently from every application replica.
 | Redis | `localhost:6379` | Queues, cache, and rate limits |
 | Worker metrics | <http://localhost:9100> | Prometheus metrics |
 | SMTP metrics | <http://localhost:9102> | SMTP gateway metrics/health |
-| Prometheus | <http://localhost:9090> | Metrics, monitoring profile |
+| Prometheus | <http://localhost:9090> | Metrics, monitoring profile; override with `PROMETHEUS_HOST_PORT` if occupied |
 | Grafana | <http://localhost:3002> | Dashboards, monitoring profile |
 | Alertmanager | <http://localhost:9093> | Alert routing, monitoring profile |
 | Jaeger | <http://localhost:16686> | Trace UI, monitoring profile |
 | ClickHouse HTTP | `localhost:8123` | Analytics, analytics profile |
 
 Start optional monitoring/analytics services with the applicable Compose
-profiles defined in `docker-compose.yml`.
+profiles defined in `docker-compose.yml`:
+
+```powershell
+docker compose --profile monitoring --profile analytics up -d
+```
+
+The 2026-07-29 validation used port `9091` for Prometheus because another local
+service already owned `9090`; all four configured scrape targets were healthy.
 
 ## Admin console
 

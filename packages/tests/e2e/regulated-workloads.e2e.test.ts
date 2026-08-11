@@ -57,11 +57,15 @@ describe('regulated workload activation is fail-closed', () => {
     await app.close();
   });
 
-  it('refuses non-Enterprise requests', async () => {
+  it.each([
+    ...(['free', 'paid'] as const).flatMap((tier) =>
+      (['hipaa', 'ferpa', 'sec_finra'] as const).map((mode) => ({ tier, mode })),
+    ),
+  ])('refuses $tier requests for $mode', async ({ tier, mode }) => {
     const app = await buildTestApp();
-    const tenant = await seedCustomer({ tier: 'paid' });
+    const tenant = await seedCustomer({ tier });
     const res = await app.inject({
-      method: 'POST', url: '/v1/compliance/workloads/ferpa/request', headers: bearer(tenant.apiKey),
+      method: 'POST', url: `/v1/compliance/workloads/${mode}/request`, headers: bearer(tenant.apiKey),
     });
     expect(res.statusCode).toBe(403);
     expect(res.json().error).toBe('enterprise_required');

@@ -13,6 +13,7 @@ import type { FastifyInstance } from 'fastify';
 let server: http.Server;
 let baseUrl: string;
 let lastQueries: URL[] = [];
+let lastHeaders: http.IncomingHttpHeaders[] = [];
 let failNext = false;
 // Rows the stub returns for the next SELECT (ClickHouse JSON wire format).
 let nextData: unknown[] = [];
@@ -21,6 +22,7 @@ beforeAll(async () => {
   server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://stub');
     lastQueries.push(url);
+    lastHeaders.push(req.headers);
     req.resume();
     req.on('end', () => {
       if (failNext) { failNext = false; res.statusCode = 503; res.end('unavailable'); return; }
@@ -31,16 +33,21 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, r));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   process.env.EVENTS_CLICKHOUSE_URL = baseUrl;
+  process.env.EVENTS_CLICKHOUSE_USER = 'analytics-e2e';
+  process.env.EVENTS_CLICKHOUSE_PASSWORD = 'analytics-e2e-key';
 });
 
 afterAll(async () => {
   delete process.env.EVENTS_CLICKHOUSE_URL;
+  delete process.env.EVENTS_CLICKHOUSE_USER;
+  delete process.env.EVENTS_CLICKHOUSE_PASSWORD;
   await new Promise<void>((r) => server.close(() => r()));
   await app.close();
 });
 
 beforeEach(() => {
   lastQueries = [];
+  lastHeaders = [];
   nextData = [];
   failNext = false;
 });
@@ -80,6 +87,8 @@ describe('analytics served from the ClickHouse rollup', () => {
     expect(q.searchParams.get('query')).toContain('uniqExactMerge(event_uniq)');
     expect(q.searchParams.get('query')).toContain('events_daily');
     expect(q.searchParams.get('param_customer_id')).toBe(customerId);
+    expect(lastHeaders.at(-1)?.['x-clickhouse-user']).toBe('analytics-e2e');
+    expect(lastHeaders.at(-1)?.['x-clickhouse-key']).toBe('analytics-e2e-key');
   });
 
   it('daily timeseries is served from the rollup, hourly stays on Postgres', async () => {

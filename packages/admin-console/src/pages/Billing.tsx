@@ -119,7 +119,7 @@ export function BillingPage() {
         ) : rows.length === 0 ? (
           <EmptyState title="No billing events" hint="Provider webhooks have not delivered any events yet." />
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={0}>
             <table className="data">
               <thead>
                 <tr>

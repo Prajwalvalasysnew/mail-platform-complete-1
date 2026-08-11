@@ -10,22 +10,23 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@platform/shared": "*",
     "@platform/api": "*",
-    "@platform/worker": "*",
+    "@platform/shared": "*",
     "@platform/smtp-gateway": "*",
-    "@platform/tracker": "*"
+    "@platform/tracker": "*",
+    "@platform/worker": "*"
   },
   "devDependencies": {
-    "vitest": "^4.1.7",
-    "dotenv": "^16.4.5",
-    "typescript": "^5.4.0",
-    "@types/node": "^20.11.0",
-    "fastify": "^5.2.0",
-    "@fastify/sensible": "^6.0.2",
     "@fastify/rate-limit": "^10.1.1",
+    "@fastify/sensible": "^6.0.2",
     "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-trace-base": "^2.9.0",
     "@opentelemetry/sdk-trace-node": "^2.9.0",
-    "@opentelemetry/sdk-trace-base": "^2.9.0"
+    "@types/node": "^20.11.0",
+    "@vitest/coverage-v8": "^4.1.9",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.2.0",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.7"
   }
 }

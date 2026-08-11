@@ -102,7 +102,7 @@ export function AuditPage() {
         ) : rows.length === 0 ? (
           <EmptyState title="No audit entries" hint="No admin actions match this filter." />
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={0}>
             <table className="data">
               <thead>
                 <tr>

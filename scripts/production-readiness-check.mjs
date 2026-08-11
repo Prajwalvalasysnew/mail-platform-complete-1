@@ -27,6 +27,7 @@ const required = [
   'ADMIN_TOKEN',
   'METRICS_TOKEN',
   'ADMIN_PASSWORD_LOGIN_DISABLED',
+  'ADMIN_COOKIE_SECURE',
   'PLATFORM_DOMAIN',
   'APP_BASE_URL',
   'TRACKING_DOMAIN',
@@ -113,6 +114,7 @@ for (const name of required) {
 
 check(env.NODE_ENV === 'production', 'NODE_ENV must be production', failures);
 check(env.ADMIN_PASSWORD_LOGIN_DISABLED === 'true', 'ADMIN_PASSWORD_LOGIN_DISABLED must be true in production', failures);
+check(env.ADMIN_COOKIE_SECURE === 'true', 'ADMIN_COOKIE_SECURE must be true in production', failures);
 check(env.AUDIT_WORM_PROVIDER === 's3', 'AUDIT_WORM_PROVIDER must be s3', failures);
 check(/^[0-9a-fA-F]{64}$/.test(env.ENCRYPTION_KEY || '') || useTemplate, 'ENCRYPTION_KEY must be a 64-char hex value', failures);
 check(['aws', 'vault', 'env'].includes((env.KMS_PROVIDER || '').toLowerCase()), 'KMS_PROVIDER must be aws, vault, or env', failures);
@@ -160,6 +162,7 @@ if (config?.services) {
     check(Boolean(config.services[service]?.environment?.METRICS_TOKEN), `${service} must require METRICS_TOKEN`, failures);
   }
   check(config.services.api?.environment?.ADMIN_PASSWORD_LOGIN_DISABLED === 'true', 'api must disable password admin login in production', failures);
+  check(config.services.api?.environment?.ADMIN_COOKIE_SECURE === 'true', 'api must force secure admin cookies in production', failures);
   check(Boolean(config.services.api?.environment?.OIDC_ISSUER_URL), 'api must configure OIDC_ISSUER_URL in production', failures);
   check(Boolean(config.services.api?.environment?.OIDC_CLIENT_ID), 'api must configure OIDC_CLIENT_ID in production', failures);
   check(Boolean(config.services.api?.environment?.OIDC_REQUIRED_AUTH_CONTEXT), 'api must enforce an OIDC MFA/authentication context', failures);

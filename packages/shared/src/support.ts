@@ -1,6 +1,11 @@
-import { sql } from 'kysely';
+import { sql, type Selectable } from 'kysely';
 import { db } from './db.js';
-import type { SupportTicketCategory, SupportTicketPriority, SupportTicketStatus } from './schema.js';
+import type {
+  SupportTicketCategory,
+  SupportTicketPriority,
+  SupportTicketStatus,
+  SupportTicketReadsTable,
+} from './schema.js';
 import { getInferenceProvider } from './inference.js';
 
 // SLA targets in minutes by priority: [first response, resolution]. Mirrors a
@@ -474,35 +479,56 @@ export async function markSupportTicketRead(input: {
   viewerUserId?: string;
   viewerAdminUserId?: string;
   customerId?: string;
-}) {
-  let ticketQuery = db.selectFrom('support_tickets').select(['id']).where('id', '=', input.ticketId);
-  if (input.customerId) ticketQuery = ticketQuery.where('customer_id', '=', input.customerId);
-  const ticket = await ticketQuery.executeTakeFirst();
-  if (!ticket) return null;
+}): Promise<Selectable<SupportTicketReadsTable> | null> {
+  const customerScope = input.customerId
+    ? sql`and ticket.customer_id = ${input.customerId}::uuid`
+    : sql``;
 
-  const now = new Date();
-  let update = db
-    .updateTable('support_ticket_reads')
-    .set({ last_read_at: now } as any)
-    .where('ticket_id', '=', input.ticketId)
-    .where('viewer_type', '=', input.viewerType);
-  update = input.viewerType === 'customer_user'
-    ? update.where('viewer_user_id', '=', input.viewerUserId!)
-    : update.where('viewer_admin_user_id', '=', input.viewerAdminUserId!);
-  const updated = await update.returningAll().executeTakeFirst();
-  if (updated) return updated;
+  // One INSERT .. SELECT .. ON CONFLICT statement is required here. The former
+  // UPDATE-then-INSERT sequence let two browser effects both observe no marker
+  // and race into the partial unique index, returning an avoidable HTTP 500.
+  // Using the database clock also avoids cross-host clock skew.
+  if (input.viewerType === 'customer_user') {
+    if (!input.viewerUserId) throw new Error('viewerUserId is required for a customer read marker');
+    const result = await sql<Selectable<SupportTicketReadsTable>>`
+      insert into support_ticket_reads (
+        ticket_id, viewer_type, viewer_user_id, viewer_admin_user_id,
+        last_read_at, updated_at
+      )
+      select ticket.id, 'customer_user', ${input.viewerUserId}::uuid, null,
+             current_timestamp, current_timestamp
+      from support_tickets ticket
+      where ticket.id = ${input.ticketId}::uuid
+      ${customerScope}
+      on conflict (ticket_id, viewer_user_id)
+        where viewer_type = 'customer_user'
+      do update set
+        last_read_at = current_timestamp,
+        updated_at = current_timestamp
+      returning *
+    `.execute(db);
+    return result.rows[0] ?? null;
+  }
 
-  return db
-    .insertInto('support_ticket_reads')
-    .values({
-      ticket_id: input.ticketId,
-      viewer_type: input.viewerType,
-      viewer_user_id: input.viewerType === 'customer_user' ? input.viewerUserId! : null,
-      viewer_admin_user_id: input.viewerType === 'admin' ? input.viewerAdminUserId! : null,
-      last_read_at: now,
-    } as any)
-    .returningAll()
-    .executeTakeFirstOrThrow();
+  if (!input.viewerAdminUserId) throw new Error('viewerAdminUserId is required for an admin read marker');
+  const result = await sql<Selectable<SupportTicketReadsTable>>`
+    insert into support_ticket_reads (
+      ticket_id, viewer_type, viewer_user_id, viewer_admin_user_id,
+      last_read_at, updated_at
+    )
+    select ticket.id, 'admin', null, ${input.viewerAdminUserId}::uuid,
+           current_timestamp, current_timestamp
+    from support_tickets ticket
+    where ticket.id = ${input.ticketId}::uuid
+    ${customerScope}
+    on conflict (ticket_id, viewer_admin_user_id)
+      where viewer_type = 'admin'
+    do update set
+      last_read_at = current_timestamp,
+      updated_at = current_timestamp
+    returning *
+  `.execute(db);
+  return result.rows[0] ?? null;
 }
 
 export async function countUnreadSupportTickets(input: {

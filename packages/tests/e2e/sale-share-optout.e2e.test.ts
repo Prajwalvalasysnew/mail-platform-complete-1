@@ -8,8 +8,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { app as tracker } from '@platform/tracker/app';
-import { buildTestApp, seedCustomer, seedVerifiedDomain } from './harness.js';
+import { buildTestApp, loadTrackerApp, seedCustomer, seedVerifiedDomain } from './harness.js';
 import {
   db,
   isGpcSignal,
@@ -23,8 +22,13 @@ import {
 } from '@platform/shared';
 
 let app: FastifyInstance;
-beforeAll(async () => { app = await buildTestApp(); await tracker.ready(); });
-afterAll(async () => { await app.close(); await tracker.close(); });
+let tracker: FastifyInstance | undefined;
+beforeAll(async () => {
+  app = await buildTestApp();
+  tracker = await loadTrackerApp();
+  await tracker.ready();
+});
+afterAll(async () => { await app?.close(); await tracker?.close(); });
 
 const recipient = () => `sale-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@example.com`;
 const hdr = (k: string) => ({ authorization: `Bearer ${k}`, 'content-type': 'application/json' });

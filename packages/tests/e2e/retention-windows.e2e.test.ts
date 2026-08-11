@@ -69,6 +69,51 @@ describe('tenant retention window resolution', () => {
     expect(w.eventsDays).toBe(7); // free plan seeds 7/7 in migration 065
     expect(w.bodyDays).toBe(7);
   });
+
+  it.each([
+    { plan: 'pro', expectedEvents: 90, expectedBody: 90 },
+    // Enterprise requests 365 days of event history, but the deployment's
+    // 90-day physical event ceiling remains fail-closed until operators raise
+    // RETENTION_EVENT_DAYS and provision matching partitions/storage.
+    { plan: 'enterprise', expectedEvents: 90, expectedBody: 90 },
+  ])(
+    '$plan plan resolves its catalog entitlement within deployment ceilings',
+    async ({ plan, expectedEvents, expectedBody }) => {
+      const { customerId } = await seedCustomer({
+        tier: plan === 'enterprise' ? 'enterprise' : 'paid',
+      });
+      await db.insertInto('subscriptions').values({
+        customer_id: customerId,
+        plan,
+        status: 'active',
+      } as any).execute();
+      clearRetentionPolicyCache();
+
+      const w = await resolveTenantRetention(customerId, db, DEFAULTS);
+      expect(w).toEqual({
+        eventsDays: expectedEvents,
+        bodyDays: expectedBody,
+        explicit: true,
+      });
+    },
+  );
+
+  it('Enterprise receives the full 365-day event entitlement when the deployment ceiling supports it', async () => {
+    const { customerId } = await seedCustomer({ tier: 'enterprise' });
+    await db.insertInto('subscriptions').values({
+      customer_id: customerId,
+      plan: 'enterprise',
+      status: 'active',
+    } as any).execute();
+    clearRetentionPolicyCache();
+
+    const w = await resolveTenantRetention(customerId, db, {
+      eventsDays: 365,
+      bodyDays: 90,
+      messageDays: 395,
+    });
+    expect(w).toEqual({ eventsDays: 365, bodyDays: 90, explicit: true });
+  });
 });
 
 describe('per-tenant retention enforcement in the sweep', () => {

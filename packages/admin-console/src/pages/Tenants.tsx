@@ -56,7 +56,7 @@ export function TenantsPage() {
           <EmptyState title="No tenants match" hint="Adjust the search or filters." />
         ) : (
           <>
-            <div className="table-wrap">
+            <div className="table-wrap" tabIndex={0}>
               <table className="data">
                 <thead>
                   <tr>

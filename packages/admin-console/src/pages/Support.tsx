@@ -253,7 +253,7 @@ function TicketThread({ ticket }: { ticket: TicketRow }) {
                   </div>
                 ) : null}
                 <div style={{ whiteSpace: 'pre-wrap' }}>{m.body}</div>
-                <div style={{ fontSize: 10.5, marginTop: 6, opacity: 0.75 }}>
+                <div style={{ fontSize: 10.5, marginTop: 6, opacity: isAgent ? 1 : 0.75 }}>
                   {fmtDate(m.created_at)} · {m.author_admin_email ?? m.author_user_email ?? m.author_type}
                 </div>
               </div>
@@ -346,19 +346,19 @@ function TicketDetailsRail({ ticket }: { ticket: TicketRow }) {
 
       <div className="field">
         <label>Priority</label>
-        <select className="select" value={t.priority} onChange={(e) => patch.mutate({ priority: e.target.value })}>
+        <select aria-label="Ticket priority" className="select" value={t.priority} onChange={(e) => patch.mutate({ priority: e.target.value })}>
           {['low', 'normal', 'high', 'urgent'].map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
       </div>
       <div className="field">
         <label>Status</label>
-        <select className="select" value={t.status} onChange={(e) => patch.mutate({ status: e.target.value })}>
+        <select aria-label="Ticket status" className="select" value={t.status} onChange={(e) => patch.mutate({ status: e.target.value })}>
           {['open', 'pending', 'resolved', 'closed'].map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
       <div className="field">
         <label>Category</label>
-        <select className="select" value={t.category} onChange={(e) => patch.mutate({ category: e.target.value })}>
+        <select aria-label="Ticket category" className="select" value={t.category} onChange={(e) => patch.mutate({ category: e.target.value })}>
           {['general', 'billing', 'deliverability', 'technical', 'abuse', 'account'].map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>

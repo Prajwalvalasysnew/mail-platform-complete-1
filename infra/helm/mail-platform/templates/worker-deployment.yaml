@@ -21,7 +21,6 @@ spec:
     metadata:
       labels:
         {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "worker") | nindent 8 }}
-        app.kubernetes.io/name: {{ include "mail-platform.name" . }}
     spec:
       terminationGracePeriodSeconds: 120
       securityContext:

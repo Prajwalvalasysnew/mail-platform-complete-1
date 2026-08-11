@@ -6,6 +6,9 @@
 // Uses a test-mode key (mp_test_) by default so the test exercises the full
 // stack — auth, quota, abuse, queue admission — without sending real mail or
 // touching IP reputation. Switch to a live key only against a controlled env.
+// The target must set API_RATE_LIMIT_PER_MINUTE and
+// SEND_RATE_LIMIT_PER_MINUTE above the planned request rate; otherwise a valid
+// rate-limit exercise will correctly fail the >99% acceptance SLO below.
 //
 // The thresholds below are the SLO contract: if any fails, the load test
 // fails CI and the build is rejected.
@@ -16,6 +19,7 @@ import { Trend, Counter } from 'k6/metrics';
 
 const API_URL = __ENV.API_URL || 'http://localhost:3000';
 const API_KEY = __ENV.API_KEY || 'mp_test_REPLACE_ME';
+const FROM_ADDRESS = __ENV.FROM_ADDRESS || 'sender@verified.example.com';
 
 export const options = {
   // Two-stage ramp: warm up to 50 RPS, then sustain at 200 RPS for 2 min.
@@ -39,7 +43,7 @@ const rateLimited = new Counter('mp_rate_limited');
 
 export default function () {
   const payload = JSON.stringify({
-    from: 'sender@verified.example.com',
+    from: FROM_ADDRESS,
     to: `recipient+${__VU}-${__ITER}@example.com`,
     subject: 'Load test message',
     text: 'This is a transactional message body.',
