@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "bullmq": "^5.4.0",
-    "Haraka": "3.2.1",
+    "haraka": "3.3.2",
     "haraka-plugin-dkim": "^1.0.5",
     "ioredis": "^5.3.2",
     "nodemailer": "^9.0.1",

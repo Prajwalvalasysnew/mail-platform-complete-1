@@ -264,21 +264,20 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Build ${{ matrix.service.name }} image
+        id: build-image
         run: |
           docker build \
             -f ${{ matrix.service.dockerfile }} \
             -t mail-platform-${{ matrix.service.name }}:ci \
             .
 
+      # Table output keeps a failing gate actionable in the job log. SARIF
+      # intentionally writes findings to a file and otherwise hides the rows.
       - name: Scan ${{ matrix.service.name }} image with Trivy
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: mail-platform-${{ matrix.service.name }}:ci
-          format: sarif
-          output: trivy-${{ matrix.service.name }}.sarif
-          # SARIF defaults to reporting every severity unless explicitly
-          # limited, which would make exit-code contradict the policy below.
-          limit-severities-for-sarif: true
+          format: table
           # Fail on fixable HIGH/CRITICAL vulnerabilities only.
           # Unfixable CVEs in the base image are informational — they can't be
           # remediated by us; flag them separately via the ignore-unfixed flag.
@@ -287,6 +286,20 @@ jobs:
           ignore-unfixed: true
           # Keep this image gate scoped to fixable CVEs. Secret detection is a
           # separate source-control concern and is not controlled by vuln-type.
+          scanners: vuln
+          vuln-type: os,library
+
+      - name: Generate ${{ matrix.service.name }} Trivy SARIF
+        if: ${{ always() && steps.build-image.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: mail-platform-${{ matrix.service.name }}:ci
+          format: sarif
+          output: trivy-${{ matrix.service.name }}.sarif
+          limit-severities-for-sarif: true
+          exit-code: '0'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
           scanners: vuln
           vuln-type: os,library
 
