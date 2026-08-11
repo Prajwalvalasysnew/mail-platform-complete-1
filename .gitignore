@@ -8,9 +8,12 @@ dist/
 .env.production.local
 .DS_Store
 coverage/
+packages/admin-console/playwright-report/
+packages/admin-console/test-results/
 .turbo/
 .next/
 .cache/
+.worktrees/
 
 # Haraka runtime
 packages/haraka-*/queue/

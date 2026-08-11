@@ -127,7 +127,7 @@ function PoolCard({ pool }: { pool: ReputationPool }) {
       </div>
 
       {pool.ips.length > 0 ? (
-        <div className="table-wrap" style={{ borderTop: '1px solid var(--border-soft)' }}>
+        <div className="table-wrap" tabIndex={0} style={{ borderTop: '1px solid var(--border-soft)' }}>
           <table className="data">
             <thead>
               <tr>

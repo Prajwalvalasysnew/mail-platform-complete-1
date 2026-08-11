@@ -101,12 +101,17 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       API_PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       JWT_SECRET: dev-secret-change-in-production-min-32-chars
       ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
       VERP_SECRET: dev-verp-secret-change-me-min-16
       STRIPE_WEBHOOK_SECRET: ""
       ADMIN_TOKEN: dev-admin-token-change-me
+      # Local HTTP only. Production forces Secure __Host- cookies.
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
       API_KEY_PEPPER: change-me-pepper-min-32-chars-required-in-prod
+      API_RATE_LIMIT_PER_MINUTE: ${API_RATE_LIMIT_PER_MINUTE:-1000}
+      SEND_RATE_LIMIT_PER_MINUTE: ${SEND_RATE_LIMIT_PER_MINUTE:-300}
       CORS_ALLOWED_ORIGINS: http://localhost:8080
       TRACKING_DOMAIN: http://localhost:4000
       BOUNCE_DOMAIN: bounces.localhost
@@ -114,6 +119,12 @@ services:
       METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN in .env}
       # Set when running with --profile monitoring to enable distributed tracing.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
+      EVENTS_CLICKHOUSE_URL: ${EVENTS_CLICKHOUSE_URL:-}
+      EVENTS_CLICKHOUSE_TABLE: ${EVENTS_CLICKHOUSE_TABLE:-mail.events}
+      EVENTS_CLICKHOUSE_USER: ${EVENTS_CLICKHOUSE_USER:-}
+      EVENTS_CLICKHOUSE_PASSWORD: ${EVENTS_CLICKHOUSE_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,8 +138,15 @@ services:
       context: .
       dockerfile: packages/worker/Dockerfile
     container_name: mail-worker
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9100/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     ports:
-      - "9100:9100"
+      - "${WORKER_METRICS_HOST_PORT:-9100}:9100"
     environment:
       NODE_ENV: development
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
@@ -148,12 +166,19 @@ services:
       VERP_SECRET: dev-verp-secret-change-me-min-16
       API_KEY_PEPPER: change-me-pepper-min-32-chars-required-in-prod
       WORKER_METRICS_PORT: 9100
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN in .env}
       SES_SMTP_HOST: email-smtp.us-east-1.amazonaws.com
       SES_SMTP_PORT: 587
       SES_SMTP_USER: ""
       SES_SMTP_PASS: ""
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
+      EVENTS_CLICKHOUSE_URL: ${EVENTS_CLICKHOUSE_URL:-}
+      EVENTS_CLICKHOUSE_TABLE: ${EVENTS_CLICKHOUSE_TABLE:-mail.events}
+      EVENTS_CLICKHOUSE_USER: ${EVENTS_CLICKHOUSE_USER:-}
+      EVENTS_CLICKHOUSE_PASSWORD: ${EVENTS_CLICKHOUSE_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -170,8 +195,8 @@ services:
     image: axllent/mailpit:latest
     container_name: mail-mailpit
     ports:
-      - "8025:8025"
-      - "1025:1025"
+      - "${MAILPIT_UI_HOST_PORT:-8025}:8025"
+      - "${MAILPIT_SMTP_HOST_PORT:-1025}:1025"
 
   smtp-gateway:
     build:
@@ -179,7 +204,8 @@ services:
       dockerfile: packages/smtp-gateway/Dockerfile
     container_name: mail-smtp-gateway
     ports:
-      - "587:587"
+      - "${SMTP_GATEWAY_HOST_PORT:-587}:587"
+      - "${SMTP_METRICS_HOST_PORT:-9102}:9102"
     environment:
       NODE_ENV: development
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
@@ -203,15 +229,18 @@ services:
       dockerfile: packages/tracker/Dockerfile
     container_name: mail-tracker
     ports:
-      - "4000:4000"
+      - "${TRACKER_HOST_PORT:-4000}:4000"
     environment:
       NODE_ENV: development
       DATABASE_URL: postgresql://mail:mailpass@postgres:5432/mail_platform
       REDIS_HOST: redis
       REDIS_PORT: 6379
       TRACKER_PORT: 4000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN in .env}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
     depends_on:
       postgres:
         condition: service_healthy
@@ -225,10 +254,13 @@ services:
     container_name: mail-prometheus
     profiles: ["monitoring"]
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
     volumes:
       - ./infra/prometheus:/etc/prometheus:ro
       - promdata:/prometheus
+    secrets:
+      - source: metrics_token
+        target: metrics_token
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
 
@@ -237,7 +269,7 @@ services:
     container_name: mail-grafana
     profiles: ["monitoring"]
     ports:
-      - "3002:3000"
+      - "${GRAFANA_HOST_PORT:-3002}:3000"
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
@@ -252,7 +284,7 @@ services:
     container_name: mail-alertmanager
     profiles: ["monitoring"]
     ports:
-      - "9093:9093"
+      - "${ALERTMANAGER_HOST_PORT:-9093}:9093"
     volumes:
       - ./infra/alertmanager:/etc/alertmanager:ro
     command:
@@ -265,8 +297,8 @@ services:
     container_name: mail-jaeger
     profiles: ["monitoring"]
     ports:
-      - "16686:16686"   # Jaeger UI
-      - "4318:4318"     # OTLP HTTP receiver
+      - "${JAEGER_UI_HOST_PORT:-16686}:16686"   # Jaeger UI
+      - "${OTLP_HTTP_HOST_PORT:-4318}:4318"     # OTLP HTTP receiver
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
 
@@ -277,8 +309,8 @@ services:
     container_name: mail-clickhouse
     profiles: ["analytics"]
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "${CLICKHOUSE_HTTP_HOST_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_HOST_PORT:-9000}:9000"
     environment:
       CLICKHOUSE_USER: default
       CLICKHOUSE_PASSWORD: clickhouse
@@ -287,8 +319,9 @@ services:
     volumes:
       - clickhousedata:/var/lib/clickhouse
       - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./infra/clickhouse/listen.xml:/etc/clickhouse-server/config.d/listen.xml:ro
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      test: ["CMD", "wget", "--spider", "-q", "http://default:clickhouse@127.0.0.1:8123/ping"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -300,3 +333,7 @@ volumes:
   promdata:
   grafanadata:
   clickhousedata:
+
+secrets:
+  metrics_token:
+    environment: METRICS_TOKEN

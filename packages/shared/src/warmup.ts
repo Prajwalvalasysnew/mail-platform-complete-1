@@ -25,13 +25,23 @@ export async function canSendOnPool(
   poolName: string,
   count: number
 ): Promise<{ allowed: boolean; cap: number; used: number; remaining: number }> {
-  const pool = await db
-    .selectFrom('ip_pools')
-    .select(['warmup_stage'])
-    .where('name', '=', poolName)
-    .executeTakeFirst();
-
-  const stage = pool?.warmup_stage ?? 0;
+  const stageKey = `warmup:stage:${poolName}`;
+  const cachedStage = await redis.get(stageKey);
+  let stage: number;
+  if (cachedStage !== null) {
+    stage = Number(cachedStage);
+  } else {
+    const pool = await db
+      .selectFrom('ip_pools')
+      .select(['warmup_stage'])
+      .where('name', '=', poolName)
+      .executeTakeFirst();
+    stage = pool?.warmup_stage ?? 0;
+    // Stage changes only through the daily advancement below. A short cache
+    // removes one database statement from every send; advancement invalidates
+    // it immediately.
+    await redis.setex(stageKey, 300, String(stage));
+  }
   const cap = dailyCapForStage(stage);
 
   const dayKey = `warmup:${poolName}:${new Date().toISOString().slice(0, 10)}`;
@@ -69,6 +79,7 @@ export async function advanceWarmupStages(): Promise<void> {
         .set({ warmup_stage: pool.warmup_stage + 1 })
         .where('name', '=', pool.name)
         .execute();
+      await redis.del(`warmup:stage:${pool.name}`);
     }
   }
 }

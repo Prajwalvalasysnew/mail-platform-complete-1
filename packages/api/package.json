@@ -11,8 +11,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "dev": "tsx watch src/server.ts",
-    "start": "node dist/server.js"
+    "dev": "tsx watch src/bootstrap.ts",
+    "start": "node dist/bootstrap.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

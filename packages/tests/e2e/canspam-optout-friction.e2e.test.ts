@@ -11,12 +11,16 @@
 // unsubscribe page fails here.
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { app as tracker } from '@platform/tracker/app';
+import type { FastifyInstance } from 'fastify';
 import { db, encodeMessageIdForUrl, isSuppressed, generateMessageId } from '@platform/shared';
-import { seedCustomer, seedVerifiedDomain } from './harness.js';
+import { loadTrackerApp, seedCustomer, seedVerifiedDomain } from './harness.js';
 
-beforeAll(async () => { await tracker.ready(); });
-afterAll(async () => { await tracker.close(); });
+let tracker: FastifyInstance | undefined;
+beforeAll(async () => {
+  tracker = await loadTrackerApp();
+  await tracker.ready();
+});
+afterAll(async () => { await tracker?.close(); });
 
 /** Insert a delivered commercial message and return its tracker URL segment. */
 async function seedMessage(customerId: string, domain: string, to: string) {

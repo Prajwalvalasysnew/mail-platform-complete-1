@@ -50,6 +50,63 @@ export async function createSendOutboxRows(
 }
 
 /**
+ * Fast path for rows the caller has just committed.
+ *
+ * The durable outbox row already protects the DB->Redis handoff. We can add
+ * the deterministic BullMQ job directly and mark that known row enqueued in
+ * one UPDATE, instead of opening a second transaction to select/lock/re-read
+ * it. If either step races or fails, the row remains pending and the periodic
+ * SKIP LOCKED drainer below safely retries it.
+ */
+export async function dispatchCreatedSendOutbox(
+  rows: SendOutboxInsert[],
+  options: { awaitStatusUpdate?: boolean } = {},
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  await sendQueue.addBulk(
+    rows.map((row) => {
+      const runAt = row.run_at ? new Date(row.run_at) : new Date();
+      const delay = Math.max(0, runAt.getTime() - Date.now());
+      return {
+        name: 'send',
+        data: {
+          message_id: row.message_id,
+          customer_id: row.customer_id,
+          priority: row.priority,
+        } satisfies SendJobData,
+        opts: {
+          priority: row.priority,
+          delay,
+          jobId: sendOutboxJobId(row.message_id),
+        },
+      };
+    }),
+  );
+
+  const messageIds = rows.map((row) => row.message_id);
+  const statusUpdate = db
+    .updateTable('send_outbox')
+    .set((eb) => ({
+      attempts: eb('attempts', '+', 1),
+      status: 'enqueued',
+      enqueued_at: new Date(),
+      last_error: null,
+    }))
+    .where('message_id', 'in', messageIds)
+    .where('status', '=', 'pending')
+    .execute();
+  if (options.awaitStatusUpdate === false) {
+    // Crash-safe: if this best-effort mark fails or the process dies, the row
+    // remains pending. The periodic drainer re-adds the deterministic job id,
+    // which BullMQ deduplicates, and then marks it enqueued.
+    void statusUpdate.catch(() => {});
+  } else {
+    await statusUpdate;
+  }
+  return rows.length;
+}
+
+/**
  * Move pending durable-send rows into BullMQ. Rows are claimed with
  * FOR UPDATE SKIP LOCKED so multiple worker replicas can safely drain at once.
  */

@@ -104,7 +104,7 @@ export function DlqPage() {
         ) : jobs.length === 0 ? (
           <EmptyState title="Dead-letter queue is empty" hint="No failed jobs are parked — the pipeline is healthy." />
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={0}>
             <table className="data">
               <thead>
                 <tr>

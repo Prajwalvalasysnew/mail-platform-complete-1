@@ -11,6 +11,7 @@ import {
   resetPoolWarmup,
   type Harness,
 } from './harness.js';
+import { redis } from '@platform/shared';
 
 let h: Harness;
 beforeAll(async () => { h = await startHarness(); await resetPoolWarmup("transactional"); });
@@ -26,6 +27,47 @@ function send(apiKey: string, payload: Record<string, unknown>, headers: Record<
 }
 
 describe('E2E quota', () => {
+  it.each([
+    { tier: 'paid' as const, daily: 50_000, monthly: 1_000_000 },
+    { tier: 'enterprise' as const, daily: 1_000_000, monthly: 50_000_000 },
+  ])(
+    'accepts the exact $tier daily/monthly boundary and atomically rejects the next unit',
+    async ({ tier, daily, monthly }) => {
+      const cust = await seedCustomer({ tier, dailyQuota: daily, monthlyQuota: monthly });
+      const domain = await seedVerifiedDomain(cust.customerId);
+      const now = new Date().toISOString();
+      const dailyKey = `quota:d:${cust.customerId}:${now.slice(0, 10)}`;
+      const monthlyKey = `quota:m:${cust.customerId}:${now.slice(0, 7)}`;
+      await redis.set(dailyKey, String(daily - 1), 'EX', 3600);
+      await redis.set(monthlyKey, String(monthly - 1), 'EX', 3600);
+
+      try {
+        const exact = await send(cust.apiKey, {
+          from: `x@${domain}`, to: `${tier}-exact@g.com`, subject: 'boundary', text: 't',
+        });
+        expect(exact.statusCode).toBe(202);
+        expect(exact.json().accepted).toBe(1);
+        expect(Number(await redis.get(dailyKey))).toBe(daily);
+        expect(Number(await redis.get(monthlyKey))).toBe(monthly);
+
+        const over = await send(cust.apiKey, {
+          from: `x@${domain}`, to: `${tier}-over@g.com`, subject: 'boundary', text: 't',
+        });
+        expect(over.statusCode).toBe(429);
+        expect(over.json()).toMatchObject({
+          error: 'quota_exceeded',
+          daily: { used: daily, limit: daily },
+          monthly: { used: monthly, limit: monthly },
+        });
+        // A rejected reservation changes neither counter.
+        expect(Number(await redis.get(dailyKey))).toBe(daily);
+        expect(Number(await redis.get(monthlyKey))).toBe(monthly);
+      } finally {
+        await redis.del(dailyKey, monthlyKey);
+      }
+    },
+  );
+
   it('rejects a request that exceeds the daily quota with 429', async () => {
     const cust = await seedCustomer({ dailyQuota: 2, monthlyQuota: 1000 });
     const domain = await seedVerifiedDomain(cust.customerId);

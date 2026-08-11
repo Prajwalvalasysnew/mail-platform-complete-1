@@ -31,9 +31,6 @@ const TRACKING_DOMAIN = process.env.TRACKING_DOMAIN ?? 'http://localhost:4000';
 const BOUNCE_DOMAIN = process.env.BOUNCE_DOMAIN ?? 'bounces.localhost';
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 50);
 
-const transport = getTransport();
-const sandbox = getSandboxTransport();
-
 // Single-pass HTML transform: rewrite trackable links and inject the open pixel
 // using a real HTML parser (cheerio) instead of regex, and batch-insert all
 // tracked_links in one statement instead of one round-trip per link.
@@ -113,6 +110,11 @@ async function bumpUsage(customerId: string, field: 'sent' | 'delivered' | 'boun
 }
 
 export function startSendWorker(logger: Logger) {
+  // Resolve transport configuration when the worker starts, not when this
+  // module is imported. This keeps CLI/dev/test startup overrides effective
+  // and avoids silently pinning a worker to an earlier environment value.
+  const transport = getTransport();
+  const sandbox = getSandboxTransport();
   const worker = new Worker<SendJobData>(
     `${QUEUE_PREFIX}send`,
     async (job) => {

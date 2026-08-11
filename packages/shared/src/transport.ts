@@ -274,6 +274,12 @@ class LocalSinkTransport implements Transport {
   }
 
   async send(msg: DeliveryMessage): Promise<DeliveryResult> {
+    if (this.name === 'capture') {
+      capturedDeliveries.push(msg);
+      // Keep the development capture bounded so accidentally leaving the
+      // transport enabled cannot grow process memory without limit.
+      if (capturedDeliveries.length > 1_000) capturedDeliveries.shift();
+    }
     return {
       provider_message_id: `${this.name}-${msg.messageId.replace(/[<>]/g, '')}`,
       response: `250 2.0.0 OK ${this.name} transport (no external delivery)`,
@@ -287,6 +293,13 @@ class LocalSinkTransport implements Transport {
   }
 
   async close(): Promise<void> {}
+}
+
+const capturedDeliveries: DeliveryMessage[] = [];
+
+/** Test/dev evidence hook for DELIVERY_TRANSPORT=capture. Drains atomically. */
+export function drainCapturedDeliveries(): DeliveryMessage[] {
+  return capturedDeliveries.splice(0, capturedDeliveries.length);
 }
 
 let cachedSandbox: SandboxTransport | null = null;

@@ -5,7 +5,7 @@ global:
 # NOTE: /metrics is token-protected when METRICS_TOKEN is set on the services
 # (required in production — see config-guard / metricsAuthorized). Each job below
 # carries an `authorization` block that reads the same token from a credentials
-# file mounted into the Prometheus container at /etc/prometheus/metrics_token.
+# file mounted into the Prometheus container at /run/secrets/metrics_token.
 # In local docker-compose dev, NODE_ENV is not "production", so scrapes are
 # allowed even without a token and the credentials_file can be a no-op/empty.
 scrape_configs:
@@ -15,7 +15,7 @@ scrape_configs:
     metrics_path: /metrics
     authorization:
       type: Bearer
-      credentials_file: /etc/prometheus/metrics_token
+      credentials_file: /run/secrets/metrics_token
 
   - job_name: 'mail-worker'
     static_configs:
@@ -23,7 +23,15 @@ scrape_configs:
     metrics_path: /metrics
     authorization:
       type: Bearer
-      credentials_file: /etc/prometheus/metrics_token
+      credentials_file: /run/secrets/metrics_token
+
+  - job_name: 'mail-smtp-gateway'
+    static_configs:
+      - targets: ['smtp-gateway:9102']
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/metrics_token
 
   - job_name: 'mail-tracker'
     static_configs:
@@ -31,7 +39,7 @@ scrape_configs:
     metrics_path: /metrics
     authorization:
       type: Bearer
-      credentials_file: /etc/prometheus/metrics_token
+      credentials_file: /run/secrets/metrics_token
 
 rule_files:
   - /etc/prometheus/alerts.yml

@@ -136,4 +136,24 @@ describe('E2E admin support console', () => {
     expect(triage.json().ticket.ai_summary).toBeTruthy();
     expect(triage.json().ticket.ai_model).toBe('local-heuristic-v1');
   });
+
+  it('marks the same ticket read concurrently without a unique-index race', async () => {
+    const admin = await seedAdminSession('support');
+    const cust = await seedCustomer();
+    const created = await adminReq(admin.token, 'POST', '/admin/support-tickets', {
+      customer_id: cust.customerId,
+      subject: 'Concurrent read marker',
+      body: 'The browser may issue overlapping read effects.',
+    });
+    expect(created.statusCode).toBe(201);
+    const ticketId = created.json().ticket.id;
+
+    const reads = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        adminReq(admin.token, 'POST', `/admin/support-tickets/${ticketId}/read`)
+      ),
+    );
+    expect(reads.map((response) => response.statusCode)).toEqual(Array(12).fill(200));
+    expect(new Set(reads.map((response) => response.json().last_read_at)).size).toBeGreaterThan(0);
+  });
 });

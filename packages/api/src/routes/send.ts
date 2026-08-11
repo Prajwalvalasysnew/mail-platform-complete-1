@@ -1,19 +1,20 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   db,
   sendQueue,
   generateMessageId,
   isSuppressed,
-  isSuppressedBatch,
+  screenRecipientCompliance,
   scanContent,
   classify,
   isTrapOrDisposable,
-  isTrapOrDisposableBatch,
   checkVolumeAnomaly,
   canSendOnPool,
   poolAction,
   reserveQuota,
+  loadQuotaBaseline,
   releaseQuota,
   getCustomerQueueDepth,
   incrementQueueDepth,
@@ -26,6 +27,7 @@ import {
   reserveIdempotencyKey,
   recordIdempotentResponse,
   createSendOutboxRows,
+  dispatchCreatedSendOutbox,
   drainSendOutbox,
   resolveSendLane,
   validateAttachments,
@@ -35,14 +37,12 @@ import {
   injectTraceContext,
   type SendResponse,
   getBodyStore,
-  evaluateBillingAccess,
+  evaluateSendAccountAccess,
   scanFields,
   redactCardData,
   summarizeFindings,
   cardDataPolicy,
-  restrictedSet,
   isProcessingRestricted,
-  isSenderOnHold,
   sensitivePiLimitedSet,
   applySensitivePiLimitToTracking,
   classifyRegulatedContent,
@@ -380,7 +380,7 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
 
     const fromDomain = body.from.split('@')[1]!.toLowerCase();
     const recipients = Array.isArray(body.to) ? body.to : [body.to];
-    const [domain, customer] = await Promise.all([
+    const [domain, account, currentDepth] = await Promise.all([
       tenantScoped(req, (trx) =>
         trx
           .selectFrom('sending_domains')
@@ -389,12 +389,10 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
           .where('domain', '=', fromDomain)
           .executeTakeFirst()
       ),
-      db
-        .selectFrom('customers')
-        .select(['email', 'daily_quota', 'monthly_quota', 'status', 'billing_status', 'tier', 'kyc_level', 'new_account_until'])
-        .where('id', '=', auth.customer_id)
-        .executeTakeFirstOrThrow(),
+      evaluateSendAccountAccess(auth.customer_id),
+      getCustomerQueueDepth(auth.customer_id),
     ]);
+    const customer = account.customer;
     if (!domain) return reply.code(403).send({ error: 'domain_not_registered', message: `Register ${fromDomain} via POST /v1/domains.` });
     if (!domain.verified_at || !domain.dkim_verified) {
       return reply.code(403).send({ error: 'domain_not_verified', message: `Verify ${fromDomain} first.` });
@@ -433,14 +431,13 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     if (customer.status !== 'active') return reply.code(403).send({ error: 'account_suspended' });
     // CANSPAM-08: an automated sending hold blocks NEW sends pending human
     // review. Distinct from suspension — reversible by a reviewer.
-    if (await isSenderOnHold(auth.customer_id)) {
+    if (account.senderOnHold) {
       return reply.code(403).send({
         error: 'sender_on_hold',
         message: 'Sending is paused pending review of this account\'s complaint or bounce rate. Contact support.',
       });
     }
-    const billingAccess = await evaluateBillingAccess(auth.customer_id);
-    if (!billingAccess.allowed) return reply.code(402).send({ error: 'billing_inactive', reason: billingAccess.reason, grace_ends_at: billingAccess.graceEndsAt });
+    if (!account.billing.allowed) return reply.code(402).send({ error: 'billing_inactive', reason: account.billing.reason, grace_ends_at: account.billing.graceEndsAt });
 
     // KYC tiering: free/email-only accounts get a hard new-account daily cap until
     // they verify a payment method or business. Prevents abuse via throwaway signups.
@@ -461,7 +458,6 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     // has too many unprocessed jobs in the queue. Prevents one large customer
     // from filling the BullMQ send queue and starving smaller senders.
     const MAX_CUSTOMER_QUEUE_DEPTH = Number(process.env.MAX_CUSTOMER_QUEUE_DEPTH ?? 10_000);
-    const currentDepth = await getCustomerQueueDepth(auth.customer_id);
     if (currentDepth + recipients.length > MAX_CUSTOMER_QUEUE_DEPTH) {
       reply.header('Retry-After', '60');
       return reply.code(429).send({
@@ -473,8 +469,13 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // Atomic daily + monthly quota reservation (replaces the growing count scan).
-    const quota = await tenantScoped(req, (trx) =>
-      reserveQuota(auth.customer_id, recipients.length, effectiveDaily, customer.monthly_quota, trx)
+    const quota = await reserveQuota(
+      auth.customer_id,
+      recipients.length,
+      effectiveDaily,
+      customer.monthly_quota,
+      db,
+      () => tenantScoped(req, (trx) => loadQuotaBaseline(auth.customer_id, trx)),
     );
     if (!quota.allowed) {
       reply.header('Retry-After', '3600');
@@ -487,6 +488,17 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     }
     // Helper to give quota back if we bail out before actually enqueueing.
     const refundQuota = async () => releaseQuota(auth.customer_id, recipients.length);
+    // Recipient rights/intelligence is independent of content classification,
+    // volume reputation, and pool admission. Start it now and join it at the
+    // enforcement point so its RLS transaction is not purely serial latency.
+    // Convert rejection into data to avoid an unhandled promise if an earlier
+    // content/pool gate returns first.
+    const recipientScreeningPromise = tenantScoped(req, (trx) =>
+      screenRecipientCompliance(auth.customer_id, recipients, trx))
+      .then(
+        (value) => ({ value, error: null as unknown }),
+        (error: unknown) => ({ value: null, error }),
+      );
 
     // Abuse: regex pre-filter + Bayesian classifier + URL reputation.
     const scan = scanContent(subject, html, text);
@@ -517,7 +529,13 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
 
     // Reputation guard: if the chosen pool is paused (bounce/complaint rate too
     // high), reject; if throttled, divert new senders to quarantine.
-    const repAction = await poolAction(ipPool);
+    // Reputation posture and warmup capacity are independent for the common
+    // path, so fetch them concurrently. A throttled marketing pool is the only
+    // case that changes pools and therefore requires a second capacity lookup.
+    const [repAction, initialPoolCheck] = await Promise.all([
+      poolAction(ipPool),
+      canSendOnPool(ipPool, recipients.length),
+    ]);
     if (repAction === 'pause') {
       await refundQuota();
       reply.header('Retry-After', '900');
@@ -531,7 +549,9 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // Warmup capacity check on the selected pool
-    const poolCheck = await canSendOnPool(ipPool, recipients.length);
+    const poolCheck = ipPool === (vol.anomalous ? 'quarantine' : (body.ip_pool ?? 'transactional'))
+      ? initialPoolCheck
+      : await canSendOnPool(ipPool, recipients.length);
     if (!poolCheck.allowed) {
       await refundQuota();
       reply.header('Retry-After', '3600');
@@ -549,18 +569,16 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     // suppressions, and one DB query for trap/disposable intel across all
     // distinct domains — instead of two sequential round-trips per recipient.
     // For a 1000-recipient send this turns ~2000 awaits into ~3.
-    const suppressedSet = await tenantScoped(req, (trx) => isSuppressedBatch(auth.customer_id, recipients, trx));
-    // GDPR-02: Article 18 restriction is checked alongside suppression. A
-    // restricted recipient is reported as suppressed to the caller — the
-    // sender does not need to know a rights request is in progress, and
-    // leaking that would itself be a disclosure.
-    const restricted = await tenantScoped(req, (trx) => restrictedSet(auth.customer_id, recipients, trx));
-    // CCPA-05: message content is sensitive PI (§1798.140(ae)(1)(E) — this
-    // platform is never the intended recipient), so a consumer can limit its
-    // use to what is necessary to deliver the service. Engagement tracking is
-    // not; delivery is. Fetched once for the whole batch.
-    const spiLimited = await tenantScoped(req, (trx) => sensitivePiLimitedSet(auth.customer_id, recipients, trx));
-    const intelMap = await isTrapOrDisposableBatch(recipients);
+    const screeningResult = await recipientScreeningPromise;
+    if (screeningResult.error) {
+      await refundQuota();
+      throw screeningResult.error;
+    }
+    const recipientScreening = screeningResult.value!;
+    const suppressedSet = recipientScreening.suppressed;
+    const restricted = recipientScreening.restricted;
+    const spiLimited = recipientScreening.sensitivePiLimited;
+    const intelMap = recipientScreening.intel;
     for (const rcpt of recipients) {
       const lower = rcpt.toLowerCase();
       if (suppressedSet.has(lower) || restricted.has(lower)) {
@@ -722,47 +740,88 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
           ? storedAttachments
           : storedAttachments.map(({ filename, content_type, size }) => ({ filename, content_type, size }));
 
+    const messageRows = toInsert.map((m) => ({
+      message_id: m.message_id,
+      customer_id: auth.customer_id,
+      from_address: body.from,
+      from_name: body.from_name ?? null,
+      to_address: m.to,
+      reply_to: body.reply_to ?? null,
+      subject: subject!,
+      html_body: inlineHtml,
+      text_body: inlineText,
+      body_storage: bodyPtr.storage,
+      body_object_key: bodyPtr.object_key,
+      body_size: bodyPtr.size,
+      body_hash: bodyPtr.hash,
+      // node-pg serializes top-level JS arrays as PG array literals, not JSON.
+      attachments: attachmentsColumn ? (JSON.stringify(attachmentsColumn) as any) : null,
+      headers: body.headers ?? {},
+      tags: body.tags ?? [],
+      metadata: {
+        ...(body.metadata ?? {}),
+        ...(auth.test_mode ? { _test_mode: true } : {}),
+        ...(body.ad_identified !== undefined ? { _ad_identified: body.ad_identified } : {}),
+      },
+      ...applySensitivePiLimitToTracking(spiLimited.has(m.to.toLowerCase()), body.tracking),
+      ip_pool: ipPool,
+      message_class: messageClass,
+      template_id: templateId,
+      risk_score: combinedScore,
+      send_at: sendAt,
+      unsubscribe_group_id: body.unsubscribe_group_id ?? null,
+      status: needsReview ? ('held' as const) : ('queued' as const),
+    }));
+
     const inserted = await tenantScoped(req, async (trx) => {
+      // The overwhelmingly common commercial/allowed path is one atomic
+      // data-modifying CTE instead of three sequential INSERT statements.
+      // It still runs inside the same RLS-scoped transaction; messages, queued
+      // events, and durable outbox rows either all commit or all roll back.
+      if (!needsReview && messageClass === 'commercial') {
+        const queuedPayload = scheduled ? { send_at: sendAt!.toISOString() } : {};
+        const runAt = scheduled ? sendAt! : new Date();
+        return trx
+          .with('inserted_messages', (qb) => qb
+            .insertInto('messages')
+            .values(messageRows)
+            .returning(['message_id', 'customer_id']))
+          .with('inserted_events', (qb) => qb
+            .insertInto('events')
+            .columns(['message_id', 'customer_id', 'event_type', 'payload'])
+            .expression((eb) => eb
+              .selectFrom('inserted_messages')
+              .select([
+                'message_id',
+                'customer_id',
+                sql<'queued'>`'queued'`.as('event_type'),
+                sql<Record<string, unknown>>`${JSON.stringify(queuedPayload)}::jsonb`.as('payload'),
+              ]))
+            .returning('message_id'))
+          .insertInto('send_outbox')
+          .columns(['message_id', 'customer_id', 'priority', 'run_at'])
+          .expression((eb) => eb
+            .selectFrom('inserted_messages')
+            .select([
+              'message_id',
+              'customer_id',
+              sql<number>`${priority}`.as('priority'),
+              sql<Date>`${runAt}`.as('run_at'),
+            ]))
+          .onConflict((oc) => oc.column('message_id').doUpdateSet((eb) => ({
+            status: 'pending',
+            priority: eb.ref('excluded.priority'),
+            run_at: eb.ref('excluded.run_at'),
+            last_error: null,
+            enqueued_at: null,
+          })))
+          .returning(['message_id'])
+          .execute();
+      }
+
       const rows = await trx
         .insertInto('messages')
-        .values(
-          toInsert.map((m) => ({
-            message_id: m.message_id,
-            customer_id: auth.customer_id,
-            from_address: body.from,
-            from_name: body.from_name ?? null,
-            to_address: m.to,
-            reply_to: body.reply_to ?? null,
-            subject: subject!,
-            html_body: inlineHtml,
-            text_body: inlineText,
-            body_storage: bodyPtr.storage,
-            body_object_key: bodyPtr.object_key,
-            body_size: bodyPtr.size,
-            body_hash: bodyPtr.hash,
-            // node-pg serializes top-level JS arrays as PG array literals, not
-            // JSON — stringify explicitly for the jsonb column.
-            attachments: attachmentsColumn ? (JSON.stringify(attachmentsColumn) as any) : null,
-            headers: body.headers ?? {},
-            tags: body.tags ?? [],
-            metadata: {
-              ...(body.metadata ?? {}),
-              ...(auth.test_mode ? { _test_mode: true } : {}),
-              ...(body.ad_identified !== undefined ? { _ad_identified: body.ad_identified } : {}),
-            },
-            // CCPA-05: a consumer's limit on sensitive-PI use overrides
-            // whatever the sender asked for. That override is the whole point
-            // of the right — a customer setting cannot outrank it.
-            ...applySensitivePiLimitToTracking(spiLimited.has(m.to.toLowerCase()), body.tracking),
-            ip_pool: ipPool,
-            message_class: messageClass,
-            template_id: templateId,
-            risk_score: combinedScore,
-            send_at: sendAt,
-            unsubscribe_group_id: body.unsubscribe_group_id ?? null,
-            status: needsReview ? ('held' as const) : ('queued' as const),
-          }))
-        )
+        .values(messageRows)
         .returning(['message_id'])
         .execute();
 
@@ -836,10 +895,20 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
     // Best-effort immediate dispatch. If Redis is unavailable after the DB
     // commit, the durable send_outbox row remains pending and the worker
     // scheduler will retry it.
-    try {
-      await drainSendOutbox({ messageIds: inserted.map((m) => m.message_id), limit: inserted.length });
-    } catch (err) {
-      req.log.warn({ err }, 'send outbox dispatch deferred');
+    if (!scheduled) {
+      try {
+        await dispatchCreatedSendOutbox(
+          inserted.map((m) => ({
+            message_id: m.message_id,
+            customer_id: auth.customer_id,
+            priority,
+            run_at: new Date(),
+          })),
+          { awaitStatusUpdate: false },
+        );
+      } catch (err) {
+        req.log.warn({ err }, 'send outbox dispatch deferred');
+      }
     }
 
     messagesAccepted.inc({ customer_tier: auth.tier });
@@ -922,22 +991,18 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(403).send({ error: 'email_not_verified', message: 'Verify your account email before sending.' });
       }
 
-      const customer = await db
-        .selectFrom('customers')
-        .select(['email', 'daily_quota', 'monthly_quota', 'status', 'billing_status', 'tier', 'kyc_level', 'new_account_until'])
-        .where('id', '=', auth.customer_id)
-        .executeTakeFirstOrThrow();
+      const account = await evaluateSendAccountAccess(auth.customer_id);
+      const customer = account.customer;
       if (customer.status !== 'active') return reply.code(403).send({ error: 'account_suspended' });
       // CANSPAM-08: an automated sending hold blocks NEW sends pending human
       // review. Distinct from suspension — reversible by a reviewer.
-      if (await isSenderOnHold(auth.customer_id)) {
+      if (account.senderOnHold) {
         return reply.code(403).send({
           error: 'sender_on_hold',
           message: 'Sending is paused pending review of this account\'s complaint or bounce rate. Contact support.',
         });
       }
-      const billingAccess = await evaluateBillingAccess(auth.customer_id);
-      if (!billingAccess.allowed) return reply.code(402).send({ error: 'billing_inactive', reason: billingAccess.reason, grace_ends_at: billingAccess.graceEndsAt });
+      if (!account.billing.allowed) return reply.code(402).send({ error: 'billing_inactive', reason: account.billing.reason, grace_ends_at: account.billing.graceEndsAt });
 
       const NEW_ACCOUNT_CAP = Number(process.env.NEW_ACCOUNT_DAILY_CAP ?? 500);
       const effectiveDaily =
@@ -963,8 +1028,13 @@ export const sendRoutes: FastifyPluginAsync = async (app) => {
 
       // Batch quota reservation for all recipients.
       const totalRecipients = messages.length;
-      const quota = await tenantScoped(req, (trx) =>
-        reserveQuota(auth.customer_id, totalRecipients, effectiveDaily, customer.monthly_quota, trx)
+      const quota = await reserveQuota(
+        auth.customer_id,
+        totalRecipients,
+        effectiveDaily,
+        customer.monthly_quota,
+        db,
+        () => tenantScoped(req, (trx) => loadQuotaBaseline(auth.customer_id, trx)),
       );
       if (!quota.allowed) {
         reply.header('Retry-After', '3600');

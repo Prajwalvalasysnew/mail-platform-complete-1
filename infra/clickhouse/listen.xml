@@ -1,0 +1,5 @@
+<clickhouse>
+  <!-- Docker Desktop can run with IPv6 disabled. Replace the image default
+       listener so HTTP/native analytics remain reachable over IPv4. -->
+  <listen_host replace="replace">0.0.0.0</listen_host>
+</clickhouse>

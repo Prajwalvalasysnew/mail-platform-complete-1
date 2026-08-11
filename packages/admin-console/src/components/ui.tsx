@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { friendlyError } from '../lib/http';
 import { Icon } from './icons';
 
@@ -96,6 +96,7 @@ export function PermissionState({ need }: { need: string }) {
 
 // ---------- Modal ----------
 export function Modal({ title, onClose, children, width }: { title: ReactNode; onClose: () => void; children: ReactNode; width?: number }) {
+  const titleId = useId();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -106,9 +107,15 @@ export function Modal({ title, onClose, children, width }: { title: ReactNode; o
 
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" style={width ? { width: `min(${width}px, 100%)` } : undefined}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        style={width ? { width: `min(${width}px, 100%)` } : undefined}
+      >
         <div className="modal-head">
-          <div className="card-title">{title}</div>
+          <div className="card-title" id={titleId}>{title}</div>
           <button className="iconbtn" onClick={onClose} aria-label="Close dialog">
             <Icon name="x" />
           </button>

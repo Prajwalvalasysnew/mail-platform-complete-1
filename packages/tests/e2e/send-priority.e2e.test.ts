@@ -1,8 +1,8 @@
 // Critical-priority send lane: OTP/alert messages jump the queue.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildTestApp, seedCustomer, seedVerifiedDomain, type SeededCustomer } from './harness.js';
-import { db } from '@platform/shared';
+import { db, redis } from '@platform/shared';
 
 let app: FastifyInstance;
 let paid: SeededCustomer;
@@ -79,6 +79,54 @@ describe('critical-priority send lane', () => {
     const body = res.json();
     expect(body.priority_applied).toBeUndefined();
     expect(await outboxPriority(body.message_ids[0])).toBe(5); // paid-tier default
+  });
+
+  it('downgrades paid critical traffic after the per-minute cap without dropping the mail', async () => {
+    const minute = Math.floor(Date.now() / 60_000);
+    const cap = Number(process.env.CRITICAL_LANE_PER_MINUTE ?? 120);
+    const counterKey = `lane:critical:${paid.customerId}:${minute}`;
+    await redis.set(counterKey, String(cap), 'EX', 120);
+
+    try {
+      const res = await app.inject({
+        method: 'POST', url: '/v1/send',
+        headers: { authorization: `Bearer ${paid.apiKey}` },
+        payload: payload(paidDomain, { priority: 'critical' }),
+      });
+      expect(res.statusCode).toBe(202);
+      const body = res.json();
+      expect(body.accepted).toBe(1);
+      expect(body.priority_applied).toBe('standard');
+      expect(body.priority_downgraded_reason).toBe('rate_capped');
+      expect(await outboxPriority(body.message_ids[0])).toBe(5);
+    } finally {
+      await redis.del(counterKey);
+    }
+  });
+
+  it('fails toward the standard lane when Redis cannot meter critical traffic', async () => {
+    const realIncrby = redis.incrby.bind(redis);
+    const incr = vi.spyOn(redis, 'incrby').mockImplementation(async (key, amount) => {
+      if (String(key).startsWith(`lane:critical:${paid.customerId}:`)) {
+        throw new Error('synthetic Redis outage');
+      }
+      return realIncrby(key, amount);
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST', url: '/v1/send',
+        headers: { authorization: `Bearer ${paid.apiKey}` },
+        payload: payload(paidDomain, { priority: 'critical' }),
+      });
+      expect(res.statusCode).toBe(202);
+      const body = res.json();
+      expect(body.accepted).toBe(1);
+      expect(body.priority_applied).toBe('standard');
+      expect(body.priority_downgraded_reason).toBe('rate_capped');
+      expect(await outboxPriority(body.message_ids[0])).toBe(5);
+    } finally {
+      incr.mockRestore();
+    }
   });
 });
 

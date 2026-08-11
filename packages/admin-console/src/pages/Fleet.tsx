@@ -247,7 +247,7 @@ export function FleetPage() {
         ) : top.isError || (top.data?.tenants.length ?? 0) === 0 ? (
           <div className="card-pad section-note" style={{ paddingTop: 0 }}>No tenant send activity in the last 24 hours.</div>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={0}>
             <table className="data">
               <thead>
                 <tr>

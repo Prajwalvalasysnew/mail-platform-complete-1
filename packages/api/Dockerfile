@@ -1,17 +1,29 @@
 FROM node:22-alpine AS base
 WORKDIR /app
 
-# Copy the lockfile and complete workspace manifest/source tree so npm ci uses
-# exactly the dependency graph audited in CI. Partial workspace copies force
-# npm install to resolve a different, potentially vulnerable graph.
+# Copy every workspace manifest before source. npm still resolves the complete,
+# lockfile-pinned workspace graph, while ordinary source edits no longer
+# invalidate the expensive dependency layer.
 COPY package.json package-lock.json tsconfig.base.json ./
-COPY infra/migrations ./infra/migrations
-COPY packages ./packages
+COPY packages/admin-console/package.json packages/admin-console/package.json
+COPY packages/api/package.json packages/api/package.json
+COPY packages/docs/package.json packages/docs/package.json
+COPY packages/haraka-inbound/package.json packages/haraka-inbound/package.json
+COPY packages/haraka-outbound/package.json packages/haraka-outbound/package.json
+COPY packages/sdk/package.json packages/sdk/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/smtp-gateway/package.json packages/smtp-gateway/package.json
+COPY packages/tests/package.json packages/tests/package.json
+COPY packages/tracker/package.json packages/tracker/package.json
+COPY packages/worker/package.json packages/worker/package.json
 
 # Install deps deterministically (workspaces)
-RUN npm ci --workspaces --include-workspace-root
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci --workspaces --include-workspace-root
 
 # Build
+COPY infra/migrations ./infra/migrations
+COPY packages ./packages
 RUN npm run build --workspace=@platform/shared
 RUN npm run build --workspace=@platform/api
 RUN npm prune --omit=dev --workspaces --include-workspace-root
@@ -26,4 +38,4 @@ USER node
 EXPOSE 3000
 # Migrations run in a dedicated release job (see infra/helm .../migration-job.yaml),
 # NOT at app startup — multiple replicas racing migrations on deploy is unsafe.
-CMD ["node", "packages/api/dist/server.js"]
+CMD ["node", "packages/api/dist/bootstrap.js"]

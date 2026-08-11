@@ -91,8 +91,13 @@ export async function checkVolumeAnomaly(
       .executeTakeFirst();
     if (row) {
       baselineRaw = String(row.hourly_baseline);
-      await redis.set(baselineKey, baselineRaw);
+    } else {
+      // A newly created tenant legitimately has no durable baseline yet.
+      // Cache that known zero as well; otherwise every send repeats the same
+      // empty Postgres lookup until the first hourly scheduler run.
+      baselineRaw = '0';
     }
+    await redis.set(baselineKey, baselineRaw);
   }
   const baseline = baselineRaw ? Number(baselineRaw) : 0;
 

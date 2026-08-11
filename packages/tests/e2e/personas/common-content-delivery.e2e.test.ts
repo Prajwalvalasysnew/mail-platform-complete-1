@@ -12,6 +12,7 @@ import {
   getUsageSent,
   resetPoolWarmup,
   resetQuota,
+  seedSuppression,
   startHarness,
   waitForStatus,
   type Harness,
@@ -48,6 +49,59 @@ function apiAuthHeader(apiKey: string): Record<string, string> {
 }
 
 describe.each(PERSONA_TIERS)('common content and delivery: %s', (tier: PersonaTier) => {
+  it('handles successful, suppressed, and invalid entries independently in a batch', async () => {
+    const persona = await provisionSendingPersona(h.app, tier, 'batch');
+    await resetQuota(persona.customerId);
+    const acceptedRecipient = `${tier}-batch-ok-${persona.runId}@example.net`;
+    const suppressedRecipient = `${tier}-batch-suppressed-${persona.runId}@example.net`;
+    await seedSuppression(persona.customerId, suppressedRecipient, 'unsubscribe');
+
+    const batch = await h.app.inject({
+      method: 'POST',
+      url: '/v1/send/batch',
+      headers: apiHeaders(persona.apiKey),
+      payload: {
+        messages: [
+          {
+            from: `batch@${persona.domain}`,
+            to: acceptedRecipient,
+            subject: 'Accepted batch entry',
+            text: 'Allowed.',
+          },
+          {
+            from: `batch@${persona.domain}`,
+            to: suppressedRecipient,
+            subject: 'Suppressed batch entry',
+            text: 'Must not send.',
+          },
+          {
+            from: `batch@${persona.domain}`,
+            to: `${tier}-batch-pan-${persona.runId}@example.net`,
+            subject: 'Rejected batch entry',
+            text: 'Test payment card 4242424242424242 must be rejected.',
+          },
+        ],
+      },
+    });
+    expect(batch.statusCode).toBe(202);
+    expect(batch.json().accepted).toBe(1);
+    expect(batch.json().results).toEqual([
+      expect.objectContaining({ index: 0, accepted: true, message_id: expect.any(String) }),
+      expect.objectContaining({ index: 1, accepted: false, suppressed: true }),
+      expect.objectContaining({ index: 2, accepted: false, error: 'card_data_detected' }),
+    ]);
+    expect(await countMessagesTo(persona.customerId, acceptedRecipient)).toBe(1);
+    expect(await countMessagesTo(persona.customerId, suppressedRecipient)).toBe(0);
+    const quota = await h.app.inject({
+      method: 'GET',
+      url: '/v1/usage/quota',
+      headers: apiAuthHeader(persona.apiKey),
+    });
+    expect(quota.statusCode).toBe(200);
+    expect(quota.json().daily.used).toBe(1);
+    expect(quota.json().monthly.used).toBe(1);
+  });
+
   it('creates and updates a template, then delivers rendered and attachment messages', async () => {
     const persona = await provisionSendingPersona(h.app, tier, 'content');
     await resetQuota(persona.customerId);

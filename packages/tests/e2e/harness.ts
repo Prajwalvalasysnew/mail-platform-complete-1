@@ -12,6 +12,16 @@ import sensible from '@fastify/sensible';
 import { startSendWorker } from '@platform/worker/send-worker.js';
 import { db, redis, sendQueue, metricsText } from '@platform/shared';
 
+/** Load the tracker app through the explicit Vitest workspace alias. */
+export async function loadTrackerApp(): Promise<FastifyInstance> {
+  const trackerModule = await import('@platform/tracker/app');
+  const fallback = trackerModule.default as { app?: FastifyInstance } | FastifyInstance | undefined;
+  const tracker = trackerModule.app as FastifyInstance | undefined
+    ?? ('app' in (fallback ?? {}) ? (fallback as { app: FastifyInstance }).app : fallback as FastifyInstance);
+  if (!tracker) throw new Error('@platform/tracker/app did not export a Fastify instance');
+  return tracker;
+}
+
 export {
   seedCustomer,
   seedVerifiedDomain,

@@ -89,7 +89,7 @@ export function TeamPage() {
             )}
           </div>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={0}>
             <table className="data">
               <thead>
                 <tr>
@@ -301,7 +301,7 @@ function ElevationsCard() {
       ) : rows.length === 0 ? (
         <EmptyState title="No active elevations" hint="Standing roles apply. Grants appear here with a live expiry." />
       ) : (
-        <div className="table-wrap">
+        <div className="table-wrap" tabIndex={0}>
           <table className="data">
             <thead>
               <tr>

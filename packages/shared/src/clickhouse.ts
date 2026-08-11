@@ -39,6 +39,16 @@ const FLUSH_INTERVAL_MS = Number(process.env.EVENTS_CLICKHOUSE_FLUSH_MS ?? 1000)
 const CIRCUIT_OPEN_THRESHOLD = 5;
 const CIRCUIT_RESET_MS = 30_000;
 
+export function clickhouseRequestHeaders(contentType?: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (contentType) headers['Content-Type'] = contentType;
+  const user = process.env.EVENTS_CLICKHOUSE_USER;
+  const password = process.env.EVENTS_CLICKHOUSE_PASSWORD;
+  if (user) headers['X-ClickHouse-User'] = user;
+  if (password) headers['X-ClickHouse-Key'] = password;
+  return headers;
+}
+
 export function clickhouseEnabled(): boolean {
   return !!(process.env.EVENTS_CLICKHOUSE_URL ?? URL_BASE);
 }
@@ -68,7 +78,7 @@ export async function deleteClickhouseMessageEvents(customerId: string, messageI
   url.searchParams.set('param_customer_id', customerId);
   url.searchParams.set('param_message_id', messageId);
   url.searchParams.set('mutations_sync', '2');
-  const res = await fetch(url, { method: 'POST' });
+  const res = await fetch(url, { method: 'POST', headers: clickhouseRequestHeaders() });
   if (!res.ok) throw new Error(`clickhouse_delete_failed:${res.status}:${(await res.text().catch(() => '')).slice(0, 500)}`);
 }
 
@@ -84,10 +94,10 @@ export async function insertClickhouseRows(rows: Row[]): Promise<boolean> {
   // and harmless in production where the env is fixed.
   const urlBase = process.env.EVENTS_CLICKHOUSE_URL ?? URL_BASE;
   if (!urlBase || rows.length === 0) return true;
-  const body = rows.map((r) => JSON.stringify(r)).join('\n');
+  const body = rows.map(serializeClickhouseRow).join('\n');
   const url = `${urlBase}/?query=${encodeURIComponent(`INSERT INTO ${TABLE} FORMAT JSONEachRow`)}`;
   try {
-    const res = await fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/x-ndjson' } });
+    const res = await fetch(url, { method: 'POST', body, headers: clickhouseRequestHeaders('application/x-ndjson') });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => '')}`);
     return true;
   } catch (err: any) {
@@ -124,6 +134,14 @@ interface Row {
   payload: string; // JSON-serialised
 }
 
+function serializeClickhouseRow(row: Row): string {
+  const occurredAt = new Date(row.occurred_at);
+  const normalized = Number.isNaN(occurredAt.getTime())
+    ? row.occurred_at
+    : occurredAt.toISOString().replace('T', ' ').replace(/Z$/, '');
+  return JSON.stringify({ ...row, occurred_at: normalized });
+}
+
 let buffer: Row[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -139,10 +157,10 @@ async function flushBuffer(): Promise<void> {
   const rows = buffer.splice(0, buffer.length);
   const eligibleRows = await filterNonErasedClickhouseRows(rows);
   if (eligibleRows.length === 0) return;
-  const body = eligibleRows.map((r) => JSON.stringify(r)).join('\n');
+  const body = eligibleRows.map(serializeClickhouseRow).join('\n');
   const url = `${URL_BASE}/?query=${encodeURIComponent(`INSERT INTO ${TABLE} FORMAT JSONEachRow`)}`;
   try {
-    const res = await fetch(url, { method: 'POST', body, headers: { 'Content-Type': 'application/x-ndjson' } });
+    const res = await fetch(url, { method: 'POST', body, headers: clickhouseRequestHeaders('application/x-ndjson') });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => '')}`);
     // Success: close circuit.
     if (consecutiveFailures > 0) {

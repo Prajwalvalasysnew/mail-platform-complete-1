@@ -19,6 +19,7 @@
     "dkim:generate": "bash scripts/generate-dkim.sh",
     "test": "npm run test --workspace=@platform/tests",
     "test:e2e": "npm run test:e2e --workspace=@platform/tests",
+    "test:coverage": "node scripts/test-with-coverage.mjs",
     "create-admin": "tsx packages/shared/src/bin/create-admin.ts",
     "backup-drill": "bash scripts/backup-restore-drill.sh",
     "dev:docs": "npm run start --workspace=@platform/docs",
@@ -30,22 +31,13 @@
     "node": ">=20.0.0"
   },
   "overrides": {
-    "fast-uri": "3.1.4",
-    "nodemailer": "9.0.1",
-    "undici": "6.27.0",
-    "serialize-javascript": "7.0.5",
-    "mailauth": {
-      "nodemailer": "9.0.1",
-      "undici": "6.27.0"
-    },
-    "cheerio": {
-      "undici": "6.27.0"
-    },
+    "fast-uri": "3.1.5",
+    "serialize-javascript": "7.0.7",
     "copy-webpack-plugin": {
-      "serialize-javascript": "7.0.5"
+      "serialize-javascript": "7.0.7"
     },
     "css-minimizer-webpack-plugin": {
-      "serialize-javascript": "7.0.5"
+      "serialize-javascript": "7.0.7"
     },
     "protobufjs": "7.6.5",
     "tar": "7.5.22",

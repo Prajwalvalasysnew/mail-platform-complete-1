@@ -11,5 +11,9 @@ build
 !.env.example
 !.env.production.example
 coverage
+test-results
+**/test-results
+playwright-report
+**/playwright-report
 *.log
 .DS_Store

@@ -15,9 +15,10 @@ const RP_ID = 'mail.example.com';
 const ORIGIN = 'https://mail.example.com';
 
 let seq = 0;
-async function seedUser(): Promise<{ userId: string }> {
+async function seedUser(tier: 'free' | 'paid' | 'enterprise' = 'free'): Promise<{ userId: string; customerId: string }> {
   const res = await registerOrgWithOwner({ email: `pk-${Date.now()}-${seq++}@example.com`, password: 'a-good-long-password', orgName: 'PK Org' });
-  return { userId: res.user.id };
+  await db.updateTable('customers').set({ tier }).where('id', '=', res.customerId).execute();
+  return { userId: res.user.id, customerId: res.customerId };
 }
 
 // ── tiny CBOR encoder (test-only) ───────────────────────────────────────────
@@ -89,6 +90,25 @@ async function authenticate(userId: string, auth: ReturnType<typeof makeAuthenti
 }
 
 describe('WebAuthn passkeys', () => {
+  it.each(['free', 'paid', 'enterprise'] as const)(
+    'completes the passkey lifecycle for the %s tier',
+    async (tier) => {
+      const u = await seedUser(tier);
+      const auth = makeAuthenticator();
+      expect(await register(u.userId, auth)).toMatchObject({ ok: true, alg: -7 });
+      expect(await authenticate(u.userId, auth, 1)).toMatchObject({ ok: true, userId: u.userId });
+      const [credential] = await listPasskeys(u.userId);
+      expect(credential).toMatchObject({ name: 'Test Key' });
+      const stored = await db.selectFrom('webauthn_credentials').select('sign_count')
+        .where('id', '=', credential!.id).executeTakeFirstOrThrow();
+      expect(Number(stored.sign_count)).toBe(1);
+      expect(await deletePasskey(u.userId, credential!.id)).toBe(true);
+      expect(await listPasskeys(u.userId)).toHaveLength(0);
+      expect(await db.selectFrom('customers').select('tier')
+        .where('id', '=', u.customerId).executeTakeFirstOrThrow()).toMatchObject({ tier });
+    },
+  );
+
   it('CBOR round-trips a COSE map', () => {
     const decoded = decodeCbor(cMap([[cUint(1), cUint(2)], [cUint(3), cNeg(-7)]])) as Map<number, number>;
     expect(decoded.get(1)).toBe(2);

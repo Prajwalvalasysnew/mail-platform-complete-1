@@ -52,7 +52,8 @@ within the 150 KB budget from the architecture doc).
   Origin and `Sec-Fetch-Site` (fetch-metadata) correctness; bearer tokens
   remain supported for ops tooling. For non-TLS local setups where the
   `__Host-` prefix can't apply, start the API with `ADMIN_COOKIE_SECURE=false`
-  (localhost itself is a trustworthy origin, so the default works in dev).
+  (the local Compose stack sets this explicitly). Production Compose forces
+  `ADMIN_COOKIE_SECURE=true`.
 - **Role-aware UI.** Roles are `support < operator < admin < superadmin`
   (mirroring `roleAtLeast` on the API). Navigation, actions, and routes render
   permission states client-side for usability; the API remains the enforcement

@@ -122,7 +122,7 @@ export function AbusePage() {
         ) : items.length === 0 ? (
           <EmptyState title="Queue is clear" hint="No messages are waiting for review." />
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={0}>
             <table className="data">
               <thead>
                 <tr>

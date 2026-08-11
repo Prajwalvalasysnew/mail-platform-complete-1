@@ -192,7 +192,7 @@ export async function resetPoolWarmup(
   poolName: 'transactional' | 'marketing' | 'quarantine' = 'transactional'
 ): Promise<void> {
   const day = new Date().toISOString().slice(0, 10);
-  await redis.del(`warmup:${poolName}:${day}`);
+  await redis.del(`warmup:${poolName}:${day}`, `warmup:stage:${poolName}`);
   // Advance the pool to its final warmup stage so the daily cap is at maximum.
   await db
     .updateTable('ip_pools')

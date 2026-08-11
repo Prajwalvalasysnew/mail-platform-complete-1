@@ -27,8 +27,10 @@ function send(apiKey: string, payload: Record<string, unknown>) {
 }
 
 describe('PCI-02: card data in outbound message content', () => {
-  it('rejects a PAN in the text body and persists no message', async () => {
-    const cust = await seedCustomer({ scopes: ['send'] });
+  it.each(['free', 'paid', 'enterprise'] as const)(
+    'rejects a PAN for the $tier tier and persists no message',
+    async (tier) => {
+    const cust = await seedCustomer({ tier, scopes: ['send'] });
     const domain = await seedVerifiedDomain(cust.customerId);
 
     const res = await send(cust.apiKey, {
@@ -47,7 +49,8 @@ describe('PCI-02: card data in outbound message content', () => {
     const rows = await db.selectFrom('messages').select('message_id')
       .where('customer_id', '=', cust.customerId).execute();
     expect(rows).toHaveLength(0);
-  });
+    },
+  );
 
   it('rejects a PAN in the HTML body and in the subject', async () => {
     const cust = await seedCustomer({ scopes: ['send'] });

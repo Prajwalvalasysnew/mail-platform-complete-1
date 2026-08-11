@@ -100,7 +100,10 @@ export function Shell() {
         </div>
 
         <nav className="sidebar-nav" aria-label="Primary">
-          {NAV_GROUPS.map((grp) => (
+          {NAV_GROUPS
+            .map((grp) => ({ ...grp, items: grp.items.filter((item) => hasRole(item.minRole)) }))
+            .filter((grp) => grp.items.length > 0)
+            .map((grp) => (
             <div key={grp.label}>
               <div className="nav-group-label">{grp.label}</div>
               {grp.items.map((item) => {

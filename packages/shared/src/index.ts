@@ -3,6 +3,7 @@ export * from './schema.js';
 export * from './queues.js';
 export * from './redis.js';
 export * from './suppression.js';
+export * from './recipient-screening.js';
 export * from './types.js';
 export * from './crypto.js';
 export * from './encryption.js';

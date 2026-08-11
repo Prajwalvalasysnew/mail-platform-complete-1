@@ -287,35 +287,158 @@ export interface BillingAccess {
   features: Record<string, unknown>;
 }
 
-export async function evaluateBillingAccess(customerId: string): Promise<BillingAccess> {
-  // Sub-accounts have no billing relationship of their own — their access
-  // rides the parent's billing state (the parent pays for the family).
-  const identity = await db
-    .selectFrom('customers')
-    .select('parent_customer_id')
-    .where('id', '=', customerId)
-    .executeTakeFirst();
-  if (identity?.parent_customer_id) {
-    return evaluateBillingAccess(identity.parent_customer_id);
+export interface SendAccountCustomer {
+  email: string;
+  daily_quota: number;
+  monthly_quota: number;
+  status: string;
+  billing_status: string;
+  tier: 'free' | 'paid' | 'enterprise';
+  kyc_level: string;
+  new_account_until: Date | string | null;
+}
+
+export interface SendAccountAccess {
+  customer: SendAccountCustomer;
+  senderOnHold: boolean;
+  billing: BillingAccess;
+}
+
+interface BillingSnapshotRow {
+  billing_status: string;
+  subscription_status: string | null;
+  plan_key: string;
+  features: unknown;
+  dunning_state: string | null;
+  grace_ends_at: Date | string | null;
+  customer_email: string;
+  customer_daily_quota: number;
+  customer_monthly_quota: number;
+  customer_status: string;
+  customer_billing_status: string;
+  customer_tier: 'free' | 'paid' | 'enterprise';
+  customer_kyc_level: string;
+  customer_new_account_until: Date | string | null;
+  sender_on_hold: boolean;
+}
+
+async function loadBillingSnapshot(customerId: string): Promise<BillingSnapshotRow> {
+  // Resolve the billable parent, latest subscription, catalog features, and
+  // dunning posture in one round trip. The requested customer's send limits
+  // and active sender-hold posture ride the same statement, so the API does not
+  // issue three more queries for data governed by the same account gate.
+  const result = await sql<BillingSnapshotRow>`
+    with recursive requested_customer as (
+      select id, parent_customer_id, email, daily_quota, monthly_quota, status,
+             billing_status, tier, kyc_level, new_account_until
+      from customers
+      where id = ${customerId}::uuid
+    ),
+    billing_family as (
+      select id, parent_customer_id, billing_status, tier, 0 as depth,
+             array[id]::uuid[] as visited
+      from requested_customer
+
+      union all
+
+      select parent.id, parent.parent_customer_id, parent.billing_status,
+             parent.tier, child.depth + 1, child.visited || parent.id
+      from customers parent
+      join billing_family child on parent.id = child.parent_customer_id
+      where not (parent.id = any(child.visited))
+    ),
+    billable as (
+      select id, billing_status, tier
+      from billing_family
+      order by depth desc
+      limit 1
+    ),
+    latest_subscription as (
+      select s.plan, s.status
+      from subscriptions s
+      join billable b on b.id = s.customer_id
+      order by s.updated_at desc
+      limit 1
+    )
+    select
+      b.billing_status,
+      s.status as subscription_status,
+      coalesce(s.plan, case when b.tier = 'free' then 'free' else b.tier::text end) as plan_key,
+      coalesce(p.features, '{}'::jsonb) as features,
+      d.state as dunning_state,
+      d.grace_ends_at,
+      requested.email as customer_email,
+      requested.daily_quota as customer_daily_quota,
+      requested.monthly_quota as customer_monthly_quota,
+      requested.status as customer_status,
+      requested.billing_status as customer_billing_status,
+      requested.tier as customer_tier,
+      requested.kyc_level as customer_kyc_level,
+      requested.new_account_until as customer_new_account_until,
+      exists (
+        select 1
+        from sender_health_runs health
+        where health.customer_id = requested.id
+          and health.verdict = 'hold'
+          and (
+            health.reviewed_at is null
+            or health.review_decision in ('upheld', 'escalated')
+          )
+      ) as sender_on_hold
+    from billable b
+    join requested_customer requested on true
+    left join latest_subscription s on true
+    left join billing_plans p
+      on p.plan_key = coalesce(s.plan, case when b.tier = 'free' then 'free' else b.tier::text end)
+     and p.active = true
+    left join billing_dunning_state d on d.customer_id = b.id
+  `.execute(db);
+  const row = result.rows[0];
+  if (!row) throw new Error(`Billing customer not found: ${customerId}`);
+  return row;
+}
+
+function accessFromBillingSnapshot(row: BillingSnapshotRow): BillingAccess {
+  const planKey = row.plan_key;
+  const features = row.features && typeof row.features === 'object'
+    ? row.features as Record<string, unknown>
+    : {};
+  const graceEndsAt = row.grace_ends_at ? new Date(row.grace_ends_at) : null;
+  if (row.billing_status === 'canceled' || row.dunning_state === 'canceled') {
+    return { allowed: false, reason: 'billing_canceled', graceEndsAt, plan: planKey, features };
   }
-  const customer = await db.selectFrom('customers').select(['billing_status', 'tier']).where('id', '=', customerId).executeTakeFirstOrThrow();
-  const subscription = await db.selectFrom('subscriptions').select(['plan', 'status']).where('customer_id', '=', customerId).orderBy('updated_at', 'desc').executeTakeFirst();
-  const planKey = subscription?.plan ?? (customer.tier === 'free' ? 'free' : customer.tier);
-  const plan = await db.selectFrom('billing_plans').select(['features']).where('plan_key', '=', planKey).where('active', '=', true).executeTakeFirst();
-  const dunning = await db.selectFrom('billing_dunning_state').select(['state', 'grace_ends_at']).where('customer_id', '=', customerId).executeTakeFirst();
-  const graceEndsAt = dunning?.grace_ends_at ? new Date(dunning.grace_ends_at as any) : null;
-  if (customer.billing_status === 'canceled' || dunning?.state === 'canceled') {
-    return { allowed: false, reason: 'billing_canceled', graceEndsAt, plan: planKey, features: plan?.features ?? {} };
+  if (row.dunning_state === 'restricted' || row.subscription_status === 'unpaid' || row.subscription_status === 'incomplete') {
+    return { allowed: false, reason: 'payment_required', graceEndsAt, plan: planKey, features };
   }
-  if (dunning?.state === 'restricted' || subscription?.status === 'unpaid' || subscription?.status === 'incomplete') {
-    return { allowed: false, reason: 'payment_required', graceEndsAt, plan: planKey, features: plan?.features ?? {} };
-  }
-  if (customer.billing_status === 'past_due' || dunning?.state === 'grace') {
+  if (row.billing_status === 'past_due' || row.dunning_state === 'grace') {
     if (!graceEndsAt || graceEndsAt.getTime() <= Date.now()) {
-      return { allowed: false, reason: 'grace_expired', graceEndsAt, plan: planKey, features: plan?.features ?? {} };
+      return { allowed: false, reason: 'grace_expired', graceEndsAt, plan: planKey, features };
     }
   }
-  return { allowed: true, graceEndsAt, plan: planKey, features: plan?.features ?? {} };
+  return { allowed: true, graceEndsAt, plan: planKey, features };
+}
+
+export async function evaluateBillingAccess(customerId: string): Promise<BillingAccess> {
+  return accessFromBillingSnapshot(await loadBillingSnapshot(customerId));
+}
+
+/** Single-query account, sender-hold, and billing gate for send admission. */
+export async function evaluateSendAccountAccess(customerId: string): Promise<SendAccountAccess> {
+  const row = await loadBillingSnapshot(customerId);
+  return {
+    customer: {
+      email: row.customer_email,
+      daily_quota: Number(row.customer_daily_quota),
+      monthly_quota: Number(row.customer_monthly_quota),
+      status: row.customer_status,
+      billing_status: row.customer_billing_status,
+      tier: row.customer_tier,
+      kyc_level: row.customer_kyc_level,
+      new_account_until: row.customer_new_account_until,
+    },
+    senderOnHold: row.sender_on_hold,
+    billing: accessFromBillingSnapshot(row),
+  };
 }
 
 export async function hasEntitlement(customerId: string, feature: string): Promise<boolean> {

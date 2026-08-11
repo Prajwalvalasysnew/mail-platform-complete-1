@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { fileURLToPath } from 'node:url';
 
 // The @platform/* workspace packages are compiled to CommonJS in their dist/
 // folders. We must NOT let vitest re-transform their TypeScript source, because
@@ -8,6 +9,14 @@ import { defineConfig } from 'vitest/config';
 // load each one's built dist (which honors its package.json "exports"), keeping
 // the DB singleton and every Kysely query builder in a single realm.
 export default defineConfig({
+  resolve: {
+    // Vitest 4 can resolve this external workspace subpath to an empty module
+    // namespace. Transform the tracker route module, while its @platform/shared
+    // import remains external so Kysely and queue singletons stay in one realm.
+    alias: {
+      '@platform/tracker/app': fileURLToPath(new URL('../tracker/src/app.ts', import.meta.url)),
+    },
+  },
   test: {
     environment: 'node',
     globalSetup: './global-setup.ts',
@@ -19,11 +28,8 @@ export default defineConfig({
     server: {
       deps: {
         external: [
-          '@platform/shared',
-          '@platform/api',
-          '@platform/worker',
-          '@platform/smtp-gateway',
-          '@platform/tracker',
+          /^@platform\/(?:shared|api|worker|smtp-gateway)(?:\/|$)/,
+          /packages\/(?:shared|api|worker|smtp-gateway)\/dist\//,
           /node_modules/,
         ],
       },

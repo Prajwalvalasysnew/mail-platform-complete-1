@@ -69,7 +69,7 @@ export function DeliverabilityPage() {
         {pools.length === 0 ? (
           <EmptyState title="No sends in the last 24 hours" />
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={0}>
             <table className="data">
               <thead>
                 <tr>
@@ -111,7 +111,7 @@ export function DeliverabilityPage() {
         ) : listings.length === 0 ? (
           <EmptyState title="No blocklist listings" hint="All sending IPs are clean across monitored DNSBLs." />
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={0}>
             <table className="data">
               <thead>
                 <tr>
