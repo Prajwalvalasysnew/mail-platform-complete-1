@@ -33,8 +33,9 @@ export function RiskPill({ score }: { score: number }) {
 }
 
 // ---------- KPI ----------
-export function Kpi({ label, value, unit, tone, sub }: { label: string; value: ReactNode; unit?: string; tone?: 'green' | 'red' | 'plain'; sub?: ReactNode }) {
+export function Kpi({ label, value, unit, tone, sub, spark }: { label: string; value: ReactNode; unit?: string; tone?: 'green' | 'red' | 'plain'; sub?: ReactNode; spark?: number[] }) {
   const color = tone === 'green' ? 'var(--green-strong)' : tone === 'red' ? 'var(--red-text)' : 'var(--text-strong)';
+  const sparkMax = Math.max(...(spark ?? []), 1);
   return (
     <div className="card kpi">
       <div>
@@ -45,6 +46,13 @@ export function Kpi({ label, value, unit, tone, sub }: { label: string; value: R
         </div>
         {sub ? <div className="kdelta">{sub}</div> : null}
       </div>
+      {spark?.length ? (
+        <div className="kpi-spark" aria-hidden="true">
+          {spark.map((point, index) => (
+            <span key={index} style={{ height: Math.max(3, Math.round((point / sparkMax) * 28)), background: color, opacity: index === spark.length - 1 ? 1 : 0.42 }} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

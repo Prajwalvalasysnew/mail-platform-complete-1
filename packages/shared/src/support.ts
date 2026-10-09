@@ -101,6 +101,11 @@ export async function listSupportCustomers(q: SupportCustomerQuery) {
       'monthly_quota',
       'created_at',
       'updated_at',
+      sql<number>`(select count(*) from messages m where m.customer_id = customers.id and m.queued_at >= now() - interval '7 days')`.as('messages_7d'),
+      sql<number>`(select count(*) from messages m where m.customer_id = customers.id and m.queued_at >= now() - interval '7 days' and m.status in ('hard_bounced','soft_bounced'))`.as('bounced_7d'),
+      sql<number>`(select count(*) from sending_domains d where d.customer_id = customers.id)`.as('domain_count'),
+      sql<Date | null>`(select max(m.queued_at) from messages m where m.customer_id = customers.id)`.as('last_active_at'),
+      sql<number>`coalesce((select i.amount_cents from invoices i where i.customer_id = customers.id and i.status in ('open','paid') order by i.period_end desc limit 1), 0)`.as('mrr_cents'),
     ]);
 
   if (q.status) query = query.where('status', '=', q.status);
@@ -127,11 +132,18 @@ export async function getSupportCustomerOverview(customerId: string) {
   const customer = await db
     .selectFrom('customers')
     .selectAll()
+    .select([
+      sql<number>`(select count(*) from messages m where m.customer_id = customers.id and m.queued_at >= now() - interval '7 days')`.as('messages_7d'),
+      sql<number>`(select count(*) from messages m where m.customer_id = customers.id and m.queued_at >= now() - interval '7 days' and m.status in ('hard_bounced','soft_bounced'))`.as('bounced_7d'),
+      sql<number>`(select count(*) from sending_domains d where d.customer_id = customers.id)`.as('domain_count'),
+      sql<Date | null>`(select max(m.queued_at) from messages m where m.customer_id = customers.id)`.as('last_active_at'),
+      sql<number>`coalesce((select i.amount_cents from invoices i where i.customer_id = customers.id and i.status in ('open','paid') order by i.period_end desc limit 1), 0)`.as('mrr_cents'),
+    ])
     .where('id', '=', customerId)
     .executeTakeFirst();
   if (!customer) return null;
 
-  const [members, apiKeys, domains, recentMessages, usage, notes, audit] = await Promise.all([
+  const [members, apiKeys, domains, recentMessages, usage, notes, audit, resources, billing] = await Promise.all([
     db
       .selectFrom('memberships')
       .innerJoin('users', 'users.id', 'memberships.user_id')
@@ -188,9 +200,15 @@ export async function getSupportCustomerOverview(customerId: string) {
       .orderBy('id', 'desc')
       .limit(20)
       .execute(),
+    db.selectFrom('customers').select([
+      sql<number>`(select count(*) from webhooks w where w.customer_id = customers.id)`.as('webhook_count'),
+      sql<number>`(select count(*) from suppressions s where s.customer_id = customers.id)`.as('suppression_count'),
+      sql<number>`(select count(*) from support_tickets t where t.customer_id = customers.id and t.status in ('open','pending'))`.as('ticket_count'),
+    ]).where('id', '=', customerId).executeTakeFirst(),
+    db.selectFrom('invoices').select(['amount_cents', 'status', 'period_end']).where('customer_id', '=', customerId).orderBy('period_end', 'desc').limit(1).executeTakeFirst(),
   ]);
 
-  return { customer, members, api_keys: apiKeys, domains, recent_messages: recentMessages, usage_30d: usage, support_notes: notes, audit };
+  return { customer, members, api_keys: apiKeys, domains, recent_messages: recentMessages, usage_30d: usage, support_notes: notes, audit, resources, billing };
 }
 
 export async function createSupportNote(input: {

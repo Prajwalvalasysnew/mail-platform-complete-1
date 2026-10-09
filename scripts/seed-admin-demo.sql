@@ -117,6 +117,40 @@ WHERE NOT EXISTS (
   WHERE m.message_id = 'seed-admin-' || replace(c.customer_id::text, '-', '') || '-' || g
 );
 
+-- Keep the fixed demo messages inside the dashboard's rolling windows when
+-- this idempotent seed is rerun. Merely skipping existing IDs leaves all
+-- message-based overview charts empty once the original fixture dates age out.
+WITH refreshed AS (
+  SELECT
+    'seed-admin-' || replace(c.customer_id::text, '-', '') || '-' || g AS message_id,
+    now() - (g || ' hours')::interval - (c.offset_days || ' days')::interval AS queued_at,
+    g
+  FROM (VALUES
+    ('10000000-0000-4000-8000-000000000001'::uuid, 0),
+    ('10000000-0000-4000-8000-000000000002'::uuid, 0),
+    ('10000000-0000-4000-8000-000000000003'::uuid, 1),
+    ('10000000-0000-4000-8000-000000000004'::uuid, 2)
+  ) AS c(customer_id, offset_days)
+  CROSS JOIN generate_series(1, 36) g
+)
+UPDATE messages m SET
+  status = CASE
+    WHEN r.g % 17 = 0 THEN 'hard_bounced'
+    WHEN r.g % 13 = 0 THEN 'soft_bounced'
+    WHEN r.g % 19 = 0 THEN 'failed'
+    ELSE 'delivered'
+  END,
+  queued_at = r.queued_at,
+  accepted_at = r.queued_at + interval '3 seconds',
+  delivered_at = CASE WHEN r.g % 17 <> 0 AND r.g % 13 <> 0 AND r.g % 19 <> 0 THEN r.queued_at + interval '8 seconds' END,
+  bounced_at = CASE WHEN r.g % 17 = 0 OR r.g % 13 = 0 THEN r.queued_at + interval '9 seconds' END,
+  opened_at = CASE WHEN r.g % 3 = 0 THEN r.queued_at + interval '20 minutes' END,
+  first_clicked_at = CASE WHEN r.g % 7 = 0 THEN r.queued_at + interval '25 minutes' END,
+  attempts = 1,
+  risk_score = CASE WHEN r.g % 19 = 0 THEN 58 ELSE 4 + (r.g % 12) END
+FROM refreshed r
+WHERE m.message_id = r.message_id;
+
 INSERT INTO events (message_id, customer_id, event_type, payload, occurred_at, bot_verdict, bot_score, event_key)
 SELECT m.message_id, m.customer_id, 'opened', '{"seed":true}'::jsonb,
        coalesce(m.opened_at, m.queued_at + interval '15 minutes'), 'human', 0.05,

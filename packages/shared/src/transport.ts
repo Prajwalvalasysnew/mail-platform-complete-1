@@ -118,7 +118,7 @@ class SesSmtpTransport implements Transport {
       });
       return {
         provider_message_id: info.messageId,
-        response: info.response,
+        response: info.response ?? '',
         accepted: (info.accepted ?? []).map(String),
         rejected: (info.rejected ?? []).map(String),
       };
@@ -174,7 +174,7 @@ class HarakaSmtpTransport implements Transport {
       });
       return {
         provider_message_id: info.messageId,
-        response: info.response,
+        response: info.response ?? '',
         accepted: (info.accepted ?? []).map(String),
         rejected: (info.rejected ?? []).map(String),
       };
@@ -222,7 +222,7 @@ class MailpitSmtpTransport implements Transport {
       });
       return {
         provider_message_id: info.messageId,
-        response: info.response,
+        response: info.response ?? '',
         accepted: (info.accepted ?? []).map(String),
         rejected: (info.rejected ?? []).map(String),
       };

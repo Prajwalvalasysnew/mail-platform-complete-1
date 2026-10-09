@@ -6,7 +6,7 @@ import { useToast } from '../components/Toast';
 import { ConfirmModal, EmptyState, ErrorState, Loading, Modal, Pill, PlanPill, SearchInput, StatusPill } from '../components/ui';
 import { Icon } from '../components/icons';
 import { friendlyError } from '../lib/http';
-import { fmtAgo, fmtDate, fmtNum } from '../lib/format';
+import { fmtAgo, fmtDate, fmtNum, fmtPct } from '../lib/format';
 import type { CustomerRow } from '../api/types';
 
 const PAGE_SIZE = 25;
@@ -44,6 +44,7 @@ export function TenantsPage() {
             <option value="enterprise">Enterprise</option>
           </select>
           <SearchInput placeholder="Search by name, email, ID…" onChange={(v) => { setQ(v); setCursors([]); }} />
+          <button className="btn primary"><Icon name="plus" size={13} /> Invite tenant</button>
         </div>
       </div>
 
@@ -63,11 +64,12 @@ export function TenantsPage() {
                     <th>Tenant</th>
                     <th>Plan</th>
                     <th>Status</th>
-                    <th>Billing</th>
-                    <th>KYC</th>
-                    <th className="num">Daily quota</th>
-                    <th className="num">Monthly quota</th>
-                    <th>Created</th>
+                    <th className="num">Msgs 7d</th>
+                    <th className="num">Bounce %</th>
+                    <th>Daily quota</th>
+                    <th className="num">MRR</th>
+                    <th className="num">Domains</th>
+                    <th>Last active</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -79,11 +81,12 @@ export function TenantsPage() {
                       </td>
                       <td><PlanPill tier={c.tier} /></td>
                       <td><StatusPill status={c.status} /></td>
-                      <td>{c.billing_status ? <StatusPill status={c.billing_status} /> : <span className="section-note">—</span>}</td>
-                      <td>{c.kyc_level ? <Pill tone={c.kyc_level === 'verified' ? 'green' : 'amber'}>{c.kyc_level}</Pill> : <span className="section-note">—</span>}</td>
-                      <td className="num">{fmtNum(c.daily_quota)}</td>
-                      <td className="num">{fmtNum(c.monthly_quota)}</td>
-                      <td style={{ color: 'var(--text-dim)', fontSize: 11.5 }}>{fmtAgo(c.created_at)}</td>
+                      <td className="num">{fmtNum(c.messages_7d ?? 0)}</td>
+                      <td className="num" style={{ color: (c.bounced_7d ?? 0) / Math.max(c.messages_7d ?? 0, 1) > .05 ? 'var(--red-text)' : undefined }}>{fmtPct((c.bounced_7d ?? 0) / Math.max(c.messages_7d ?? 0, 1))}</td>
+                      <td><QuotaCell used={Math.min(c.messages_7d ?? 0, c.daily_quota)} limit={c.daily_quota} /></td>
+                      <td className="num">{formatMoney(c.mrr_cents)}</td>
+                      <td className="num">{fmtNum(c.domain_count ?? 0)}</td>
+                      <td style={{ color: 'var(--text-dim)', fontSize: 11.5, whiteSpace: 'nowrap' }}>{c.last_active_at ? fmtAgo(c.last_active_at) : 'Never'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -109,6 +112,38 @@ export function TenantsPage() {
       {selected ? <TenantDrawer id={selected.id} fallback={selected} onClose={() => setSelected(null)} /> : null}
     </>
   );
+}
+
+function QuotaCell({ used, limit }: { used: number; limit: number }) {
+  const fraction = used / Math.max(limit, 1);
+  const color = fraction > .9 ? 'var(--red)' : fraction > .75 ? 'var(--amber-strong)' : 'var(--blue)';
+  return <div className="tenant-quota-cell"><div className="meterbar"><div style={{ width: `${Math.min(100, fraction * 100)}%`, background: color }} /></div><b style={{ color }}>{fmtCompactNumber(used)} / {fmtCompactNumber(limit)}</b></div>;
+}
+
+function Stat({ label, value, small }: { label: string; value: string; small?: boolean }) {
+  return <div className="tenant-stat"><span>{label}</span><b className={small ? 'small' : ''}>{value}</b></div>;
+}
+
+function QuotaBar({ label, used, limit }: { label: string; used: number; limit: number }) {
+  const fraction = used / Math.max(limit, 1);
+  const color = fraction > .9 ? 'var(--red)' : fraction > .75 ? 'var(--amber-strong)' : 'var(--blue)';
+  return <div className="drawer-quota"><div><span>{label}</span><b>{fmtNum(used)} / {fmtNum(limit)}</b></div><div className="meterbar"><div style={{ width: `${Math.min(100, fraction * 100)}%`, background: color }} /></div><small>{Math.round(fraction * 100)}% used</small></div>;
+}
+
+function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return <div className="tenant-info-row"><span>{label}</span><b className={mono ? 'mono' : ''}>{value}</b></div>;
+}
+
+function Resource({ label, value }: { label: string; value: number }) {
+  return <div><b>{fmtNum(value)}</b><span>{label}</span></div>;
+}
+
+function fmtCompactNumber(value: number): string {
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+}
+
+function formatMoney(cents?: number | null): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format((Number(cents) || 0) / 100);
 }
 
 function TenantDrawer({ id, fallback, onClose }: { id: string; fallback: CustomerRow; onClose: () => void }) {
@@ -159,41 +194,43 @@ function TenantDrawer({ id, fallback, onClose }: { id: string; fallback: Custome
 
   const c = (detail.data?.customer ?? fallback) as CustomerRow;
   const cd = detail.data;
+  const usage = cd?.usage_30d ?? [];
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const sevenDayStart = new Date(Date.now() - 6 * 86_400_000).toISOString().slice(0, 10);
+  const usage7d = usage.filter((row) => String(row.usage_date).slice(0, 10) >= sevenDayStart);
+  const sent7d = c.messages_7d ?? usage7d.reduce((sum, row) => sum + Number(row.sent), 0);
+  const bounced7d = c.bounced_7d ?? usage7d.reduce((sum, row) => sum + Number(row.bounced), 0);
+  const sent30d = usage.reduce((sum, row) => sum + Number(row.sent), 0);
+  const todaySent = usage.filter((row) => String(row.usage_date).slice(0, 10) === todayKey).reduce((sum, row) => sum + Number(row.sent), 0);
+  const lastActive = (cd?.recent_messages?.[0]?.queued_at as string | undefined) ?? c.last_active_at;
+  const initials = (c.name || c.email).split(/\s+|@/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
 
   return (
     <div className="drawer-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="drawer" role="dialog" aria-modal="true" aria-label={`Tenant ${c.name ?? c.email}`}>
-        <div className="card-pad" style={{ borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: '#fff', zIndex: 1 }}>
+      <div className="drawer tenant-drawer" role="dialog" aria-modal="true" aria-label={`Tenant ${c.name ?? c.email}`}>
+        <div className="tenant-drawer-head">
           <div className="row" style={{ justifyContent: 'space-between' }}>
-            <div>
-              <div className="card-title">{c.name || c.email}</div>
-              <div className="section-note mono">{c.id}</div>
+            <div className="tenant-identity">
+              <span className="tenant-logo">{initials}</span>
+              <div><div className="tenant-name">{c.name || c.email}</div><div className="section-note mono">{c.email}</div></div>
             </div>
-            <div className="row">
-              <PlanPill tier={c.tier} />
-              <StatusPill status={c.status} />
-              <button className="iconbtn" onClick={onClose} aria-label="Close">
+            <div className="row"><button className="iconbtn drawer-close" onClick={onClose} aria-label="Close">
                 <Icon name="x" />
-              </button>
-            </div>
-          </div>
-          <div className="row" style={{ marginTop: 12, flexWrap: 'wrap' }}>
-            {hasRole('operator') ? (
-              <button className="btn sm" onClick={() => setEditPlan(true)}>Edit plan & quotas</button>
-            ) : null}
-            {hasRole('admin') ? (
-              c.status === 'suspended' ? (
-                <button className="btn sm success" onClick={() => setConfirmSuspend('reinstate')}>Reinstate</button>
-              ) : (
-                <button className="btn sm danger" onClick={() => setConfirmSuspend('suspend')}>Suspend</button>
-              )
-            ) : null}
+              </button></div>
           </div>
         </div>
 
-        <div className="card-pad" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div className="tenant-drawer-body">
           {detail.isPending ? <Loading label="Loading tenant detail…" /> : null}
           {detail.isError ? <ErrorState error={detail.error} retry={() => void detail.refetch()} /> : null}
+
+          <div className="tenant-badges"><PlanPill tier={c.tier} /><StatusPill status={c.status} />{c.billing_status && <StatusPill status={c.billing_status} />}<Pill tone={(bounced7d / Math.max(sent7d, 1)) > .05 ? 'red' : 'green'}>{(bounced7d / Math.max(sent7d, 1)) > .05 ? 'high risk' : 'low risk'}</Pill></div>
+          <div className="tenant-stat-grid">
+            <Stat label="Messages (7d)" value={fmtNum(sent7d)} /><Stat label="MRR" value={formatMoney(cd?.billing?.amount_cents ?? c.mrr_cents)} /><Stat label="Bounce rate" value={fmtPct(bounced7d / Math.max(sent7d, 1))} /><Stat label="Last active" value={lastActive ? fmtAgo(lastActive) : 'Never'} small />
+          </div>
+          <section className="tenant-panel"><div className="tenant-section-title">Quota</div><QuotaBar label="Daily" used={todaySent} limit={c.daily_quota} /><QuotaBar label="Monthly" used={sent30d} limit={c.monthly_quota} /></section>
+          <section className="tenant-panel"><div className="tenant-section-title">Billing</div><InfoRow label="Provider" value={(c as CustomerRow & { billing_provider?: string }).billing_provider ?? '—'} /><InfoRow label="Subscription" value={c.billing_status ?? '—'} /><InfoRow label="MRR" value={formatMoney(cd?.billing?.amount_cents ?? c.mrr_cents)} mono /></section>
+          <div className="tenant-resource-grid"><Resource label="API keys" value={cd?.api_keys?.length ?? 0} /><Resource label="Webhooks" value={cd?.resources?.webhook_count ?? 0} /><Resource label="Sups" value={cd?.resources?.suppression_count ?? 0} /><Resource label="Tickets" value={cd?.resources?.ticket_count ?? 0} /></div>
 
           <section>
             <div className="nav-group-label" style={{ padding: '0 0 6px' }}>Account</div>
@@ -254,7 +291,7 @@ function TenantDrawer({ id, fallback, onClose }: { id: string; fallback: Custome
 
           <section>
             <div className="nav-group-label" style={{ padding: '0 0 6px' }}>Support notes</div>
-            {(cd?.notes ?? []).map((n) => (
+            {(cd?.support_notes ?? []).map((n) => (
               <div key={n.id} style={{ padding: '7px 10px', background: 'var(--amber-wash)', borderRadius: 8, marginBottom: 6, fontSize: 12.5 }}>
                 <div>{n.body}</div>
                 <div className="section-note" style={{ marginTop: 3 }}>{fmtDate(n.created_at)}</div>
@@ -274,6 +311,10 @@ function TenantDrawer({ id, fallback, onClose }: { id: string; fallback: Custome
               </button>
             </div>
           </section>
+        </div>
+        <div className="tenant-drawer-foot">
+          {hasRole('operator') && <button className="btn" onClick={() => setEditPlan(true)}>Edit quota</button>}
+          {hasRole('admin') && (c.status === 'suspended' ? <button className="btn success" onClick={() => setConfirmSuspend('reinstate')}>Reinstate</button> : <button className="btn danger" onClick={() => setConfirmSuspend('suspend')}>Suspend</button>)}
         </div>
       </div>
 

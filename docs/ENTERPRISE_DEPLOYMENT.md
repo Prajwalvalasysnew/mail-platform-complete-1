@@ -1,5 +1,9 @@
 # Enterprise Deployment Notes
 
+For the Hetzner-specific topology, current-price references, capacity evidence,
+storage sizing, webhook growth, sending-IP gaps, and unit-economics method, see
+[`../infra/hetzner/DEPLOYMENT_CAPACITY_COSTS.md`](../infra/hetzner/DEPLOYMENT_CAPACITY_COSTS.md).
+
 This repository can run locally with the development `docker-compose.yml`, but
 that file intentionally contains local-only defaults. Enterprise deployment must
 use a secret-managed production environment and the production overlay:

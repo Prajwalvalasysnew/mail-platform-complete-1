@@ -53,6 +53,11 @@ export interface CustomerRow {
   monthly_quota: number;
   created_at: string;
   updated_at: string;
+  messages_7d?: number;
+  bounced_7d?: number;
+  domain_count?: number;
+  last_active_at?: string | null;
+  mrr_cents?: number;
 }
 
 // ---- KYC ----
@@ -89,10 +94,12 @@ export interface CustomerOverview {
   customer: CustomerRow & Record<string, unknown>;
   members?: Array<{ id: string; email: string; name: string | null; status: string; mfa_enabled: boolean; role: string }>;
   api_keys?: Array<{ id: string; name: string; key_prefix: string; scopes: string[]; key_type: string; last_used_at: string | null; expires_at: string | null; revoked_at: string | null; created_at: string }>;
-  domains?: Array<{ id: string; domain: string; status: string; created_at: string } & Record<string, unknown>>;
+  domains?: Array<{ id: string; domain: string; status?: string; verified_at?: string | null; created_at: string } & Record<string, unknown>>;
   recent_messages?: Array<Record<string, unknown>>;
-  usage?: Record<string, unknown>;
-  notes?: SupportNote[];
+  usage_30d?: Array<{ usage_date: string; sent: number; delivered: number; bounced: number; complained: number }>;
+  support_notes?: SupportNote[];
+  resources?: { webhook_count: number; suppression_count: number; ticket_count: number };
+  billing?: { amount_cents: number; status: string; period_end: string } | null;
   audit?: Array<Record<string, unknown>>;
   [k: string]: unknown;
 }
@@ -113,6 +120,7 @@ export interface OverviewResponse {
   rates_24h: { bounce_rate: number; delivery_rate: number };
   send_queue: { waiting?: number; active?: number; delayed?: number; failed?: number };
   suppressions_total: number;
+  platform_mrr_cents: number;
 }
 
 // ---- Review queue (abuse) ----
