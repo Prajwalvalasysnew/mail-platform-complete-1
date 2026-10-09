@@ -175,9 +175,10 @@ export function Shell() {
           <button className="iconbtn topbar-action" title="Refresh data" aria-label="Refresh data" onClick={() => window.location.reload()}>
             <Icon name="refresh" size={16} />
           </button>
-          <span className="topbar-notifications" aria-label={`${badges.support} notifications`}>
+          <span className="topbar-notifications" title={`${badges.support} support notifications`}>
             <Icon name="support" size={16} />
             {badges.support > 0 ? <b>{badges.support}</b> : null}
+            <span className="sr-only">{badges.support} support notifications</span>
           </span>
           <div className="topbar-user">
             <span className="avatar">{initials}</span>
