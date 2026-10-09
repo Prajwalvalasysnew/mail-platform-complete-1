@@ -1,5 +1,10 @@
 # Hetzner production foundation
 
+For the reviewed deployment shape, current-price references, load-balancer
+status, six-IP limitations, measured capacity evidence, storage formulas,
+webhook growth controls, and plan ROI method, see
+[`DEPLOYMENT_CAPACITY_COSTS.md`](DEPLOYMENT_CAPACITY_COSTS.md).
+
 This module provisions three independently backed-up nodes on a private
 network, a narrowly scoped firewall, and a public load balancer. It is the
 minimum failure-domain shape for the existing Helm chart and CloudNativePG
