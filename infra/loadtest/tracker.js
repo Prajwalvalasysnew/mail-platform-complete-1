@@ -1,7 +1,7 @@
 // k6 load test for the open/click tracker.
 //
 // Run:
-//   k6 run -e TRACKER_URL=http://localhost:3002 infra/loadtest/tracker.js
+//   k6 run -e TRACKER_URL=http://localhost:4000 infra/loadtest/tracker.js
 //
 // The tracker is on the hot path for every opened/clicked email, so it must
 // absorb high, spiky read volume and always return fast (a slow pixel delays
@@ -13,8 +13,10 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Trend } from 'k6/metrics';
+import encoding from 'k6/encoding';
 
-const TRACKER_URL = __ENV.TRACKER_URL || 'http://localhost:3002';
+const TRACKER_URL = __ENV.TRACKER_URL || 'http://localhost:4000';
+const UNKNOWN_LINK_ID = '00000000-0000-0000-0000-000000000000';
 
 export const options = {
   // Spiky read profile: opens arrive in bursts when a campaign lands.
@@ -38,15 +40,28 @@ const clickLatency = new Trend('mp_click_ms');
 // A synthetic, URL-safe token. Invalid tokens still get a pixel (no leak), so
 // this exercises the full decode + fast-path without needing a real message.
 function token() {
-  return `lt${__VU}x${__ITER}${Math.random().toString(36).slice(2, 10)}`;
+  // The tracker accepts a canonical base64url-encoded RFC 5322 Message-ID.
+  // Using arbitrary URL-safe strings exercises malformed-input logging rather
+  // than the normal unknown-message fast path and makes every click a 400.
+  const messageId = `load-${__VU}-${__ITER}-${Math.random().toString(36).slice(2, 10)}@load.test`;
+  return encoding.b64encode(messageId, 'rawurl');
 }
 
 export default function () {
-  const open = http.get(`${TRACKER_URL}/o/${token()}`, { redirects: 0 });
+  const encoded = token();
+  const open = http.get(`${TRACKER_URL}/o/${encoded}`, {
+    redirects: 0,
+    tags: { name: '/o/:encoded' },
+    responseCallback: http.expectedStatuses(200, 302, 404),
+  });
   check(open, { 'answered': (r) => r.status === 200 || r.status === 302 || r.status === 404 });
   openLatency.add(open.timings.duration);
 
-  const click = http.get(`${TRACKER_URL}/c/${token()}/link-0`, { redirects: 0 });
+  const click = http.get(`${TRACKER_URL}/c/${encoded}/${UNKNOWN_LINK_ID}`, {
+    redirects: 0,
+    tags: { name: '/c/:encoded/:linkId' },
+    responseCallback: http.expectedStatuses(200, 302, 404),
+  });
   check(click, { 'answered': (r) => r.status === 200 || r.status === 302 || r.status === 404 });
   clickLatency.add(click.timings.duration);
 

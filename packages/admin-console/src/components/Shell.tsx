@@ -81,6 +81,7 @@ export function Shell() {
 
   const title = TITLES[path] ?? TITLES['/' + path.split('/')[1]] ?? 'Admin console';
   const initials = (admin?.email ?? '?').slice(0, 2).toUpperCase();
+  const displayName = admin?.email?.split('@')[0] || 'Admin';
 
   return (
     <div className="shell">
@@ -126,8 +127,8 @@ export function Shell() {
         </nav>
 
         <div className="sidebar-foot">
-          <div className="sysstatus">
-            <span className="dot green" /> All systems operational
+          <div className={`sysstatus${badges.dlqAlert ? ' warning' : ''}`}>
+            <span className={`dot ${badges.dlqAlert ? 'amber' : 'green'}`} /> {badges.dlqAlert ? 'System warning detected' : 'All systems operational'}
           </div>
           <div className="sidebar-user">
             <span className="avatar">
@@ -169,8 +170,20 @@ export function Shell() {
             </div>
           </div>
           <span className="env-pill">
-            <span className="dot green" /> Production
+            <span className="dot amber" /> Local development
           </span>
+          <button className="iconbtn topbar-action" title="Refresh data" aria-label="Refresh data" onClick={() => window.location.reload()}>
+            <Icon name="refresh" size={16} />
+          </button>
+          <span className="topbar-notifications" aria-label={`${badges.support} notifications`}>
+            <Icon name="support" size={16} />
+            {badges.support > 0 ? <b>{badges.support}</b> : null}
+          </span>
+          <div className="topbar-user">
+            <span className="avatar">{initials}</span>
+            <strong>{displayName}</strong>
+            <span className="chev">⌄</span>
+          </div>
         </header>
         <main className="content">
           <div className="content-inner">

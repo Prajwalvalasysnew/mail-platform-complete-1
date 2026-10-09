@@ -1828,11 +1828,16 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   // ---- Platform overview (dashboard data) ----
   app.get('/overview', { preHandler: requireAdmin('support') }, async () => {
     const since = new Date(Date.now() - 24 * 3600_000);
-    const [customers, messages24h, queueDepth, suppressions] = await Promise.all([
+    const [customers, messages24h, queueDepth, suppressions, platformMrr] = await Promise.all([
       db.selectFrom('customers').select(['status', (eb) => eb.fn.countAll<number>().as('c')]).groupBy('status').execute(),
       db.selectFrom('messages').select(['status', (eb) => eb.fn.countAll<number>().as('c')]).where('queued_at', '>=', since as any).groupBy('status').execute(),
       sendQueue.getJobCounts('waiting', 'active', 'delayed', 'failed'),
       db.selectFrom('suppressions').select((eb) => eb.fn.countAll<number>().as('c')).executeTakeFirst(),
+      db.selectFrom('invoices')
+        .select(sql<number>`coalesce(sum(amount_cents), 0)`.as('c'))
+        .where('period_end', '>=', new Date() as any)
+        .where('status', 'in', ['open', 'paid'])
+        .executeTakeFirst(),
     ]);
     const msgByStatus = Object.fromEntries(messages24h.map((r) => [r.status, Number(r.c)]));
     const totalSent24h = Object.values(msgByStatus).reduce((a, b) => a + b, 0);
@@ -1847,6 +1852,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       },
       send_queue: queueDepth,
       suppressions_total: Number(suppressions?.c ?? 0),
+      platform_mrr_cents: Number(platformMrr?.c ?? 0),
     };
   });
 

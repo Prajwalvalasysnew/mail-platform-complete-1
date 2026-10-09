@@ -194,6 +194,11 @@ services:
   mailpit:
     image: axllent/mailpit:latest
     container_name: mail-mailpit
+    # Keep enough local deliveries for long-running persona simulations and
+    # operator inspection. This is development-only capture storage; production
+    # delivery never depends on Mailpit.
+    environment:
+      MP_MAX_MESSAGES: ${MAILPIT_MAX_MESSAGES:-15000}
     ports:
       - "${MAILPIT_UI_HOST_PORT:-8025}:8025"
       - "${MAILPIT_SMTP_HOST_PORT:-1025}:1025"
