@@ -53,7 +53,7 @@ export function FleetPage() {
 
       <div className="health-strip card">
         <div className="health-summary"><small>Platform</small><strong className={warnings ? 'warn' : 'ok'}><span className="dot" />{warnings ? `${warnings} warn` : 'Healthy'}</strong></div>
-        <div className="health-services">
+        <div className="health-services" role="region" aria-label="Platform service health" tabIndex={0}>
           {health.map((item) => <div className={item.warn ? 'health-service warning' : 'health-service'} key={item.name}><span className={item.warn ? 'dot amber' : 'dot green'} /><div><b>{item.name}</b><div><em>{item.badge}</em><span>{item.detail}</span></div></div></div>)}
         </div>
       </div>
