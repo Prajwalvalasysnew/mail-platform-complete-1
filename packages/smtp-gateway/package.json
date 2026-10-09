@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@platform/shared": "*",
-    "mailparser": "^3.9.14",
-    "smtp-server": "^3.13.6"
+    "mailparser": "^3.9.37",
+    "smtp-server": "^3.19.18"
   },
   "devDependencies": {
     "@types/mailparser": "^3.4.5",

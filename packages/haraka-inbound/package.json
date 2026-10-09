@@ -9,7 +9,7 @@
     "bullmq": "^5.4.0",
     "haraka": "3.3.2",
     "ioredis": "^5.3.2",
-    "mailparser": "^3.9.14",
+    "mailparser": "^3.9.37",
     "pg": "^8.11.3"
   }
 }

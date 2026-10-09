@@ -21,10 +21,10 @@
     "@platform/shared": "*",
     "bullmq": "^5.4.0",
     "cheerio": "^1.0.0",
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^10.0.16",
     "pino": "^8.19.0",
     "prom-client": "^15.1.0",
-    "undici": "^6.27.0"
+    "undici": "^6.29.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
