@@ -9,6 +9,26 @@ global:
     pullPolicy: IfNotPresent
 
 # ── API ───────────────────────────────────────────────────────────────────────
+customerUi:
+  enabled: false # Enable only after configuring the real public host/TLS secret.
+  replicaCount: 2
+  image:
+    tag: ""
+  service:
+    port: 8080
+  ingress:
+    enabled: true
+    className: nginx
+    host: app.example.invalid
+    tlsSecretName: customer-ui-tls
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
 api:
   replicaCount: 3
   image:

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Inter+Tight:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" />
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Inter',ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:oklch(0.985 0.003 250);color:oklch(0.17 0.02 255);font-feature-settings:"cv11","ss01";min-height:100vh;}
+::selection{background:oklch(0.55 0.20 24 / 0.18);}
+.wrap{max-width:1180px;margin:0 auto;padding:0 32px;width:100%;}
+.disp{font-family:'Inter Tight',sans-serif;letter-spacing:-.02em;font-weight:700;}
+.mono{font-family:'JetBrains Mono',monospace;}
+.mut{color:oklch(0.47 0.015 255);}
+.mut2{color:oklch(0.56 0.013 255);}
+.navlink{font-size:14px;font-weight:500;color:oklch(0.36 0.015 255);text-decoration:none;padding:8px 12px;border-radius:8px;}
+.navlink:hover{color:oklch(0.15 0.02 255);background:oklch(0.965 0.004 250);}
+.lab{display:block;font-size:13px;font-weight:600;color:oklch(0.30 0.018 255);margin-bottom:7px;}
+.inp{width:100%;height:44px;border-radius:9px;border:1.5px solid oklch(0.89 0.009 250);background:#fff;padding:0 14px;font-size:14px;font-family:inherit;color:oklch(0.20 0.02 255);transition:border-color .12s,box-shadow .12s;}
+.inp:focus{outline:none;border-color:oklch(0.55 0.20 24);box-shadow:0 0 0 3px oklch(0.55 0.20 24/.11);}
+.inp::placeholder{color:oklch(0.66 0.012 255);}
+.tarea{height:auto;min-height:104px;padding:12px 14px;resize:vertical;line-height:1.55;}
+.sel{appearance:none;background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23697086' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 13px center;padding-right:38px;cursor:pointer;}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;height:44px;padding:0 20px;border-radius:9px;font-size:14.5px;font-weight:600;text-decoration:none;cursor:pointer;border:0;font-family:inherit;white-space:nowrap;transition:background .13s,border-color .13s;}
+.btnp{background:oklch(0.55 0.20 24);color:#fff;}
+.btnp:hover{background:oklch(0.49 0.19 24);}
+.btnsm{height:36px;padding:0 16px;font-size:13.5px;border-radius:8px;}
+.scheck{display:flex;gap:12px;align-items:flex-start;font-size:14.5px;line-height:1.6;color:oklch(0.34 0.018 255);}
+.statmini{font-family:'Inter Tight',sans-serif;font-size:26px;font-weight:800;letter-spacing:-.025em;color:oklch(0.50 0.19 24);}
+.scard{background:#fff;border:1px solid oklch(0.90 0.008 252);border-radius:16px;box-shadow:0 1px 2px oklch(0.18 0.02 255/.05),0 16px 48px -16px oklch(0.18 0.02 255/.12);padding:34px;}
+@media (max-width:960px){.salesgrid{grid-template-columns:1fr!important;}}
+</style>
+</helmet>
+<header style="background:#fff;border-bottom:1px solid oklch(0.92 0.006 250);">
+<div class="wrap fx ac jb" style="height:64px;">
+<a href="Valasys Mail Landing.dc.html" class="fx ac gap10" style="text-decoration:none;color:inherit;">
+<span class="fx ac jc" style="width:32px;height:32px;border-radius:9px;background:oklch(0.55 0.20 24);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"></rect><path d="m2 7 10 6 10-6"></path></svg></span>
+<span class="disp nowrap" style="font-size:17px;">Valasys <span style="font-weight:600;color:oklch(0.42 0.015 255);">Mail</span></span>
+</a>
+<div class="fx ac gap10">
+<a class="navlink" href="Sign In.dc.html" style="font-weight:600;">Sign in</a>
+<a class="btn btnp btnsm" href="Create Account.dc.html">Start for free</a>
+</div>
+</div>
+</header>
+<div class="wrap grid salesgrid" style="grid-template-columns:1fr 460px;gap:64px;padding-top:72px;padding-bottom:88px;align-items:start;">
+<div>
+<div class="fs12 fw7 upper" style="letter-spacing:.09em;color:oklch(0.50 0.19 24);">Enterprise sales</div>
+<h1 class="disp" style="font-size:42px;line-height:1.1;letter-spacing:-.03em;margin-top:14px;max-width:520px;">Let's design your sending infrastructure together</h1>
+<p style="font-size:16.5px;line-height:1.65;color:oklch(0.42 0.015 255);margin-top:18px;max-width:500px;">Tell us about your volume and use case. A deliverability engineer — not just a rep — joins every call from the first conversation.</p>
+<div class="col" style="gap:16px;margin-top:34px;max-width:500px;">
+<div class="scheck"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.55 0.20 24)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:3px;"><polyline points="20 6 9 17 4 12"></polyline></svg><span><strong>Volume pricing</strong> — custom rates from 1M emails / month, with committed-use discounts</span></div>
+<div class="scheck"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.55 0.20 24)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:3px;"><polyline points="20 6 9 17 4 12"></polyline></svg><span><strong>White-glove migration</strong> — we move templates, suppression lists, and warm your IPs alongside your current provider</span></div>
+<div class="scheck"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.55 0.20 24)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:3px;"><polyline points="20 6 9 17 4 12"></polyline></svg><span><strong>Enterprise controls</strong> — SSO / SAML, audit logs, EU or US data residency, 99.99% uptime SLA</span></div>
+<div class="scheck"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.55 0.20 24)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:3px;"><polyline points="20 6 9 17 4 12"></polyline></svg><span><strong>Named deliverability team</strong> — quarterly reputation reviews and a direct Slack channel</span></div>
+</div>
+<div class="fx" style="gap:40px;margin-top:44px;padding-top:32px;border-top:1px solid oklch(0.91 0.007 252);flex-wrap:wrap;">
+<div><div class="statmini">384M</div><div class="fs12 mut2" style="margin-top:2px;">emails / month</div></div>
+<div><div class="statmini">99.6%</div><div class="fs12 mut2" style="margin-top:2px;">delivery rate</div></div>
+<div><div class="statmini">&lt; 24h</div><div class="fs12 mut2" style="margin-top:2px;">response time</div></div>
+</div>
+<div style="margin-top:40px;padding:22px 24px;border:1px solid oklch(0.91 0.007 252);border-radius:13px;background:#fff;max-width:500px;">
+<p class="fs14" style="line-height:1.65;color:oklch(0.32 0.018 255);">“We migrated 40M sends a month over a weekend. The Valasys team warmed our IPs alongside our old provider — zero disruption to customers.”</p>
+<div class="fx ac gap10" style="margin-top:14px;">
+<span class="fx ac jc fw7" style="width:32px;height:32px;border-radius:999px;background:oklch(0.55 0.15 230/.14);color:oklch(0.45 0.13 230);font-size:12px;">PN</span>
+<span class="fs12 mut2"><strong style="color:oklch(0.28 0.018 255);">Priya Natarajan</strong> · VP Engineering, Northwind</span>
+</div>
+</div>
+</div>
+<div class="scard">
+<sc-if value="{{ formVisible }}" hint-placeholder-val="{{ true }}">
+<h2 class="disp" style="font-size:21px;letter-spacing:-.02em;">Talk to sales</h2>
+<p class="fs13 mut" style="margin-top:5px;line-height:1.5;">We'll get back within one business day.</p>
+<form onSubmit="{{ onSubmit }}" class="col gap16" style="margin-top:24px;">
+<div class="grid" style="grid-template-columns:1fr 1fr;gap:12px;">
+<div><label class="lab" for="ts-first">First name</label><input class="inp" id="ts-first" placeholder="Prajwal" required="required" /></div>
+<div><label class="lab" for="ts-last">Last name</label><input class="inp" id="ts-last" placeholder="Valasys" /></div>
+</div>
+<div><label class="lab" for="ts-email">Work email</label><input class="inp" id="ts-email" type="email" placeholder="you@company.com" required="required" /></div>
+<div><label class="lab" for="ts-company">Company</label><input class="inp" id="ts-company" placeholder="Company name" required="required" /></div>
+<div><label class="lab" for="ts-volume">Monthly email volume</label>
+<select class="inp sel" id="ts-volume"><option>Under 100,000</option><option>100,000 – 1M</option><option>1M – 10M</option><option>10M – 50M</option><option>50M+</option></select></div>
+<div><label class="lab" for="ts-msg">What are you looking to solve?</label><textarea class="inp tarea" id="ts-msg" placeholder="Current provider, deliverability issues, migration timeline…"></textarea></div>
+<button type="submit" class="btn btnp w100">Request a call</button>
+<p class="fs12 mut2" style="line-height:1.6;">By submitting, you agree to be contacted about Valasys Mail. We never share your details.</p>
+</form>
+</sc-if>
+<sc-if value="{{ sent }}" hint-placeholder-val="">
+<div class="col ac tc" style="padding:32px 8px;">
+<span class="fx ac jc" style="width:52px;height:52px;border-radius:999px;background:oklch(0.60 0.15 150/.13);"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="oklch(0.52 0.13 150)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
+<h2 class="disp" style="font-size:21px;letter-spacing:-.02em;margin-top:18px;">Request received</h2>
+<p class="fs14 mut" style="margin-top:8px;line-height:1.6;max-width:300px;">Thanks — a deliverability engineer will reach out within one business day.</p>
+<a href="Valasys Mail Landing.dc.html" class="fs13" style="margin-top:20px;color:oklch(0.50 0.19 24);font-weight:600;text-decoration:none;">← Back to valasys.com</a>
+</div>
+</sc-if>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:980}}">
+class Component extends DCLogic {
+  state = { sent: false };
+  renderVals() {
+    return {
+      formVisible: !this.state.sent,
+      sent: this.state.sent,
+      onSubmit: (e) => { e.preventDefault(); this.setState({ sent: true }); },
+    };
+  }
+}
+</script>
+</body>
+</html>

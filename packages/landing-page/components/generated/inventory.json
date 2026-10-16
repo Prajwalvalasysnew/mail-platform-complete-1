@@ -1,0 +1,30 @@
+[
+  {
+    "page": "Landing",
+    "reference": "Valasys Mail Landing v13.dc.html",
+    "sha256": "ba473f9268ea4dfc3a774f2bcd21018332ce9dc32022a81406fe9816c9265fa7",
+    "elements": 437,
+    "collections": 21
+  },
+  {
+    "page": "SignIn",
+    "reference": "Sign In.dc.html",
+    "sha256": "135219faab94c7765ccd004eb56a8fda431fdf6071baabd580c22a38255e7f9a",
+    "elements": 55,
+    "collections": 0
+  },
+  {
+    "page": "CreateAccount",
+    "reference": "Create Account.dc.html",
+    "sha256": "d55e911cb4bacd6deeb46270b06d736eca829824470c50f334d6484d26ce4cd6",
+    "elements": 84,
+    "collections": 0
+  },
+  {
+    "page": "Sales",
+    "reference": "Talk to Sales.dc.html",
+    "sha256": "baffb84f364edae38ef05f8b48e97ccad04464fc0a633400a0db7bde2f52259a",
+    "elements": 93,
+    "collections": 0
+  }
+]

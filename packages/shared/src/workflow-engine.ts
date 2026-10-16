@@ -470,7 +470,7 @@ export async function triggerWorkflowRunsBulk(
 
 type StepOutcome =
   | { kind: 'continue'; sentMessageId?: string }
-  | { kind: 'parked' }
+  | { kind: 'parked'; job:{kind:'wake'|'timeout';run:{id:string;customer_id:string};wakeAt:Date;seq:number;stepId?:string;uniqueSuffix?:string} }
   | { kind: 'finished' }
   | { kind: 'noop' };
 
@@ -552,6 +552,12 @@ export async function advanceWorkflowRun(runId: string): Promise<void> {
 
   for (let i = 0; i < STEP_BUDGET_PER_JOB; i++) {
     const outcome = await advanceOneStep(runId, def);
+    if(outcome.kind==='parked'){
+      // The parked row must be committed before a zero-delay job can run.
+      // Redis remains best effort; the durable wake_at sweep is the fallback.
+      const job=outcome.job;
+      try{await enqueue(job.kind,job.run,{seq:job.seq,stepId:job.stepId,uniqueSuffix:job.uniqueSuffix,delayMs:Math.max(0,job.wakeAt.getTime()-Date.now())});}catch{/* sweep recovers */}
+    }
     if (outcome.kind === 'continue' && outcome.sentMessageId) {
       // Best-effort immediate dispatch after the step txn committed; the
       // scheduler's outbox drain is the durable fallback.
@@ -652,13 +658,8 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
           })
           .where('id', '=', runId)
           .execute();
-        // Enqueue failures are swallowed: wake_at is durable and the overdue
-        // sweep re-arms it. Throwing here would roll back the park itself.
-        try {
-          await enqueue('wake', run, { seq: run.steps_executed, delayMs: wakeAt.getTime() - Date.now(), stepId: step.id, uniqueSuffix: `-q${retries + 1}` });
-        } catch { /* sweep recovers */ }
         workflowStepsExecuted.inc({ step_type: step.type, outcome: 'quota_deferred' });
-        return { kind: 'parked' };
+        return { kind: 'parked',job:{kind:'wake',run,wakeAt,seq:run.steps_executed,stepId:step.id,uniqueSuffix:`-q${retries+1}`} };
       }
     }
 
@@ -679,11 +680,8 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
           })
           .where('id', '=', runId)
           .execute();
-        try {
-          await enqueue('wake', run, { seq: run.steps_executed, delayMs: wakeAt.getTime() - Date.now(), stepId: step.id, uniqueSuffix: `-w${retries + 1}` });
-        } catch { /* sweep recovers */ }
         workflowStepsExecuted.inc({ step_type: step.type, outcome: 'webhook_retry_deferred' });
-        return { kind: 'parked' };
+        return { kind: 'parked',job:{kind:'wake',run,wakeAt,seq:run.steps_executed,stepId:step.id,uniqueSuffix:`-w${retries+1}`} };
       }
     }
 
@@ -876,16 +874,7 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
         .where('id', '=', runId)
         .execute();
       const kind = park.status === 'waiting_delay' ? 'wake' : 'timeout';
-      // Swallow enqueue failures: wake_at is durable, the overdue sweep
-      // re-arms. Throwing would roll back the park transition itself.
-      try {
-        await enqueue(kind, run, {
-          seq,
-          delayMs: park.wakeAt.getTime() - Date.now(),
-          stepId: park.status === 'waiting_event' ? step.id : nextStepId ?? undefined,
-        });
-      } catch { /* sweep recovers */ }
-      return { kind: 'parked' };
+      return { kind: 'parked',job:{kind,run,wakeAt:park.wakeAt,seq,stepId:park.status==='waiting_event'?step.id:nextStepId ?? undefined} };
     }
 
     if (nextStepId === null) {

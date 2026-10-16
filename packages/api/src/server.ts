@@ -37,6 +37,8 @@ import { sendgridCompatRoutes } from './routes/sendgrid-compat.js';
 import { subaccountRoutes } from './routes/subaccounts.js';
 import { dmarcRoutes } from './routes/dmarc.js';
 import { secureMessageRoutes, securePortalRoutes } from './routes/secure-messages.js';
+import { consoleDataRoutes } from './routes/console-data.js';
+import {landingRoutes} from './routes/landing.js';
 
 const PORT = Number(process.env.API_PORT ?? 3000);
 const HOST = process.env.API_HOST ?? '0.0.0.0';
@@ -198,6 +200,7 @@ await app.register(securePortalRoutes, { prefix: '/v1' });
 // These authenticate via their own session-bearer tokens (mpu_...), not API
 // keys, so they're registered outside the API-key auth scope.
 await app.register(accountRoutes, { prefix: '/v1' });
+await app.register(landingRoutes,{prefix:'/v1'});
 await app.register(teamRoutes, { prefix: '/v1' });
 await app.register(keyRoutes, { prefix: '/v1' });
 await app.register(accountWebhookRoutes, { prefix: '/v1' });
@@ -205,6 +208,7 @@ await app.register(accountDomainRoutes, { prefix: '/v1' });
 await app.register(auditRoutes, { prefix: '/v1' });
 await app.register(supportRoutes, { prefix: '/v1' });
 await app.register(accountBillingRoutes, { prefix: '/v1' });
+await app.register(consoleDataRoutes, { prefix: '/v1/account/data' });
 
 // Admin plane: separate auth (admin session token), registered as its own scope.
 await app.register(adminRoutes, { prefix: '/admin' });

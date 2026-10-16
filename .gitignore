@@ -10,6 +10,9 @@ dist/
 coverage/
 packages/admin-console/playwright-report/
 packages/admin-console/test-results/
+packages/customer-ui/test-results/
+packages/landing-page/test-results/
+*.tsbuildinfo
 .turbo/
 .next/
 .cache/

@@ -385,6 +385,11 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     assign_to_me: z.boolean().optional(),
   });
 
+  app.get('/landing/sales-requests',{preHandler:requireAdmin('support')},async(req,reply)=>{
+    const parsed=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),offset:z.coerce.number().int().min(0).default(0)}).safeParse(req.query || {});if(!parsed.success)return reply.code(400).send({error:'validation_failed'});const query=parsed.data;
+    const requests=await db.selectFrom('landing_sales_requests').select(['id','first_name','last_name','email','company','monthly_volume','message','consent_confirmed_at','created_at']).orderBy('created_at','desc').limit(query.limit).offset(query.offset).execute();
+    return {requests};
+  });
   app.get('/support-tickets', { preHandler: requireAdmin('support') }, async (req) => {
     const query = normalizeSupportTicketQuery(req.query as Record<string, string>);
     return listSupportTickets(query, req.admin!.admin_user_id);

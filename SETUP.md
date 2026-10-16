@@ -39,7 +39,25 @@ cd packages/tests && npx vitest run
 
 For local infra, `docker-compose.yml` brings up Postgres + Redis + the services.
 
-## Notes from the audit
+## Website landing page (Next.js, supplied v13 design)
+
+The website is a separate workspace in `packages/landing-page`. It preserves the supplied landing/auth/sales designs; customer onboarding remains in the existing customer workspace.
+
+```powershell
+# Local development, separate from API :3000 and customer UI :8080
+npm run dev:landing
+# http://127.0.0.1:3001
+
+# Docker website (loopback-only :8082); apply migration 104 first
+docker compose build api migrate customer-ui
+docker compose run --rm --no-deps migrate
+docker compose up -d --no-deps api customer-ui
+docker compose --profile website up -d --build website
+```
+
+The Docker website calls the API internally and hands sign-in/new-account sessions to `http://localhost:8080` using a single-use, 60-second code. The workspace confirms the account before accepting it and preserves MFA. No session bearer/password goes in a URL. Sales requests are stored and visible through the support-protected admin API; notifications/CRM routing are not activated. See `packages/landing-page/README.md` for configuration and release limitations. The original design's metrics/testimonials/certification claims still need business approval before public use.
+
+## Audit notes
 
 - **RLS rollout (important):** the cross-tenant Row-Level Security mechanism is in
   place (`withTenant()` + `rlsIsEnforced()`), but for it to actually enforce, run

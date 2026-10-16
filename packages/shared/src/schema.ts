@@ -235,6 +235,10 @@ export interface IpPoolsTable {
 // Root DB schema (for Kysely)
 // =====================================================
 export interface Database {
+  audience_collections:AudienceCollectionsTable;
+  customer_campaigns:CustomerCampaignsTable;
+  audience_collection_members:{customer_id:string;collection_id:string;contact_id:string};
+  audience_contacts: AudienceContactsTable;
   customers: CustomersTable;
   api_keys: ApiKeysTable;
   sending_domains: SendingDomainsTable;
@@ -248,6 +252,7 @@ export interface Database {
   webhooks: WebhooksTable;
   ip_pools: IpPoolsTable;
   templates: TemplatesTable;
+  template_versions: TemplateVersionsTable;
   usage_daily: UsageDailyTable;
   audit_log: AuditLogTable;
   audit_log_hashes: AuditLogHashesTable;
@@ -310,6 +315,8 @@ export interface Database {
   scim_tokens: ScimTokensTable;
   memberships: MembershipsTable;
   user_sessions: UserSessionsTable;
+  workspace_handoffs:{code_hash:string;session_id:string;destination:'workspace'|'onboarding';expires_at:Timestamp;created_at:Generated<Timestamp>};
+  landing_sales_requests:{id:string;request_hash:string;first_name:string;last_name:string;email:string;company:string;monthly_volume:string;message:string;consent_confirmed_at:Generated<Timestamp>;created_at:Generated<Timestamp>};
   mfa_factors: MfaFactorsTable;
   mfa_recovery_codes: MfaRecoveryCodesTable;
   user_tokens: UserTokensTable;
@@ -333,6 +340,36 @@ export interface Database {
   workflow_step_stats: WorkflowStepStatsTable;
   dmarc_reports: DmarcReportsTable;
   dmarc_report_records: DmarcReportRecordsTable;
+}
+
+export interface AudienceCollectionsTable {
+ id:Generated<string>;customer_id:string;kind:'list'|'segment';name:string;rules:unknown[];
+ created_at:ColumnType<Date,Date|string|undefined,never>;
+ updated_at:ColumnType<Date,Date|string|undefined,Date|string>;
+}
+export interface CustomerCampaignsTable {
+  campaign_type:Generated<'regular'|'ab_subject'>;subject_b:Generated<string>;
+ id:Generated<string>;customer_id:string;name:string;audience_id:string|null;template_id:string|null;
+ from_email:Generated<string>;from_name:Generated<string>;reply_to:Generated<string>;subject:Generated<string>;
+ revision:Generated<number>;status:Generated<'draft'|'dispatching'|'queued'|'failed'|'cancelled'>;
+ snapshot:unknown;result:unknown;
+ send_at:Timestamp|null;
+ created_at:ColumnType<Date,Date|string|undefined,never>;
+ updated_at:ColumnType<Date,Date|string|undefined,Date|string>;
+}
+export interface AudienceContactsTable {
+  id:Generated<string>;
+  customer_id:string;
+  email:string;
+  name:string;
+  company:Generated<string>;
+  location:Generated<string>;
+  status:Generated<'Pending'|'Subscribed'|'Unsubscribed'>;
+  consent_confirmed_at:Timestamp|null;
+  source:Generated<string>;
+  revision:Generated<number>;
+  created_at:ColumnType<Date,Date|string|undefined,never>;
+  updated_at:ColumnType<Date,Date|string|undefined,Date|string>;
 }
 
 // =====================================================
@@ -576,8 +613,23 @@ export interface TemplatesTable {
   subject: string;
   html_body: string | null;
   text_body: string | null;
+  editor_document: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null | undefined, Record<string, unknown> | null>;
+  revision: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+}
+
+export interface TemplateVersionsTable {
+  id: Generated<string>;
+  customer_id: string;
+  template_id: string;
+  revision: number;
+  name: string;
+  subject: string;
+  html_body: string | null;
+  text_body: string | null;
+  editor_document: Record<string, unknown> | null;
+  created_at: Generated<Timestamp>;
 }
 
 export interface UsageDailyTable {
@@ -1457,6 +1509,8 @@ export type WorkflowRunStatus =
 export type WorkflowTriggerSource = 'event' | 'api' | 'manual' | 'test';
 
 export interface WorkflowsTable {
+  builder_document:Record<string,unknown>|null;
+  builder_revision:Generated<number>;
   id: Generated<string>;
   customer_id: string;
   name: string;

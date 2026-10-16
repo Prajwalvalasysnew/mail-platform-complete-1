@@ -76,6 +76,9 @@ jobs:
         run: |
           npm run build:admin
           npm run build:docs
+          npm run build --workspace=@platform/customer-ui
+            npm run build:landing
+          node packages/customer-ui/scripts/check-workflow-codec.mjs
       - name: Validate production deployment contract
         run: npm run prod:check
       - name: Apply migrations
@@ -254,6 +257,8 @@ jobs:
             dockerfile: packages/worker/Dockerfile
           - name: tracker
             dockerfile: packages/tracker/Dockerfile
+          - name: customer-ui
+            dockerfile: packages/customer-ui/Dockerfile
           - name: smtp-gateway
             dockerfile: packages/smtp-gateway/Dockerfile
           - name: haraka-inbound

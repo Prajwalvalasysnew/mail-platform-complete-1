@@ -15,8 +15,11 @@ COPY packages/tracker/package.json ./packages/tracker/
 COPY packages/sdk/package.json ./packages/sdk/
 COPY packages/tests/package.json ./packages/tests/
 COPY packages/admin-console/package.json ./packages/admin-console/
+COPY packages/customer-ui/package.json ./packages/customer-ui/
+COPY packages/landing-page/package.json ./packages/landing-page/
 COPY packages/haraka-inbound/package.json ./packages/haraka-inbound/
 COPY packages/haraka-outbound/package.json ./packages/haraka-outbound/
+COPY packages/smtp-gateway/package.json ./packages/smtp-gateway/
 
 # Install all workspace deps
 RUN npm ci --ignore-scripts

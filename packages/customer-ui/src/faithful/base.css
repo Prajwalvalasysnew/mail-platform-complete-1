@@ -1,0 +1,6 @@
+html,body,#root,.reference-host { height:100%; margin:0; }
+body { font-family:'Geist',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+button,input,textarea,select { font-family:inherit; }
+.startup { height:100%; display:grid; place-content:center; background:#f4f5f7; color:#6f7683; font-size:13px; }
+button:focus-visible,a:focus-visible { outline:2px solid #d9363e; outline-offset:2px; }
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration:.001ms!important; transition-duration:.001ms!important; } }

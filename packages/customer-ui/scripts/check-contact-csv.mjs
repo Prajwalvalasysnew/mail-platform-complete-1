@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {parseContactCsv} from '../src/faithful/contact-csv.ts';
+assert.equal(parseContactCsv('\uFEFFemail,name\r\na@example.test,"Comma, Name"\r\n')[0].name,'Comma, Name');
+assert.equal(parseContactCsv('email,name\na@example.test,"Line one\nLine two"')[0].name,'Line one\nLine two');
+assert.equal(parseContactCsv('email_address,first_name,last_name\na@example.test,First,Last')[0].name,'First Last');
+assert.equal(parseContactCsv('email\na@example.test')[0].status,'Pending');
+assert.throws(()=>parseContactCsv('email,name\na@example.test,"Unclosed'));
+assert.throws(()=>parseContactCsv('email,name\na@example.test,"Closed"bad'));
+assert.throws(()=>parseContactCsv('name\nMissing email'));
+assert.throws(()=>parseContactCsv('email,email\na@example.test,b@example.test'));
+assert.throws(()=>parseContactCsv('email,status\na@example.test,arbitrary'));
+assert.throws(()=>parseContactCsv('email\n'+Array.from({length:201},(_,i)=>`u${i}@example.test`).join('\n')));
+console.log('PASS CSV quoting, multiline cells, BOM, mapping, safe defaults, malformed input and row limit');

@@ -2,6 +2,9 @@ node_modules
 **/node_modules
 dist
 **/dist
+.next
+**/.next
+*.tsbuildinfo
 build
 **/build
 .git

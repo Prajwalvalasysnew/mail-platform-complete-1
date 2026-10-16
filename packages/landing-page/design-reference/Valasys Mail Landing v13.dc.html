@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet" />
+<style>
+*{box-sizing:border-box;}
+html,body{margin:0;background:#050505;}
+body{color:oklch(0.97 0.002 250);font-family:'Instrument Sans',ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased;text-wrap:pretty;}
+a{color:oklch(0.76 0.15 24);text-decoration:none;}
+a:hover{color:oklch(0.86 0.12 24);}
+h1,h2,h3,p{margin:0;}
+button{font-family:inherit;cursor:pointer;}
+pre{margin:0;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+@keyframes flow{0%{transform:translateX(-30%);opacity:0;}15%{opacity:1;}85%{opacity:1;}100%{transform:translateX(330%);opacity:0;}}
+@keyframes marq{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+</style>
+</helmet>
+<div style="min-height:100vh;background:#050505;overflow-x:hidden;">
+
+<sc-if value="{{ showAnnouncement }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;justify-content:center;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid oklch(1 0 0/.08);background:oklch(0.12 0.02 25);font-size:13px;color:oklch(0.82 0.008 250);">
+<span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.08em;padding:3px 7px;border-radius:5px;border:1px solid oklch(0.62 0.2 25/.5);color:oklch(0.80 0.14 24);">NEW</span>
+<span>Valasys AI now detects and fixes deliverability issues before they cost you opens</span>
+<a href="#" style="color:oklch(0.97 0.002 250);border-bottom:1px solid oklch(1 0 0/.35);">Read the announcement →</a>
+</div>
+</sc-if>
+
+<header style="position:sticky;top:0;z-index:20;background:oklch(0.08 0.003 20/.82);backdrop-filter:blur(14px);border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;padding:0 24px;height:64px;display:flex;align-items:center;gap:28px;">
+<a href="#" style="display:flex;align-items:center;gap:10px;color:oklch(0.97 0.002 250);flex-shrink:0;white-space:nowrap;">
+<span style="width:30px;height:30px;border-radius:8px;background:oklch(0.58 0.21 25);display:grid;place-items:center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 7 9 6 9-6"></path></svg></span>
+<span style="font-size:17px;font-weight:600;letter-spacing:-.02em;">Valasys <span style="color:oklch(0.62 0.008 250);font-weight:500;">Mail</span></span>
+</a>
+<nav style="display:flex;gap:24px;font-size:14px;flex-wrap:nowrap;white-space:nowrap;min-width:0;overflow:hidden;">
+<a href="#product" style="color:oklch(0.74 0.008 250);" style-hover="color:#fff;">Product</a>
+<a href="#developers" style="color:oklch(0.74 0.008 250);" style-hover="color:#fff;">Developers</a>
+<a href="#deliverability" style="color:oklch(0.74 0.008 250);" style-hover="color:#fff;">Deliverability</a>
+<a href="#pricing" style="color:oklch(0.74 0.008 250);" style-hover="color:#fff;">Pricing</a>
+<a href="#" style="color:oklch(0.74 0.008 250);" style-hover="color:#fff;">Docs</a>
+</nav>
+<div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-shrink:0;white-space:nowrap;">
+<a href="Sign In.dc.html" style="font-size:14px;color:oklch(0.90 0.004 250);padding:8px 12px;">Sign in</a>
+<a href="Create Account.dc.html" style="font-size:14px;font-weight:600;color:#fff;background:oklch(0.58 0.21 25);padding:9px 16px;border-radius:8px;" style-hover="background:oklch(0.63 0.21 25);color:#fff;">Start for free</a>
+</div>
+</div>
+</header>
+
+<section data-screen-label="Hero" style="position:relative;border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="position:absolute;inset:0;background-image:linear-gradient(oklch(1 0 0/.045) 1px,transparent 1px),linear-gradient(90deg,oklch(1 0 0/.045) 1px,transparent 1px);background-size:64px 64px;mask-image:radial-gradient(ellipse 70% 60% at 50% 30%,#000 30%,transparent 80%);-webkit-mask-image:radial-gradient(ellipse 70% 60% at 50% 30%,#000 30%,transparent 80%);pointer-events:none;"></div>
+<div style="position:absolute;left:50%;top:-220px;width:900px;height:520px;transform:translateX(-50%);background:radial-gradient(closest-side,oklch(0.55 0.2 25/.30),transparent);pointer-events:none;"></div>
+<div style="position:relative;max-width:1240px;margin:0 auto;padding:88px 24px 72px;display:flex;flex-direction:column;align-items:center;text-align:center;">
+<div style="display:inline-flex;align-items:center;gap:10px;height:32px;padding:0 6px 0 6px;border-radius:999px;border:1px solid oklch(1 0 0/.12);background:oklch(1 0 0/.035);font-size:13px;color:oklch(0.82 0.006 250);">
+<span style="font-family:'JetBrains Mono',monospace;font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:999px;background:oklch(0.80 0.17 155/.14);color:oklch(0.84 0.15 155);">99.99% UPTIME</span>
+<span style="padding-right:8px;">SOC 2 Type II · GDPR · 90-day status history public</span>
+</div>
+<h1 style="margin-top:30px;max-width:980px;font-size:clamp(44px,7vw,92px);line-height:.98;letter-spacing:-.05em;font-weight:500;">Email that reaches <span style="color:oklch(0.70 0.19 25);">the inbox.</span><br />Every single time.</h1>
+<p style="margin-top:26px;max-width:640px;font-size:clamp(16px,1.6vw,19px);line-height:1.55;color:oklch(0.72 0.008 250);">Transactional API, SMTP, campaigns and automation on one sending platform — with dedicated IPs, authenticated domains and real-time events that engineering and growth teams both trust.</p>
+<div style="margin-top:36px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center;">
+<a href="Create Account.dc.html" style="height:52px;padding:0 28px;display:flex;align-items:center;gap:10px;border-radius:10px;background:#fff;color:#0a0a0a;font-size:16px;font-weight:600;" style-hover="background:oklch(0.92 0.004 250);color:#0a0a0a;">Start sending free <span>→</span></a>
+<a href="Talk to Sales.dc.html" style="height:52px;padding:0 26px;display:flex;align-items:center;border-radius:10px;border:1px solid oklch(1 0 0/.18);color:#fff;font-size:16px;font-weight:500;background:oklch(1 0 0/.03);" style-hover="background:oklch(1 0 0/.08);color:#fff;">Talk to sales</a>
+</div>
+<p style="margin-top:16px;font-size:13px;color:oklch(0.56 0.008 250);">3,000 emails / month free · No credit card · Live in under 5 minutes</p>
+<div style="margin-top:28px;display:flex;align-items:center;gap:6px;padding:5px;border-radius:12px;border:1px solid oklch(1 0 0/.12);background:oklch(0.10 0.004 20/.8);width:100%;max-width:460px;">
+<input value="{{ testEmail }}" onChange="{{ onTestEmail }}" placeholder="you@company.com" style="flex:1;min-width:0;height:40px;padding:0 12px;border:0;outline:0;background:transparent;color:#fff;font-size:14px;font-family:'JetBrains Mono',monospace;" />
+<button onClick="{{ sendTest }}" style="height:40px;padding:0 16px;border-radius:8px;border:0;background:oklch(0.58 0.21 25);color:#fff;font-size:14px;font-weight:600;white-space:nowrap;">{{ testLabel }}</button>
+</div>
+<p style="margin-top:10px;font-family:'JetBrains Mono',monospace;font-size:11px;color:oklch(0.62 0.008 250);">{{ testHint }}</p>
+
+<div style="margin-top:68px;width:100%;max-width:1120px;border-radius:18px;border:1px solid oklch(1 0 0/.11);background:linear-gradient(180deg,oklch(0.14 0.006 20),oklch(0.10 0.004 20));box-shadow:0 40px 120px -30px oklch(0.5 0.2 25/.35),0 0 0 1px oklch(0 0 0/.6);text-align:left;overflow:hidden;">
+<div style="display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid oklch(1 0 0/.08);">
+<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:oklch(0.60 0.008 250);">live · one message, end to end</span>
+<span style="margin-left:auto;display:flex;align-items:center;gap:7px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:oklch(0.84 0.15 155);"><span style="width:6px;height:6px;border-radius:9px;background:oklch(0.80 0.17 155);animation:pulse 1.6s infinite;"></span>{{ sentCount }} delivered today</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));">
+<div style="padding:22px 22px 24px;border-right:1px solid oklch(1 0 0/.08);">
+<div style="display:flex;align-items:center;gap:6px;margin-bottom:16px;">
+<span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.09em;color:oklch(0.56 0.008 250);margin-right:auto;">01 · YOUR APP</span>
+<sc-for list="{{ langs }}" as="l" hint-placeholder-count="3">
+<button onClick="{{ l.pick }}" style="height:26px;padding:0 10px;border-radius:6px;border:1px solid {{ l.border }};background:{{ l.bg }};color:{{ l.color }};font-family:'JetBrains Mono',monospace;font-size:11px;">{{ l.label }}</button>
+</sc-for>
+</div>
+<pre style="font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.75;color:oklch(0.84 0.006 250);white-space:pre-wrap;word-break:break-word;min-height:200px;">{{ code }}</pre>
+</div>
+<div style="padding:22px 22px 24px;border-right:1px solid oklch(1 0 0/.08);">
+<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.09em;color:oklch(0.56 0.008 250);margin-bottom:16px;">02 · VALASYS PIPELINE</div>
+<div style="display:flex;flex-direction:column;">
+<sc-for list="{{ steps }}" as="s" hint-placeholder-count="6">
+<div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid oklch(1 0 0/.05);opacity:{{ s.op }};">
+<span style="width:20px;height:20px;border-radius:999px;flex-shrink:0;display:grid;place-items:center;border:1px solid {{ s.ring }};background:{{ s.fill }};color:#06140c;font-size:11px;font-weight:700;">{{ s.mark }}</span>
+<span style="font-size:14px;font-weight:500;color:oklch(0.94 0.004 250);">{{ s.name }}</span>
+<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:oklch(0.58 0.008 250);text-align:right;">{{ s.meta }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+<div style="padding:22px 22px 24px;background:oklch(1 0 0/.015);">
+<div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.09em;color:oklch(0.56 0.008 250);margin-bottom:16px;">03 · RECIPIENT INBOX</div>
+<div style="border-radius:12px;background:oklch(0.97 0.003 250);color:#141414;overflow:hidden;opacity:{{ inboxOp }};transform:translateY({{ inboxY }});transition:all .45s cubic-bezier(.2,.8,.2,1);">
+<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #e6e6e9;font-size:11px;color:#6b6b74;"><span style="font-weight:600;color:#141414;">Primary</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;">now</span></div>
+<div style="padding:14px;display:flex;gap:12px;">
+<span style="width:34px;height:34px;border-radius:999px;background:oklch(0.58 0.21 25);color:#fff;display:grid;place-items:center;font-size:13px;font-weight:700;flex-shrink:0;">A</span>
+<div style="min-width:0;">
+<div style="display:flex;gap:8px;align-items:baseline;"><span style="font-size:13.5px;font-weight:700;">Acme Store</span><span style="font-size:11px;color:#2f8a52;font-weight:600;">✓ verified sender</span></div>
+<div style="margin-top:3px;font-size:13px;font-weight:600;">Your order #4417 is confirmed</div>
+<div style="margin-top:3px;font-size:12px;color:#6b6b74;line-height:1.45;">Thanks, Priya — we're packing it now. Track your delivery anytime from your account.</div>
+</div>
+</div>
+</div>
+<div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+<sc-for list="{{ providers }}" as="p" hint-placeholder-count="4">
+<div style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:9px;border:1px solid oklch(1 0 0/.09);background:oklch(1 0 0/.025);">
+<span style="font-size:12.5px;font-weight:500;">{{ p.name }}</span>
+<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:oklch(0.82 0.15 155);">{{ p.rate }}</span>
+</div>
+</sc-for>
+</div>
+<p style="margin-top:12px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:oklch(0.52 0.008 250);">inbox placement · last 30 days</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<section style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;display:flex;align-items:center;flex-wrap:wrap;">
+<div style="padding:26px 28px;border-right:1px solid oklch(1 0 0/.08);font-size:14px;color:oklch(0.66 0.008 250);white-space:nowrap;">Switch in an afternoon from</div>
+<div style="flex:1;min-width:280px;overflow:hidden;mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent);">
+<div style="display:flex;gap:56px;width:max-content;animation:marq 30s linear infinite;padding:26px 0;">
+<sc-for list="{{ migrate }}" as="m" hint-placeholder-count="12">
+<span style="font-size:19px;font-weight:600;letter-spacing:-.02em;color:oklch(0.58 0.008 250);white-space:nowrap;">{{ m }}</span>
+</sc-for>
+</div>
+</div>
+</div>
+</section>
+
+<section data-screen-label="Proof" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));">
+<div style="padding:44px 32px;border-right:1px solid oklch(1 0 0/.08);"><div style="font-size:48px;font-weight:500;letter-spacing:-.04em;">99.99%</div><div style="margin-top:8px;font-size:14px;color:oklch(0.66 0.008 250);">API uptime SLA, backed by service credits</div></div>
+<div style="padding:44px 32px;border-right:1px solid oklch(1 0 0/.08);"><div style="font-size:48px;font-weight:500;letter-spacing:-.04em;">1.4<span style="font-size:28px;color:oklch(0.66 0.008 250);">s</span></div><div style="margin-top:8px;font-size:14px;color:oklch(0.66 0.008 250);">Median API call to inbox</div></div>
+<div style="padding:44px 32px;border-right:1px solid oklch(1 0 0/.08);"><div style="font-size:48px;font-weight:500;letter-spacing:-.04em;">98.7%</div><div style="margin-top:8px;font-size:14px;color:oklch(0.66 0.008 250);">Average inbox placement across providers</div></div>
+<div style="padding:44px 32px;"><div style="font-size:48px;font-weight:500;letter-spacing:-.04em;">2.1<span style="font-size:28px;color:oklch(0.66 0.008 250);">B</span></div><div style="margin-top:8px;font-size:14px;color:oklch(0.66 0.008 250);">Emails delivered every month</div></div>
+</div>
+</section>
+
+<section data-screen-label="Domain check" style="border-bottom:1px solid oklch(1 0 0/.08);position:relative;overflow:hidden;">
+<div style="position:absolute;right:-200px;top:-200px;width:600px;height:600px;background:radial-gradient(closest-side,oklch(0.55 0.2 25/.16),transparent);pointer-events:none;"></div>
+<div style="position:relative;max-width:1240px;margin:0 auto;padding:96px 24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:56px;align-items:center;">
+<div>
+<div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.74 0.16 24);">FREE TOOL · 10 SECONDS</div>
+<h2 style="margin-top:16px;font-size:clamp(32px,3.8vw,50px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">Is your domain ready to hit the inbox?</h2>
+<p style="margin-top:18px;font-size:16.5px;line-height:1.55;color:oklch(0.66 0.008 250);max-width:480px;">Run the same authentication and reputation checks we run before every send. No signup required.</p>
+<div style="margin-top:28px;display:flex;gap:8px;flex-wrap:wrap;max-width:480px;">
+<input value="{{ domain }}" onChange="{{ onDomain }}" placeholder="yourcompany.com" style="flex:1;min-width:200px;height:50px;padding:0 16px;border-radius:10px;border:1px solid oklch(1 0 0/.16);background:oklch(1 0 0/.04);color:#fff;font-size:15px;outline:0;font-family:'JetBrains Mono',monospace;" />
+<button onClick="{{ runCheck }}" style="height:50px;padding:0 22px;border-radius:10px;border:0;background:#fff;color:#0a0a0a;font-size:15px;font-weight:600;">{{ checkLabel }}</button>
+</div>
+</div>
+<div style="border-radius:16px;border:1px solid oklch(1 0 0/.11);background:linear-gradient(180deg,oklch(0.13 0.006 20),oklch(0.09 0.003 20));overflow:hidden;">
+<div style="display:flex;align-items:center;gap:16px;padding:22px 24px;border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="width:72px;height:72px;border-radius:999px;display:grid;place-items:center;border:3px solid {{ scoreRing }};font-size:24px;font-weight:600;letter-spacing:-.03em;flex-shrink:0;">{{ score }}</div>
+<div style="min-width:0;"><div style="font-size:17px;font-weight:600;">{{ scoreTitle }}</div><div style="margin-top:4px;font-family:'JetBrains Mono',monospace;font-size:12px;color:oklch(0.60 0.008 250);word-break:break-all;">{{ domainShown }}</div></div>
+</div>
+<sc-for list="{{ dchecks }}" as="d" hint-placeholder-count="5">
+<div style="display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid oklch(1 0 0/.06);">
+<span style="width:8px;height:8px;border-radius:9px;background:{{ d.c }};flex-shrink:0;"></span>
+<span style="font-size:14.5px;font-weight:500;width:120px;flex-shrink:0;">{{ d.t }}</span>
+<span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:oklch(0.58 0.008 250);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">{{ d.v }}</span>
+<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:{{ d.c }};flex-shrink:0;">{{ d.s }}</span>
+</div>
+</sc-for>
+<div style="padding:16px 24px;font-size:13px;color:oklch(0.62 0.008 250);">Valasys fixes failing records for you during setup. <a href="Create Account.dc.html">Fix it free →</a></div>
+</div>
+</div>
+</section>
+
+<section id="product" data-screen-label="Platform" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">
+<div style="padding:56px 36px;border-right:1px solid oklch(1 0 0/.08);border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.74 0.16 24);">ONE PLATFORM</div>
+<h2 style="margin-top:16px;font-size:clamp(32px,3.6vw,46px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">Everything you need to send in production.</h2>
+<p style="margin-top:18px;font-size:16px;line-height:1.55;color:oklch(0.66 0.008 250);">No add-ons and no per-feature pricing. Every plan gets the full platform.</p>
+</div>
+<sc-for list="{{ features }}" as="f" hint-placeholder-count="8">
+<div style="padding:40px 36px;border-right:1px solid oklch(1 0 0/.08);border-bottom:1px solid oklch(1 0 0/.08);display:flex;flex-direction:column;gap:12px;" style-hover="background:oklch(1 0 0/.02);">
+<h3 style="font-size:19px;font-weight:500;letter-spacing:-.02em;">{{ f.t }}</h3>
+<p style="font-size:14.5px;line-height:1.55;color:oklch(0.64 0.008 250);">{{ f.d }}</p>
+<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+<sc-for list="{{ f.tags }}" as="tg" hint-placeholder-count="2">
+<span style="font-family:'JetBrains Mono',monospace;font-size:11px;padding:4px 9px;border-radius:6px;border:1px solid oklch(1 0 0/.14);color:oklch(0.80 0.006 250);">{{ tg }}</span>
+</sc-for>
+</div>
+</div>
+</sc-for>
+</div>
+</section>
+
+<section data-screen-label="Product tour" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;padding:96px 24px;">
+<div style="text-align:center;max-width:720px;margin:0 auto;">
+<h2 style="font-size:clamp(32px,4vw,52px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">See every send. Fix anything in minutes.</h2>
+<p style="margin-top:16px;font-size:17px;color:oklch(0.66 0.008 250);">One console for developers and marketers — the same data, the same truth.</p>
+</div>
+<div style="margin-top:40px;display:flex;justify-content:center;gap:6px;flex-wrap:wrap;">
+<sc-for list="{{ shots }}" as="s" hint-placeholder-count="6">
+<button onClick="{{ s.pick }}" style="height:38px;padding:0 16px;border-radius:999px;border:1px solid {{ s.border }};background:{{ s.bg }};color:{{ s.color }};font-size:14px;font-weight:500;">{{ s.label }}</button>
+</sc-for>
+</div>
+<div style="margin-top:28px;border-radius:16px;border:1px solid oklch(1 0 0/.11);overflow:hidden;background:oklch(0.10 0.004 20);box-shadow:0 40px 100px -40px oklch(0.5 0.2 25/.3);">
+<div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid oklch(1 0 0/.08);">
+<span style="width:10px;height:10px;border-radius:9px;background:oklch(1 0 0/.14);"></span><span style="width:10px;height:10px;border-radius:9px;background:oklch(1 0 0/.14);"></span><span style="width:10px;height:10px;border-radius:9px;background:oklch(1 0 0/.14);"></span>
+<span style="margin-left:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:oklch(0.56 0.008 250);">app.valasys.com/{{ shotPath }}</span>
+<span style="margin-left:auto;font-size:13px;color:oklch(0.70 0.008 250);">{{ shotCaption }}</span>
+</div>
+<div style="aspect-ratio:924 / 540;width:100%;"><img ref="{{ shotRef }}" alt="Valasys Mail console" style="display:block;width:100%;height:auto;" /></div>
+</div>
+</div>
+</section>
+
+<section id="deliverability" data-screen-label="Deliverability" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;padding:96px 24px 0;">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:40px;align-items:end;">
+<div>
+<div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.74 0.16 24);">DELIVERABILITY BY DEFAULT</div>
+<h2 style="margin-top:16px;font-size:clamp(32px,4vw,52px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">Six checks run before any email leaves.</h2>
+</div>
+<p style="font-size:17px;line-height:1.55;color:oklch(0.66 0.008 250);">Bad addresses, missing DNS and reputation dips are caught automatically — so a mistake in one campaign never damages your transactional mail.</p>
+</div>
+</div>
+<div style="max-width:1240px;margin:56px auto 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));border-top:1px solid oklch(1 0 0/.08);">
+<sc-for list="{{ checks }}" as="c" hint-placeholder-count="6">
+<div style="position:relative;padding:32px 24px 40px;border-right:1px solid oklch(1 0 0/.08);">
+<div style="display:flex;align-items:center;gap:10px;">
+<span style="width:28px;height:28px;border-radius:999px;border:1px solid oklch(0.80 0.17 155/.5);background:oklch(0.80 0.17 155/.1);display:grid;place-items:center;color:oklch(0.84 0.15 155);font-size:13px;">✓</span>
+<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:oklch(0.52 0.008 250);">{{ c.n }}</span>
+</div>
+<h3 style="margin-top:18px;font-size:17px;font-weight:500;letter-spacing:-.02em;">{{ c.t }}</h3>
+<p style="margin-top:8px;font-size:14px;line-height:1.5;color:oklch(0.62 0.008 250);">{{ c.d }}</p>
+</div>
+</sc-for>
+</div>
+</section>
+
+<section data-screen-label="Migration" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;padding:96px 24px;">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:40px;align-items:end;">
+<div><div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.74 0.16 24);">MIGRATION IN ONE DIFF</div><h2 style="margin-top:16px;font-size:clamp(32px,4vw,52px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">Switching takes minutes, not a quarter.</h2></div>
+<p style="font-size:17px;line-height:1.55;color:oklch(0.66 0.008 250);">Pick where you send from today. We import your suppression lists, templates and domains — and our engineers pair with you on cut-over for free.</p>
+</div>
+<div style="margin-top:40px;display:flex;gap:6px;flex-wrap:wrap;">
+<sc-for list="{{ migTabs }}" as="t" hint-placeholder-count="4">
+<button onClick="{{ t.pick }}" style="height:38px;padding:0 16px;border-radius:999px;border:1px solid {{ t.border }};background:{{ t.bg }};color:{{ t.color }};font-size:14px;font-weight:500;">From {{ t.label }}</button>
+</sc-for>
+</div>
+<div style="margin-top:20px;border-radius:16px;border:1px solid oklch(1 0 0/.11);background:oklch(0.09 0.003 20);overflow:hidden;">
+<div style="display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid oklch(1 0 0/.08);"><span style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:oklch(0.62 0.008 250);">{{ migFile }}</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11px;"><span style="color:oklch(0.84 0.15 155);">+{{ migAdd }}</span> <span style="color:oklch(0.74 0.16 24);">−{{ migDel }}</span></span></div>
+<div style="padding:12px 0;font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.85;overflow-x:auto;">
+<sc-for list="{{ migLines }}" as="l" hint-placeholder-count="8">
+<div style="display:flex;gap:16px;padding:0 18px;background:{{ l.bg }};white-space:pre;"><span style="width:14px;color:{{ l.sc }};flex-shrink:0;">{{ l.s }}</span><span style="color:{{ l.c }};">{{ l.t }}</span></div>
+</sc-for>
+</div>
+</div>
+<div style="margin-top:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+<div style="padding:18px 20px;border-radius:12px;border:1px solid oklch(1 0 0/.09);"><div style="font-size:24px;font-weight:500;letter-spacing:-.03em;">{{ migTime }}</div><div style="margin-top:4px;font-size:13px;color:oklch(0.60 0.008 250);">Typical cut-over time</div></div>
+<div style="padding:18px 20px;border-radius:12px;border:1px solid oklch(1 0 0/.09);"><div style="font-size:24px;font-weight:500;letter-spacing:-.03em;">Auto-import</div><div style="margin-top:4px;font-size:13px;color:oklch(0.60 0.008 250);">Suppressions, templates, domains</div></div>
+<div style="padding:18px 20px;border-radius:12px;border:1px solid oklch(1 0 0/.09);"><div style="font-size:24px;font-weight:500;letter-spacing:-.03em;">Free IP warmup</div><div style="margin-top:4px;font-size:13px;color:oklch(0.60 0.008 250);">Automated 30-day ramp schedule</div></div>
+</div>
+</div>
+</section>
+
+<section id="developers" data-screen-label="Developers" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));">
+<div style="padding:80px 36px;border-right:1px solid oklch(1 0 0/.08);">
+<div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.74 0.16 24);">FOR DEVELOPERS</div>
+<h2 style="margin-top:16px;font-size:clamp(32px,3.6vw,46px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">Four ways in. One set of events out.</h2>
+<p style="margin-top:18px;font-size:16px;line-height:1.55;color:oklch(0.66 0.008 250);max-width:460px;">Already on SendGrid's v3 API? Change the base URL and keep your code. Every send — API, SMTP or campaign — streams the same signed webhooks.</p>
+<div style="margin-top:32px;display:flex;flex-direction:column;border-top:1px solid oklch(1 0 0/.08);">
+<div style="display:flex;gap:16px;padding:14px 0;border-bottom:1px solid oklch(1 0 0/.08);"><span style="width:160px;font-size:15px;font-weight:500;">REST API</span><span style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:oklch(0.66 0.008 250);">POST /v1/send</span></div>
+<div style="display:flex;gap:16px;padding:14px 0;border-bottom:1px solid oklch(1 0 0/.08);"><span style="width:160px;font-size:15px;font-weight:500;">SMTP relay</span><span style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:oklch(0.66 0.008 250);">smtp.valasys.com:587</span></div>
+<div style="display:flex;gap:16px;padding:14px 0;border-bottom:1px solid oklch(1 0 0/.08);"><span style="width:160px;font-size:15px;font-weight:500;">v3-compatible</span><span style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:oklch(0.66 0.008 250);">POST /v3/mail/send</span></div>
+<div style="display:flex;gap:16px;padding:14px 0;border-bottom:1px solid oklch(1 0 0/.08);"><span style="width:160px;font-size:15px;font-weight:500;">Typed SDKs</span><span style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:oklch(0.66 0.008 250);">Node · Python · Go · PHP · Ruby</span></div>
+</div>
+<a href="#" style="margin-top:28px;display:inline-flex;font-size:15px;font-weight:500;">Read the API reference →</a>
+</div>
+<div style="padding:80px 36px;background:oklch(1 0 0/.012);">
+<div style="border-radius:14px;border:1px solid oklch(1 0 0/.10);background:oklch(0.09 0.003 20);overflow:hidden;">
+<div style="display:flex;align-items:center;padding:12px 18px;border-bottom:1px solid oklch(1 0 0/.08);"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:oklch(0.60 0.008 250);">webhook · message.delivered</span><span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;padding:3px 7px;border-radius:5px;background:oklch(0.80 0.17 155/.14);color:oklch(0.84 0.15 155);">SIGNED</span></div>
+<pre style="padding:20px 18px;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.8;color:oklch(0.80 0.006 250);white-space:pre-wrap;">{
+  "type": "message.delivered",
+  "id": "msg_8Kd2ma",
+  "to": "priya@northwind.io",
+  "mx": "gmail-smtp-in.l.google.com",
+  "ip_pool": "transactional",
+  "latency_ms": 1382,
+  "tags": ["receipt", "order-4417"]
+}</pre>
+</div>
+<div style="margin-top:14px;display:flex;flex-direction:column;gap:6px;">
+<sc-for list="{{ events }}" as="e" hint-placeholder-count="5">
+<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:9px;border:1px solid oklch(1 0 0/.07);background:oklch(1 0 0/.02);font-family:'JetBrains Mono',monospace;font-size:12px;">
+<span style="width:7px;height:7px;border-radius:9px;background:{{ e.c }};"></span>
+<span style="color:oklch(0.52 0.008 250);">{{ e.t }}</span>
+<span style="color:oklch(0.92 0.004 250);">{{ e.n }}</span>
+<span style="margin-left:auto;color:oklch(0.56 0.008 250);">{{ e.m }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+</section>
+
+<section data-screen-label="Valasys AI" style="border-bottom:1px solid oklch(1 0 0/.08);position:relative;overflow:hidden;">
+<div style="position:absolute;left:-240px;bottom:-260px;width:700px;height:700px;background:radial-gradient(closest-side,oklch(0.55 0.2 25/.18),transparent);pointer-events:none;"></div>
+<div style="position:relative;max-width:1240px;margin:0 auto;padding:96px 24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:56px;align-items:center;">
+<div><div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.74 0.16 24);">VALASYS AI · AGENT</div><h2 style="margin-top:16px;font-size:clamp(32px,4vw,52px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">A deliverability engineer that never sleeps.</h2>
+<p style="margin-top:18px;font-size:16.5px;line-height:1.55;color:oklch(0.66 0.008 250);max-width:480px;">It watches every send, explains what changed, and proposes the fix. Nothing ships without your approval.</p>
+<div style="margin-top:28px;display:flex;flex-direction:column;gap:12px;">
+<div style="display:flex;gap:12px;font-size:15px;color:oklch(0.86 0.006 250);"><span style="color:oklch(0.84 0.15 155);">✓</span>Detects reputation dips before open rates fall</div>
+<div style="display:flex;gap:12px;font-size:15px;color:oklch(0.86 0.006 250);"><span style="color:oklch(0.84 0.15 155);">✓</span>Drafts campaigns, segments and workflows from one prompt</div>
+<div style="display:flex;gap:12px;font-size:15px;color:oklch(0.86 0.006 250);"><span style="color:oklch(0.84 0.15 155);">✓</span>Every action logged, reversible and permission-scoped</div>
+</div>
+</div>
+<div style="border-radius:16px;border:1px solid oklch(1 0 0/.11);background:linear-gradient(180deg,oklch(0.13 0.008 20),oklch(0.09 0.003 20));overflow:hidden;min-height:440px;display:flex;flex-direction:column;">
+<div style="display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid oklch(1 0 0/.08);"><span style="width:26px;height:26px;border-radius:7px;background:oklch(0.58 0.21 25);display:grid;place-items:center;color:#fff;font-size:13px;">✦</span><span style="font-size:14px;font-weight:600;">Valasys AI</span><span style="margin-left:auto;display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:oklch(0.84 0.15 155);"><span style="width:6px;height:6px;border-radius:9px;background:oklch(0.80 0.17 155);animation:pulse 1.6s infinite;"></span>watching 3 domains</span></div>
+<div style="flex:1;padding:18px;display:flex;flex-direction:column;gap:10px;">
+<sc-for list="{{ aiMsgs }}" as="m" hint-placeholder-count="3">
+<div style="align-self:{{ m.align }};max-width:88%;padding:11px 14px;border-radius:12px;background:{{ m.bg }};border:1px solid {{ m.border }};font-size:13.5px;line-height:1.5;color:oklch(0.94 0.004 250);">
+<sc-if value="{{ m.label }}" hint-placeholder-val="{{ false }}"><div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;color:{{ m.lc }};margin-bottom:5px;">{{ m.label }}</div></sc-if>{{ m.t }}</div>
+</sc-for>
+</div>
+<div style="padding:12px 18px;border-top:1px solid oklch(1 0 0/.08);display:flex;gap:8px;"><span style="flex:1;height:38px;display:flex;align-items:center;padding:0 12px;border-radius:8px;border:1px solid oklch(1 0 0/.10);font-size:13px;color:oklch(0.52 0.008 250);">Ask about any send, domain or campaign…</span><span style="height:38px;padding:0 14px;display:grid;place-items:center;border-radius:8px;background:oklch(0.58 0.21 25);color:#fff;font-size:13px;font-weight:600;">Ask</span></div>
+</div>
+</div>
+</section>
+
+<section data-screen-label="Global network" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;padding:80px 24px 0;display:flex;align-items:end;gap:24px;flex-wrap:wrap;">
+<div><div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.74 0.16 24);">GLOBAL SENDING NETWORK</div><h2 style="margin-top:16px;font-size:clamp(32px,4vw,52px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">Close to every inbox.</h2></div>
+<a href="#" style="margin-left:auto;font-size:15px;">Live status page →</a>
+</div>
+<div style="max-width:1240px;margin:48px auto 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));border-top:1px solid oklch(1 0 0/.08);">
+<sc-for list="{{ regions }}" as="r" hint-placeholder-count="5">
+<div style="padding:28px 24px 32px;border-right:1px solid oklch(1 0 0/.08);">
+<div style="display:flex;align-items:center;gap:8px;"><span style="width:7px;height:7px;border-radius:9px;background:oklch(0.80 0.17 155);animation:pulse 2.4s infinite;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:oklch(0.60 0.008 250);">{{ r.code }}</span></div>
+<div style="margin-top:14px;font-size:17px;font-weight:500;">{{ r.name }}</div>
+<div style="margin-top:14px;display:flex;align-items:baseline;gap:6px;"><span style="font-size:30px;font-weight:500;letter-spacing:-.03em;">{{ r.ms }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:oklch(0.56 0.008 250);">ms p50 API</span></div>
+<div style="margin-top:6px;font-family:'JetBrains Mono',monospace;font-size:11px;color:oklch(0.84 0.15 155);">{{ r.up }} uptime · 90d</div>
+</div>
+</sc-for>
+</div>
+</section>
+
+<section data-screen-label="Trust" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;padding:96px 24px;">
+<div style="text-align:center;max-width:680px;margin:0 auto;">
+<div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.74 0.16 24);">SECURITY &amp; COMPLIANCE</div>
+<h2 style="margin-top:16px;font-size:clamp(32px,4vw,52px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">Built for teams that get audited.</h2>
+</div>
+<div style="margin-top:48px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+<sc-for list="{{ trust }}" as="t" hint-placeholder-count="6">
+<div style="padding:24px;border-radius:14px;border:1px solid oklch(1 0 0/.09);background:oklch(1 0 0/.02);">
+<div style="font-size:16px;font-weight:600;letter-spacing:-.01em;">{{ t.t }}</div>
+<div style="margin-top:6px;font-size:13.5px;line-height:1.5;color:oklch(0.62 0.008 250);">{{ t.d }}</div>
+</div>
+</sc-for>
+</div>
+</div>
+</section>
+
+<section data-screen-label="Testimonials" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));">
+<sc-for list="{{ quotes }}" as="q" hint-placeholder-count="3">
+<figure style="margin:0;padding:48px 36px;border-right:1px solid oklch(1 0 0/.08);display:flex;flex-direction:column;gap:28px;">
+<blockquote style="margin:0;font-size:19px;line-height:1.5;letter-spacing:-.01em;color:oklch(0.92 0.004 250);">“{{ q.q }}”</blockquote>
+<figcaption style="margin-top:auto;display:flex;align-items:center;gap:12px;">
+<span style="width:40px;height:40px;border-radius:999px;background:oklch(0.22 0.02 25);display:grid;place-items:center;font-size:13px;font-weight:600;color:oklch(0.86 0.1 24);">{{ q.i }}</span>
+<span style="display:flex;flex-direction:column;"><span style="font-size:14.5px;font-weight:600;">{{ q.n }}</span><span style="font-size:13px;color:oklch(0.58 0.008 250);">{{ q.r }}</span></span>
+<span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:12px;color:oklch(0.84 0.15 155);">{{ q.k }}</span>
+</figcaption>
+</figure>
+</sc-for>
+</div>
+</section>
+
+<section data-screen-label="Compare" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1080px;margin:0 auto;padding:96px 24px;">
+<div style="text-align:center;"><div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.74 0.16 24);">WHY TEAMS SWITCH</div><h2 style="margin-top:16px;font-size:clamp(32px,4vw,52px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">More included. Fewer surprises.</h2></div>
+<div style="margin-top:48px;border-radius:16px;border:1px solid oklch(1 0 0/.10);overflow:hidden;">
+<div style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr);background:oklch(1 0 0/.03);border-bottom:1px solid oklch(1 0 0/.10);">
+<div style="padding:18px 22px;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.08em;color:oklch(0.56 0.008 250);">CAPABILITY</div>
+<div style="padding:18px 22px;font-size:15px;font-weight:600;background:oklch(0.58 0.21 25/.12);border-left:1px solid oklch(0.62 0.2 25/.35);border-right:1px solid oklch(0.62 0.2 25/.35);">Valasys Mail</div>
+<div style="padding:18px 22px;font-size:15px;font-weight:500;color:oklch(0.66 0.008 250);">Typical email API</div>
+</div>
+<sc-for list="{{ compare }}" as="c" hint-placeholder-count="8">
+<div style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr);border-bottom:1px solid oklch(1 0 0/.07);">
+<div style="padding:16px 22px;font-size:14.5px;color:oklch(0.90 0.004 250);">{{ c.f }}</div>
+<div style="padding:16px 22px;font-size:14px;color:oklch(0.86 0.15 155);background:oklch(0.58 0.21 25/.06);border-left:1px solid oklch(0.62 0.2 25/.35);border-right:1px solid oklch(0.62 0.2 25/.35);">✓ {{ c.v }}</div>
+<div style="padding:16px 22px;font-size:14px;color:oklch(0.58 0.008 250);">{{ c.o }}</div>
+</div>
+</sc-for>
+</div>
+<p style="margin-top:14px;text-align:center;font-size:12.5px;color:oklch(0.50 0.008 250);">Based on common plan structures across major email APIs. Check each provider's current pricing page.</p>
+</div>
+</section>
+
+<section id="pricing" data-screen-label="Pricing" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;padding:96px 24px;">
+<div style="text-align:center;">
+<h2 style="font-size:clamp(32px,4vw,52px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">Simple pricing. Every feature included.</h2>
+<p style="margin-top:14px;font-size:17px;color:oklch(0.66 0.008 250);">Pay for volume, never for features.</p>
+<div style="margin-top:28px;display:inline-flex;padding:4px;border-radius:999px;border:1px solid oklch(1 0 0/.12);">
+<button onClick="{{ setMonthly }}" style="height:34px;padding:0 18px;border-radius:999px;border:0;background:{{ mBg }};color:{{ mColor }};font-size:14px;font-weight:500;">Monthly</button>
+<button onClick="{{ setAnnual }}" style="height:34px;padding:0 18px;border-radius:999px;border:0;background:{{ aBg }};color:{{ aColor }};font-size:14px;font-weight:500;">Annual · save 20%</button>
+</div>
+</div>
+<div style="margin-top:48px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;max-width:1080px;margin-left:auto;margin-right:auto;">
+<div style="padding:32px;border-radius:16px;border:1px solid oklch(1 0 0/.10);background:oklch(1 0 0/.02);display:flex;flex-direction:column;">
+<div style="font-size:17px;font-weight:600;">Free</div>
+<div style="margin-top:14px;display:flex;align-items:baseline;gap:6px;"><span style="font-size:48px;font-weight:500;letter-spacing:-.04em;">$0</span><span style="color:oklch(0.60 0.008 250);">/ month</span></div>
+<div style="margin-top:22px;display:flex;flex-direction:column;gap:12px;font-size:14.5px;color:oklch(0.80 0.006 250);">
+<span>✓  3,000 emails / month</span><span>✓  1 sending domain</span><span>✓  API, SMTP and webhooks</span><span>✓  3-day message logs</span>
+</div>
+<a href="Create Account.dc.html" style="margin-top:32px;height:46px;display:grid;place-items:center;border-radius:10px;border:1px solid oklch(1 0 0/.18);color:#fff;font-weight:600;" style-hover="background:oklch(1 0 0/.06);color:#fff;">Start for free</a>
+</div>
+<div style="position:relative;padding:32px;border-radius:16px;border:1px solid oklch(0.62 0.2 25/.6);background:linear-gradient(180deg,oklch(0.18 0.05 25),oklch(0.11 0.01 25));display:flex;flex-direction:column;box-shadow:0 30px 80px -30px oklch(0.55 0.2 25/.45);">
+<span style="position:absolute;top:20px;right:20px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.06em;padding:4px 8px;border-radius:6px;background:#fff;color:#111;">MOST POPULAR</span>
+<div style="font-size:17px;font-weight:600;">Pro</div>
+<div style="margin-top:14px;display:flex;align-items:baseline;gap:6px;"><span style="font-size:48px;font-weight:500;letter-spacing:-.04em;">{{ proPrice }}</span><span style="color:oklch(0.66 0.008 250);">/ month</span></div>
+<div style="margin-top:22px;display:flex;flex-direction:column;gap:12px;font-size:14.5px;color:oklch(0.86 0.006 250);">
+<span>✓  100,000 emails / month</span><span>✓  Unlimited domains</span><span>✓  Campaigns, workflows, Valasys AI</span><span>✓  30-day logs · dedicated IP add-on</span>
+</div>
+<a href="Create Account.dc.html" style="margin-top:32px;height:46px;display:grid;place-items:center;border-radius:10px;background:oklch(0.58 0.21 25);color:#fff;font-weight:600;" style-hover="background:oklch(0.63 0.21 25);color:#fff;">Get Pro</a>
+</div>
+<div style="padding:32px;border-radius:16px;border:1px solid oklch(1 0 0/.10);background:oklch(1 0 0/.02);display:flex;flex-direction:column;">
+<div style="font-size:17px;font-weight:600;">Enterprise</div>
+<div style="margin-top:14px;display:flex;align-items:baseline;gap:6px;"><span style="font-size:48px;font-weight:500;letter-spacing:-.04em;">Custom</span></div>
+<div style="margin-top:22px;display:flex;flex-direction:column;gap:12px;font-size:14.5px;color:oklch(0.80 0.006 250);">
+<span>✓  Volume pricing from 1M / month</span><span>✓  Dedicated IP pools &amp; warmup</span><span>✓  SSO, SCIM, audit log export</span><span>✓  99.99% SLA · named deliverability lead</span>
+</div>
+<a href="Talk to Sales.dc.html" style="margin-top:32px;height:46px;display:grid;place-items:center;border-radius:10px;border:1px solid oklch(1 0 0/.18);color:#fff;font-weight:600;" style-hover="background:oklch(1 0 0/.06);color:#fff;">Talk to sales</a>
+</div>
+</div>
+<div style="margin:20px auto 0;max-width:1080px;padding:32px;border-radius:16px;border:1px solid oklch(1 0 0/.10);background:oklch(1 0 0/.02);display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:32px;align-items:center;">
+<div>
+<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;"><span style="font-size:15px;font-weight:600;">How many emails do you send a month?</span><span style="font-family:'JetBrains Mono',monospace;font-size:15px;color:oklch(0.80 0.14 24);">{{ volLabel }}</span></div>
+<input type="range" min="0" max="8" step="1" value="{{ volIdx }}" onChange="{{ onVol }}" style="margin-top:20px;width:100%;accent-color:oklch(0.62 0.21 25);" />
+<div style="margin-top:6px;display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:oklch(0.50 0.008 250);"><span>3K</span><span>100K</span><span>1M</span><span>10M+</span></div>
+</div>
+<div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
+<div><div style="font-size:13px;color:oklch(0.60 0.008 250);">Recommended plan</div><div style="margin-top:4px;font-size:22px;font-weight:600;">{{ volPlan }}</div></div>
+<div><div style="font-size:13px;color:oklch(0.60 0.008 250);">Estimated cost</div><div style="margin-top:4px;font-size:36px;font-weight:500;letter-spacing:-.03em;">{{ volPrice }}</div></div>
+<a href="{{ volHref }}" style="margin-left:auto;height:46px;padding:0 20px;display:flex;align-items:center;border-radius:10px;background:oklch(0.58 0.21 25);color:#fff;font-weight:600;">{{ volCta }}</a>
+</div>
+</div>
+<p style="margin-top:28px;text-align:center;"><a href="#" style="font-size:14px;color:oklch(0.70 0.008 250);">Compare all plans →</a></p>
+</div>
+</section>
+
+<section data-screen-label="Changelog" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;padding:96px 24px;">
+<div style="display:flex;align-items:end;gap:24px;flex-wrap:wrap;">
+<div><div style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;color:oklch(0.74 0.16 24);">SHIPPING EVERY WEEK</div><h2 style="margin-top:16px;font-size:clamp(32px,4vw,52px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">Changelog</h2></div>
+<a href="#" style="margin-left:auto;font-size:15px;">View all updates →</a>
+</div>
+<div style="margin-top:40px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;">
+<sc-for list="{{ changelog }}" as="c" hint-placeholder-count="4">
+<a href="#" style="display:flex;flex-direction:column;gap:14px;padding:24px;min-height:190px;border-radius:14px;border:1px solid oklch(1 0 0/.09);background:oklch(1 0 0/.02);color:oklch(0.97 0.002 250);" style-hover="border-color:oklch(1 0 0/.22);background:oklch(1 0 0/.04);color:oklch(0.97 0.002 250);">
+<div style="display:flex;align-items:center;gap:8px;"><span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.06em;padding:3px 7px;border-radius:5px;background:oklch(0.62 0.2 25/.16);color:oklch(0.82 0.13 24);">{{ c.tag }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:oklch(0.54 0.008 250);">{{ c.d }}</span></div>
+<span style="font-size:17px;font-weight:500;line-height:1.35;letter-spacing:-.01em;">{{ c.t }}</span>
+<span style="margin-top:auto;font-size:13px;color:oklch(0.60 0.008 250);">Read more →</span>
+</a>
+</sc-for>
+</div>
+</div>
+</section>
+
+<section data-screen-label="FAQ" style="border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="max-width:1240px;margin:0 auto;padding:96px 24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:48px;">
+<div><h2 style="font-size:clamp(32px,4vw,52px);line-height:1.04;letter-spacing:-.04em;font-weight:500;">Questions, answered.</h2><p style="margin-top:16px;font-size:16px;color:oklch(0.66 0.008 250);">Can't find yours? <a href="Talk to Sales.dc.html">Talk to a deliverability engineer →</a></p></div>
+<div style="border-top:1px solid oklch(1 0 0/.10);">
+<sc-for list="{{ faqs }}" as="f" hint-placeholder-count="6">
+<div style="border-bottom:1px solid oklch(1 0 0/.10);">
+<button onClick="{{ f.toggle }}" style="width:100%;display:flex;align-items:center;gap:16px;padding:22px 0;border:0;background:transparent;color:#fff;text-align:left;font-size:17px;font-weight:500;letter-spacing:-.01em;">
+<span style="flex:1;">{{ f.q }}</span><span style="font-family:'JetBrains Mono',monospace;font-size:18px;color:oklch(0.62 0.008 250);">{{ f.sign }}</span>
+</button>
+<sc-if value="{{ f.open }}" hint-placeholder-val="{{ false }}"><p style="padding:0 40px 22px 0;font-size:15px;line-height:1.6;color:oklch(0.68 0.008 250);">{{ f.a }}</p></sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+</section>
+
+<section data-screen-label="Final CTA" style="position:relative;overflow:hidden;border-bottom:1px solid oklch(1 0 0/.08);">
+<div style="position:absolute;left:50%;bottom:-260px;width:1000px;height:520px;transform:translateX(-50%);background:radial-gradient(closest-side,oklch(0.55 0.2 25/.35),transparent);pointer-events:none;"></div>
+<div style="position:relative;max-width:900px;margin:0 auto;padding:120px 24px;text-align:center;">
+<h2 style="font-size:clamp(38px,5.4vw,72px);line-height:1;letter-spacing:-.05em;font-weight:500;">Your next email should land.<br /><span style="color:oklch(0.70 0.19 25);">Start in five minutes.</span></h2>
+<div style="margin-top:36px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center;">
+<a href="Create Account.dc.html" style="height:52px;padding:0 28px;display:flex;align-items:center;border-radius:10px;background:#fff;color:#0a0a0a;font-size:16px;font-weight:600;" style-hover="background:oklch(0.92 0.004 250);color:#0a0a0a;">Start sending free →</a>
+<a href="#" style="height:52px;padding:0 26px;display:flex;align-items:center;border-radius:10px;border:1px solid oklch(1 0 0/.18);color:#fff;font-size:16px;font-weight:500;" style-hover="background:oklch(1 0 0/.06);color:#fff;">Read the docs</a>
+</div>
+</div>
+</section>
+
+<footer style="max-width:1240px;margin:0 auto;padding:56px 24px 40px;">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:32px;">
+<div style="display:flex;flex-direction:column;gap:12px;">
+<span style="font-size:16px;font-weight:600;">Valasys Mail</span>
+<span style="font-size:13.5px;line-height:1.5;color:oklch(0.58 0.008 250);">Email infrastructure for teams that can't afford to miss the inbox.</span>
+</div>
+<sc-for list="{{ footer }}" as="col" hint-placeholder-count="4">
+<div style="display:flex;flex-direction:column;gap:10px;">
+<span style="font-size:13px;font-weight:600;color:oklch(0.86 0.004 250);">{{ col.h }}</span>
+<sc-for list="{{ col.l }}" as="lk" hint-placeholder-count="4">
+<a href="#" style="font-size:13.5px;color:oklch(0.60 0.008 250);" style-hover="color:#fff;">{{ lk }}</a>
+</sc-for>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:48px;padding-top:24px;border-top:1px solid oklch(1 0 0/.08);display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:oklch(0.52 0.008 250);">
+<span>© 2026 Valasys Media</span>
+<span style="margin-left:auto;display:flex;align-items:center;gap:7px;"><span style="width:6px;height:6px;border-radius:9px;background:oklch(0.80 0.17 155);"></span>All systems operational</span>
+</div>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showAnnouncement&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;annualDefault&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  state = { mig: 0, tick: 0, testEmail: '', testTo: '', domain: '', dStage: -1, dName: '', vol: 2, faq: 0, lang: 'node', step: 0, shot: 0, annual: this.props.annualDefault ?? false, sent: 48210934 };
+  componentDidMount() {
+    this.t = setInterval(() => this.setState(s => ({ tick: s.tick + 1, step: (s.step + 1) % 9, sent: s.sent + Math.floor(Math.random() * 40 + 20) })), 750);
+  }
+  componentWillUnmount() { clearInterval(this.t); clearInterval(this.dt); }
+  runCheck() {
+    const d = (this.state.domain || 'yourcompany.com').trim().replace(/^https?:\/\//,'').split('/')[0];
+    clearInterval(this.dt); this.setState({ dStage: 0, dName: d });
+    this.dt = setInterval(() => this.setState(s => { if (s.dStage >= 5) { clearInterval(this.dt); return null; } return { dStage: s.dStage + 1 }; }), 520);
+  }
+  renderVals() {
+    const { lang, step, shot, annual, sent } = this.state;
+    const code = {
+      node: `import { Valasys } from "@valasys/mail";\nconst vm = new Valasys(process.env.VM_KEY);\n\nawait vm.messages.send({\n  from: "orders@acme.com",\n  to: "priya@northwind.io",\n  template: "order-receipt",\n  data: { order: 4417 },\n  idempotencyKey: "order-4417"\n});`,
+      python: `from valasys import Mail\nvm = Mail(os.environ["VM_KEY"])\n\nvm.messages.send(\n  sender="orders@acme.com",\n  to="priya@northwind.io",\n  template="order-receipt",\n  data={"order": 4417},\n  idempotency_key="order-4417",\n)`,
+      curl: `curl https://api.valasys.com/v1/send \\\n  -H "Authorization: Bearer $VM_KEY" \\\n  -H "Idempotency-Key: order-4417" \\\n  -d '{"from":"orders@acme.com",\n       "to":"priya@northwind.io",\n       "template":"order-receipt"}'`
+    }[lang];
+    const sel = (on) => ({ border: on ? 'oklch(1 0 0/.22)' : 'transparent', bg: on ? 'oklch(1 0 0/.08)' : 'transparent', color: on ? '#fff' : 'oklch(0.60 0.008 250)' });
+    const langs = [['node','Node'],['python','Python'],['curl','cURL']].map(([k,label]) => ({ label, ...sel(lang===k), pick: () => this.setState({ lang: k, step: 0 }) }));
+    const S = [['Accepted','202 · 41ms'],['Validated','syntax · MX ok'],['Suppression check','not suppressed'],['Signed','DKIM · SPF · DMARC'],['Routed','pool: transactional'],['Delivered','gmail · 1.38s']];
+    const steps = S.map(([name, meta], i) => {
+      const done = i < step, act = i === step;
+      return { name, meta: done || act ? meta : '—', op: done || act ? 1 : .38, mark: done ? '✓' : '',
+        ring: done ? 'oklch(0.80 0.17 155)' : act ? 'oklch(0.70 0.19 25)' : 'oklch(1 0 0/.2)',
+        fill: done ? 'oklch(0.80 0.17 155)' : act ? 'oklch(0.70 0.19 25/.25)' : 'transparent' };
+    });
+    const arrived = step >= 6;
+    const shotsData = [
+      ['Dashboard','dashboard','shot-dashboard.png','Volume, reputation and AI insights'],
+      ['Campaigns','campaigns','shot-campaigns.png','Schedule and track every send'],
+      ['Analytics','analytics','shot-analytics.png','Opens, clicks and domains'],
+      ['Message logs','messages','shot-messages.png','Search any message in seconds'],
+      ['Workflows','workflows','shot-workflow.png','Visual automation builder'],
+      ['Templates','templates','shot-templates.png','Versioned HTML with live preview']];
+    const shots = shotsData.map((s, i) => ({ label: s[0], ...sel(shot===i), pick: () => this.setState({ shot: i }) }));
+    const pill = (on) => ({ bg: on ? '#fff' : 'transparent', color: on ? '#0a0a0a' : 'oklch(0.72 0.008 250)' });
+    const m = pill(!annual), a = pill(annual);
+    const { testTo, dStage, dName, vol, faq } = this.state;
+    const DC = [['SPF','v=spf1 include:_spf.valasys.com ~all','PASS',1],['DKIM','k=rsa; 2048-bit selector vm1','PASS',1],['DMARC','p=none — not enforced','WARN',.5],['MX records','2 hosts · reachable','PASS',1],['Blocklists','0 of 84 lists','CLEAN',1]];
+    const green='oklch(0.80 0.17 155)', amber='oklch(0.82 0.15 80)', idle='oklch(1 0 0/.18)';
+    const dchecks = DC.map(([t,v,s,w],i) => { const done = dStage > i; return { t, v: done ? v : (dStage === i ? 'checking…' : '—'), s: done ? s : '', c: done ? (w<1?amber:green) : idle }; });
+    const finished = dStage >= 5;
+    const V = [3000,10000,50000,100000,250000,500000,1000000,5000000,10000000];
+    const P = [0,15,20,25,60,110,'custom','custom','custom'];
+    const vv = V[vol], pp = P[vol];
+    const fmt = n => n >= 1e6 ? (n/1e6)+'M' : (n/1e3)+'K';
+    const QA = [
+      ['Can I migrate from SendGrid, Mailgun or Mailjet without rewriting code?','Yes. Our v3-compatible endpoint accepts SendGrid-format requests — change the base URL and API key. For other providers, SMTP relay and our SDKs cover the same flows, and we import suppression lists and templates for you.'],
+      ['How do you protect my sender reputation?','Transactional and marketing traffic run on separate IP pools, every recipient passes validation and suppression checks, and sending is throttled automatically when a mailbox provider pushes back.'],
+      ['Do I get a dedicated IP?','Pro plans can add dedicated IPs with automated warmup. Enterprise includes dedicated pools and a named deliverability lead.'],
+      ['What happens if I exceed my monthly volume?','Mail keeps sending. Overage is billed per thousand at your plan rate and you get alerts at 80% and 100% of quota.'],
+      ['Is my data secure and GDPR compliant?','We are SOC 2 Type II audited, offer EU data residency, sign a DPA on every paid plan and encrypt data in transit and at rest.'],
+      ['Is there really no credit card for the free plan?','Correct. 3,000 emails a month free, forever, with every feature included.']];
+    const { mig, tick } = this.state;
+    const MIG = [
+      ['SendGrid','send.js','10 min',[['-','import sgMail from "@sendgrid/mail";'],['+','import sgMail from "@valasys/mail/v3";'],[' ',''],['-','sgMail.setApiKey(process.env.SENDGRID_KEY);'],['+','sgMail.setApiKey(process.env.VM_KEY);'],[' ',''],[' ','await sgMail.send({ to, from, templateId, dynamicTemplateData });'],[' ','// same payload · same response · same webhooks']]],
+      ['Mailgun','mailer.py','20 min',[['-','MG = "https://api.mailgun.net/v3/acme.com/messages"'],['+','VM = "https://api.valasys.com/v1/send"'],[' ',''],['-','requests.post(MG, auth=("api", MG_KEY), data=msg)'],['+','requests.post(VM, headers={"Authorization": f"Bearer {VM_KEY}"}, json=msg)'],[' ',''],[' ','# templates + suppressions imported automatically']]],
+      ['Mailjet','.env','5 min',[['-','SMTP_HOST=in-v3.mailjet.com'],['+','SMTP_HOST=smtp.valasys.com'],[' ','SMTP_PORT=587'],['-','SMTP_USER=$MJ_APIKEY_PUBLIC'],['+','SMTP_USER=apikey'],['-','SMTP_PASS=$MJ_APIKEY_PRIVATE'],['+','SMTP_PASS=$VM_KEY']]],
+      ['Amazon SES','.env','5 min',[['-','SMTP_HOST=email-smtp.us-east-1.amazonaws.com'],['+','SMTP_HOST=smtp.valasys.com'],[' ','SMTP_PORT=587'],['-','SMTP_USER=$SES_SMTP_USER'],['+','SMTP_USER=apikey'],['-','SMTP_PASS=$SES_SMTP_PASS'],['+','SMTP_PASS=$VM_KEY'],[' ','# no sandbox · no production-access request']]]];
+    const M = MIG[mig];
+    const tabSel = (on) => ({ border: on ? 'oklch(1 0 0/.22)' : 'oklch(1 0 0/.10)', bg: on ? '#fff' : 'transparent', color: on ? '#0a0a0a' : 'oklch(0.74 0.008 250)' });
+    const migLines = M[3].map(([s,t]) => ({ s: s.trim(), t: t || ' ',
+      bg: s==='+' ? 'oklch(0.80 0.17 155/.08)' : s==='-' ? 'oklch(0.62 0.2 25/.10)' : 'transparent',
+      c: s==='+' ? 'oklch(0.88 0.12 155)' : s==='-' ? 'oklch(0.80 0.12 24)' : (t.trim().startsWith('//')||t.trim().startsWith('#') ? 'oklch(0.52 0.008 250)' : 'oklch(0.82 0.006 250)'),
+      sc: s==='+' ? 'oklch(0.84 0.15 155)' : 'oklch(0.74 0.16 24)' }));
+    const AI = [
+      { u:1, t:'Why did opens drop on mail.acme.com this week?' },
+      { label:'DIAGNOSIS', t:'Outlook began deferring 18% of mail from 192.0.2.14 on Tuesday after a 3× volume spike from the "Fall promo" campaign.' },
+      { label:'PROPOSED FIX', t:'Move marketing traffic to the secondary pool, throttle Outlook to 40/min and re-warm over 48h. Transactional mail is unaffected.' },
+      { u:1, t:'Do it.' },
+      { label:'DONE · REVERSIBLE', t:'Applied. Deferrals already down to 2.1%. I\'ll report back in 24h.' }];
+    const shown = Math.min(AI.length, Math.floor((tick % 40) / 5) + 1);
+    const aiMsgs = AI.slice(0, shown).map(m => m.u ? { align:'flex-end', bg:'oklch(0.58 0.21 25)', border:'transparent', t:m.t, label:'' }
+      : { align:'flex-start', bg:'oklch(1 0 0/.04)', border:'oklch(1 0 0/.09)', t:m.t, label:m.label, lc: m.label.startsWith('DONE') ? 'oklch(0.84 0.15 155)' : 'oklch(0.80 0.14 24)' });
+    const jit = (b, i) => b + ((tick * 7 + i * 13) % 9) - 4;
+    return {
+      migTabs: MIG.map((x,i) => ({ label:x[0], ...tabSel(mig===i), pick: () => this.setState({ mig:i }) })),
+      migFile: M[1], migTime: M[2], migLines,
+      migAdd: M[3].filter(l=>l[0]==='+').length, migDel: M[3].filter(l=>l[0]==='-').length,
+      aiMsgs,
+      regions: [['US-EAST','Virginia',38,'99.998%'],['US-WEST','Oregon',42,'99.997%'],['EU-WEST','Frankfurt',35,'99.999%'],['AP-SOUTH','Mumbai',46,'99.996%'],['AP-EAST','Singapore',44,'99.997%']].map((r,i)=>({ code:r[0], name:r[1], ms: jit(r[2],i), up:r[3] })),
+      compare: [
+        { f:'Every feature on every plan', v:'Included', o:'Tiered by plan' },
+        { f:'Separate transactional & marketing IP pools', v:'Default', o:'Higher tiers' },
+        { f:'AI deliverability agent', v:'Included', o:'Not offered' },
+        { f:'Automated dedicated-IP warmup', v:'Free', o:'Manual or paid' },
+        { f:'Message log retention (Pro)', v:'30 days', o:'3–7 days' },
+        { f:'Drop-in v3 API compatibility', v:'Yes', o:'—' },
+        { f:'Guided migration with an engineer', v:'Free', o:'Enterprise only' },
+        { f:'Public 90-day status history', v:'Yes', o:'Varies' }
+      ],
+      testEmail: this.state.testEmail,
+      onTestEmail: e => this.setState({ testEmail: e.target.value }),
+      sendTest: () => { const v = (this.state.testEmail||'').trim(); this.setState({ testTo: v || 'you@company.com', step: 0 }); },
+      testLabel: testTo ? 'Sent ✓' : 'Send me a test',
+      testHint: testTo ? 'Watch it travel below → delivered to ' + testTo : 'Send a real email to your inbox — no signup',
+      domain: this.state.domain, onDomain: e => this.setState({ domain: e.target.value }), runCheck: () => this.runCheck(),
+      checkLabel: dStage >= 0 && !finished ? 'Checking…' : (finished ? 'Run again' : 'Check domain'),
+      dchecks, score: finished ? '90' : (dStage >= 0 ? '…' : '—'),
+      scoreRing: finished ? green : idle,
+      scoreTitle: finished ? 'Good — one fix recommended' : (dStage >= 0 ? 'Running checks…' : 'Enter a domain to begin'),
+      domainShown: dName || 'yourcompany.com',
+      volIdx: vol, onVol: e => this.setState({ vol: +e.target.value }), volLabel: fmt(vv) + (vol===8?'+':'') + ' / mo',
+      volPlan: pp === 0 ? 'Free' : (pp === 'custom' ? 'Enterprise' : 'Pro'),
+      volPrice: pp === 'custom' ? 'Custom' : '$' + (annual && pp ? Math.round(pp*.8) : pp) + '/mo',
+      volCta: pp === 'custom' ? 'Get a quote' : 'Start now', volHref: pp === 'custom' ? 'Talk to Sales.dc.html' : 'Create Account.dc.html',
+      faqs: QA.map(([q,a],i) => ({ q, a, open: faq === i, sign: faq === i ? '–' : '+', toggle: () => this.setState({ faq: faq === i ? -1 : i }) })),
+      changelog: [
+        { tag:'AI', d:'Oct 9, 2026', t:'Valasys AI now auto-fixes DMARC misalignment' },
+        { tag:'API', d:'Sep 30, 2026', t:'Batch Send v2: 500 messages per call' },
+        { tag:'DELIVERABILITY', d:'Sep 18, 2026', t:'Per-provider throttling for Yahoo & AOL' },
+        { tag:'WORKFLOWS', d:'Sep 4, 2026', t:'A/B split steps inside automations' }
+      ],
+      showAnnouncement: this.props.showAnnouncement ?? true,
+      code, langs, steps,
+      inboxOp: arrived ? 1 : .25, inboxY: arrived ? '0px' : '10px',
+      sentCount: sent.toLocaleString('en-US'),
+      providers: [{name:'Gmail',rate:'99.1%'},{name:'Outlook',rate:'98.4%'},{name:'Yahoo',rate:'98.6%'},{name:'iCloud',rate:'98.9%'}],
+      migrate: ['SendGrid','Mailgun','Mailjet','Postmark','Amazon SES','SparkPost','SendGrid','Mailgun','Mailjet','Postmark','Amazon SES','SparkPost'],
+      features: [
+        { t:'Transactional API', d:'REST sends with idempotency keys so a retry never double-sends. Batch up to 100 per call.', tags:['/v1/send','batch'] },
+        { t:'Campaigns', d:'Segment, schedule and A/B test marketing email with per-send open and click tracking.', tags:['segments','A/B'] },
+        { t:'Workflow automation', d:'Triggers, waits and branches in a visual builder — welcome series to win-back flows.', tags:['triggers','if / else'] },
+        { t:'Template editor', d:'Versioned HTML templates with variables, live inbox preview and one-click test sends.', tags:['{{first_name}}','versions'] },
+        { t:'Real-time analytics', d:'Opens, clicks, bounces and unsubscribes per message, campaign and recipient domain.', tags:['live','per-domain'] },
+        { t:'Domain authentication', d:'Guided SPF, DKIM and DMARC setup with per-record verification and DNS monitoring.', tags:['SPF','DKIM','DMARC'] },
+        { t:'Suppression management', d:'Bounces, complaints and unsubscribes are suppressed across every send type automatically.', tags:['auto','global'] },
+        { t:'Valasys AI', d:'Ask in plain English. It spots reputation dips, drafts campaigns and proposes fixes for your approval.', tags:['insights','agent'] }
+      ],
+      shots, shotRef: (el) => { const src = 'assets/' + shotsData[this.state.shot][2]; if (el && el.getAttribute('src') !== src) el.setAttribute('src', src); }, shotSrc: 'assets/' + shotsData[shot][2], shotPath: shotsData[shot][1], shotCaption: shotsData[shot][3],
+      checks: [
+        { n:'01', t:'Address validation', d:'Syntax, MX and disposable-domain checks on every recipient.' },
+        { n:'02', t:'Suppression lookup', d:'Bounced, complained and unsubscribed contacts are never mailed.' },
+        { n:'03', t:'Authentication', d:'Every message signed with your DKIM and aligned to DMARC.' },
+        { n:'04', t:'Traffic isolation', d:'Transactional and marketing mail sent from separate IP pools.' },
+        { n:'05', t:'Reputation guard', d:'Sending is throttled automatically when a provider pushes back.' },
+        { n:'06', t:'Blocklist watch', d:'IPs and domains monitored against major blocklists, around the clock.' }
+      ],
+      events: [
+        { c:'oklch(0.80 0.17 155)', t:'12:04:11.382', n:'delivered', m:'gmail.com' },
+        { c:'oklch(0.72 0.14 250)', t:'12:04:18.901', n:'opened', m:'Chrome · SF' },
+        { c:'oklch(0.75 0.14 300)', t:'12:04:26.110', n:'clicked', m:'/track/4417' },
+        { c:'oklch(0.80 0.14 80)', t:'12:05:02.447', n:'soft_bounce', m:'retry in 5m' }
+      ],
+      trust: [
+        { t:'SOC 2 Type II', d:'Independently audited every year. Report available under NDA.' },
+        { t:'GDPR & DPA', d:'EU data residency and a signed DPA on every paid plan.' },
+        { t:'SSO & SCIM', d:'SAML login, role-based access and automatic provisioning.' },
+        { t:'Audit log', d:'Every key, setting and send action recorded and exportable.' },
+        { t:'Scoped API keys', d:'Per-domain, per-permission keys with instant rotation.' },
+        { t:'Public status page', d:'Live uptime and incident history — nothing hidden.' }
+      ],
+      quotes: [
+        { q:'We moved 40M monthly receipts over in a weekend by changing one base URL. Inbox placement went up the first week.', n:'Placeholder Name', r:'Head of Platform, Northwind', i:'NW', k:'+6.2% inbox' },
+        { q:'Marketing and engineering finally look at the same numbers. Our password-reset emails stopped landing in spam.', n:'Placeholder Name', r:'CTO, Lumen', i:'LU', k:'1.2s to inbox' },
+        { q:'The AI insight caught an IP reputation dip before our customers noticed. That alone paid for the year.', n:'Placeholder Name', r:'Growth Lead, Vertex', i:'VX', k:'0 incidents' }
+      ],
+      proPrice: annual ? '$20' : '$25',
+      mBg: m.bg, mColor: m.color, aBg: a.bg, aColor: a.color,
+      setMonthly: () => this.setState({ annual: false }), setAnnual: () => this.setState({ annual: true }),
+      footer: [
+        { h:'Product', l:['Transactional API','Campaigns','Workflows','Templates','Valasys AI'] },
+        { h:'Developers', l:['Docs','API reference','SDKs','Changelog','Status'] },
+        { h:'Company', l:['About','Customers','Careers','Contact sales'] },
+        { h:'Legal', l:['Privacy','Terms','DPA','Security','Acceptable use'] }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

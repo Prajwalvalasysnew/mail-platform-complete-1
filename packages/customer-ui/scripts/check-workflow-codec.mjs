@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {compileWorkflow} from '../src/faithful/workflow-codec.ts';
+const document={tkey:'event',settings:{quiet:false,cap:false,goal:'none',reentry:'once',audience:'all'},graph:{nodes:[{id:'trigger',t:'trigger'},{id:'wait',t:'wait',mode:'duration',amount:0,unit:'minutes'}],edges:[{from:'trigger',to:'wait',port:'out'}]}};
+const compile=value=>compileWorkflow(value,'hello@example.test');
+assert.equal(compile(document).steps[0].duration_seconds,0);
+for(const settings of [{audience:'vip'},{reentry:'invalid'},{quiet:true},{cap:true},{goal:'order'}])assert.throws(()=>compile({...document,settings:{...document.settings,...settings}}));
+assert.equal(compile({...document,settings:{...document.settings,reentry:'30d'}}).settings.reentry_cooldown_seconds,2592000);
+const branch=compile({...document,graph:{nodes:[document.graph.nodes[0],{id:'wait',t:'branch',cond:'activated'}],edges:document.graph.edges}}).steps[0];assert.equal(branch.rules[0].field,'context.onboarding_complete');assert.equal(branch.on_false,null);
+const filter=compile({...document,graph:{nodes:[document.graph.nodes[0],{id:'wait',t:'filter',rule:'score'}],edges:document.graph.edges}}).steps[0];assert.equal(filter.rules[0].op,'gte');assert.throws(()=>compile({...document,graph:{nodes:[document.graph.nodes[0],{id:'wait',t:'branch',cond:'opened'}],edges:document.graph.edges}}));
+for(const node of [{t:'sms'},{t:'email',subject:'Override'},{t:'email',preheader:'Override'},{t:'wait',mode:'duration',unit:'months',amount:2},{t:'wait',mode:'duration',unit:'days',amount:-1},{t:'wait',mode:'event',event:'purchased',max:2},{t:'wait',mode:'event',event:'opened',max:0}])assert.throws(()=>compile({...document,graph:{...document.graph,nodes:[document.graph.nodes[0],{id:'wait',...node}]}}));
+const event=compile({...document,graph:{...document.graph,nodes:[document.graph.nodes[0],{id:'wait',t:'wait',mode:'event',event:'clicked',max:2}]}}).steps[0];
+assert.deepEqual(event.event_types,['clicked']);assert.equal(event.timeout_seconds,172800);
+assert.throws(()=>compile({...document,graph:{...document.graph,edges:[...document.graph.edges,...document.graph.edges]}}));
+console.log('PASS workflow codec mappings and unsupported-policy/override rejection');

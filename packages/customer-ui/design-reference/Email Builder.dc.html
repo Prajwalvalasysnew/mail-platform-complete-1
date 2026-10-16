@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<title>Email Builder — Valasys</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"></link>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"></link>
+<link rel="stylesheet" href="https://unpkg.com/grapesjs@0.21.13/dist/css/grapes.min.css"></link>
+<script src="https://unpkg.com/grapesjs@0.21.13/dist/grapes.min.js"></script>
+<style>
+html,body{margin:0;height:100%;font-family:'Geist',system-ui,sans-serif;color:#1f2430;background:#f4f5f7;}
+a{color:#c42f37;} a:hover{color:#a3262d;}
+@keyframes popIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+@keyframes slideIn{from{opacity:0;transform:translateX(16px);}to{opacity:1;transform:none;}}
+@keyframes pulse{0%{opacity:.45}50%{opacity:1}100%{opacity:.45}}
+.gjs-editor{font-family:'Geist',system-ui,sans-serif !important;background:transparent !important;}
+.gjs-one-bg{background-color:#ffffff !important;}
+.gjs-two-color{color:#3b4150 !important;}
+.gjs-three-bg{background-color:#d9363e !important;color:#fff !important;}
+.gjs-four-color,.gjs-four-color-h:hover{color:#d9363e !important;}
+.gjs-cv-canvas{width:100% !important;height:100% !important;top:0 !important;left:0 !important;background:#eceef1 !important;}
+.gjs-frame-wrapper{padding:0 !important;}
+.gjs-toolbar{background:#d9363e !important;border-radius:7px !important;overflow:hidden;}
+.gjs-toolbar-item{padding:5px 6px !important;}
+.gjs-badge{background:#d9363e !important;border-radius:5px !important;font-family:'Geist',sans-serif !important;font-size:11px !important;}
+.gjs-placeholder{border-color:#d9363e !important;} .gjs-placeholder-int{background:#d9363e !important;}
+.gjs-rte-toolbar{border-radius:9px !important;border:1px solid #e6e8eb !important;background:#fff !important;box-shadow:0 8px 24px -8px rgba(20,24,35,.25);}
+.gjs-rte-action{color:#3b4150 !important;border-right:1px solid #f0f1f3 !important;min-width:28px;}
+.gjs-rte-action select{height:24px;border:0;background:#f4f5f7;border-radius:6px;font-family:'Geist',sans-serif;font-size:12px;color:#3b4150;}
+#vb-blocks .gjs-blocks-cs{background:transparent !important;}
+#vb-blocks .gjs-block-category{border-bottom:1px solid #f0f1f3 !important;}
+#vb-blocks .gjs-block-category .gjs-title{background:#fff !important;border:0 !important;padding:12px 14px 8px !important;font-size:11px !important;font-weight:600 !important;letter-spacing:.07em;text-transform:uppercase;color:#7a8190 !important;}
+#vb-blocks .gjs-blocks-c{display:grid !important;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:2px 10px 12px !important;}
+#vb-blocks .gjs-block{width:auto !important;min-height:70px !important;margin:0 !important;padding:10px 4px 8px !important;border-radius:10px !important;border:1px solid #e6e8eb !important;box-shadow:none !important;background:#fff !important;color:#3b4150 !important;font-size:11.5px !important;font-weight:500 !important;display:flex !important;flex-direction:column;align-items:center;justify-content:center;gap:6px;transition:border-color .12s,color .12s,background .12s;}
+#vb-blocks .gjs-block:hover{border-color:#d9363e !important;color:#c42f37 !important;background:#fff7f7 !important;}
+#vb-blocks .gjs-block svg{width:24px;height:24px;}
+#vb-blocks .gjs-block-label{line-height:1.2;text-align:center;}
+#vb-layers .gjs-layer{background:#fff !important;font-size:12.5px !important;}
+#vb-layers .gjs-layer.gjs-selected .gjs-layer-item{background:#fff1f1 !important;}
+#vb-layers .gjs-layer-item{border-bottom:1px solid #f3f4f6 !important;}
+#vb-styles .gjs-sm-sector{border-bottom:1px solid #f0f1f3 !important;}
+#vb-styles .gjs-sm-sector-title{background:#fff !important;border:0 !important;padding:12px 14px !important;font-size:12.5px !important;font-weight:600 !important;color:#1f2430 !important;letter-spacing:0;}
+#vb-styles .gjs-sm-properties{padding:4px 10px 12px !important;}
+#vb-styles .gjs-sm-label,#vb-traits .gjs-label{color:#5d6472 !important;font-size:11.5px !important;}
+.gjs-field{background:#f4f5f7 !important;border:1px solid #eceef1 !important;border-radius:7px !important;color:#1f2430 !important;}
+.gjs-field input,.gjs-field select,.gjs-field textarea{color:#1f2430 !important;font-family:'Geist',sans-serif !important;}
+.gjs-radio-item input:checked + .gjs-radio-item-label{background:#fff !important;color:#c42f37 !important;}
+#vb-traits .gjs-trt-trait{padding:8px 14px !important;}
+#vb-traits .gjs-trt-header{display:none;}
+#vb-sel{display:none !important;}
+.gjs-mdl-dialog{border-radius:14px !important;overflow:hidden;font-family:'Geist',sans-serif !important;}
+.gjs-mdl-header{border-bottom:1px solid #eceef1 !important;}
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;height:100vh;width:100%;overflow:hidden;">
+  <header style="display:flex;align-items:center;gap:10px;height:56px;flex-shrink:0;padding:0 14px;border-bottom:1px solid #e6e8eb;background:#fff;">
+    <a href="Customer App.dc.html" title="Back to Templates" style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px;border:1px solid #e6e8eb;color:#3b4150;text-decoration:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+    </a>
+    <div style="display:flex;flex-direction:column;min-width:0;flex:1;max-width:340px;">
+      <input value="{{ name }}" onChange="{{ onName }}" style="width:100%;height:24px;padding:0 6px;margin-left:-6px;border:1px solid transparent;border-radius:6px;background:transparent;font-family:inherit;font-size:14.5px;font-weight:600;outline:0;color:#1f2430;" style-hover="border-color:#e6e8eb;" style-focus="border-color:#d9363e;background:#fff;"></input>
+      <span style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#7a8190;"><span style="{{ statusDot }}"></span>{{ statusText }}</span>
+    </div>
+    <div style="flex:1;display:flex;justify-content:center;">
+      <div style="display:flex;gap:2px;padding:3px;border-radius:9px;background:#f1f2f4;">
+        <sc-for list="{{ devices }}" as="d" hint-placeholder-count="3">
+          <button onClick="{{ d.onClick }}" title="{{ d.label }}" style="{{ d.style }}">{{ d.label }}</button>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button onClick="{{ undo }}" title="Undo (⌘Z)" style="{{ undoStyle }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg></button>
+      <button onClick="{{ redo }}" title="Redo (⇧⌘Z)" style="{{ redoStyle }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"></path><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"></path></svg></button>
+      <span style="width:1px;height:22px;background:#e6e8eb;margin:0 4px;"></span>
+      <button onClick="{{ openChecks }}" title="Pre-send checks" style="{{ checksBtnStyle }}"><span style="{{ checksDot }}"></span>{{ checksLabel }}</button>
+      <button onClick="{{ toggleAi }}" title="AI assistant" style="{{ aiBtnStyle }}">✦ AI</button>
+      <button onClick="{{ openPreview }}" style="height:32px;padding:0 12px;border-radius:8px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;font-family:inherit;font-size:13px;font-weight:500;color:#2a2f3a;">Preview &amp; export</button>
+      <button onClick="{{ openTest }}" style="height:32px;padding:0 12px;border-radius:8px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;font-family:inherit;font-size:13px;font-weight:500;color:#2a2f3a;">Send test</button>
+      <button onClick="{{ save }}" title="Save version (⌘S)" style="height:32px;padding:0 15px;border-radius:8px;border:1px solid #c42f37;background:#d9363e;color:#fff;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;">Save</button>
+    </div>
+  </header>
+
+  <div style="display:flex;align-items:center;gap:16px;flex-shrink:0;padding:8px 14px;border-bottom:1px solid #e6e8eb;background:#fff;">
+    <label style="display:flex;align-items:center;gap:8px;flex:0 0 auto;">
+      <span style="font-size:12px;font-weight:500;color:#7a8190;">From</span>
+      <input value="{{ fromName }}" onChange="{{ onFrom }}" style="width:110px;height:32px;padding:0 10px;border-radius:8px;border:1px solid #e6e8eb;background:#fafbfc;font-family:inherit;font-size:13px;outline:0;color:#1f2430;" style-focus="border-color:#d9363e;background:#fff;"></input>
+    </label>
+    <label style="position:relative;display:flex;align-items:center;gap:8px;flex:3;min-width:0;">
+      <span style="font-size:12px;font-weight:500;color:#7a8190;">Subject</span>
+      <input value="{{ subject }}" onChange="{{ onSubject }}" style="flex:1;min-width:0;height:32px;padding:0 64px 0 10px;border-radius:8px;border:1px solid #e6e8eb;background:#fafbfc;font-family:inherit;font-size:13px;outline:0;color:#1f2430;" style-focus="border-color:#d9363e;background:#fff;"></input>
+      <span style="position:absolute;right:36px;font-family:'Geist Mono',monospace;font-size:11px;color:{{ subjCountColor }};">{{ subjCount }}</span>
+      <button onClick="{{ suggestSubjects }}" title="Suggest subject lines with AI" style="position:absolute;right:4px;width:26px;height:24px;border-radius:6px;border:0;background:transparent;cursor:pointer;color:#6e56cf;font-size:13px;" style-hover="background:#f1edff;">✦</button>
+      <sc-if value="{{ subjMenu }}" hint-placeholder-val="">
+        <div style="position:absolute;top:38px;left:58px;right:0;z-index:40;padding:6px;border-radius:12px;border:1px solid #e6e8eb;background:#fff;box-shadow:0 16px 40px -12px rgba(20,24,35,.3);animation:popIn .14s ease-out;">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px 8px;">
+            <span style="font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6e56cf;">✦ Subject ideas</span>
+            <button onClick="{{ closeSubj }}" style="border:0;background:transparent;cursor:pointer;font-size:15px;color:#7a8190;">×</button>
+          </div>
+          <sc-if value="{{ subjBusy }}" hint-placeholder-val="">
+            <div style="padding:10px 8px;font-size:12.5px;color:#7a8190;animation:pulse 1.3s infinite;">Writing options…</div>
+          </sc-if>
+          <sc-for list="{{ subjOptsV }}" as="o" hint-placeholder-count="0">
+            <button onClick="{{ o.onClick }}" style="display:flex;justify-content:space-between;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:8px;background:transparent;cursor:pointer;text-align:left;font-family:inherit;font-size:13px;color:#1f2430;" style-hover="background:#f6f4ff;"><span>{{ o.text }}</span><span style="font-family:'Geist Mono',monospace;font-size:11px;color:#9aa0ab;">{{ o.len }}</span></button>
+          </sc-for>
+        </div>
+      </sc-if>
+    </label>
+    <label style="position:relative;display:flex;align-items:center;gap:8px;flex:3;min-width:0;">
+      <span style="font-size:12px;font-weight:500;color:#7a8190;white-space:nowrap;">Preview text</span>
+      <input value="{{ preheader }}" onChange="{{ onPreheader }}" placeholder="Shown after the subject in the inbox" style="flex:1;min-width:0;height:32px;padding:0 40px 0 10px;border-radius:8px;border:1px solid #e6e8eb;background:#fafbfc;font-family:inherit;font-size:13px;outline:0;color:#1f2430;" style-focus="border-color:#d9363e;background:#fff;"></input>
+      <span style="position:absolute;right:10px;font-family:'Geist Mono',monospace;font-size:11px;color:#9aa0ab;">{{ preCount }}</span>
+    </label>
+  </div>
+
+  <div style="position:relative;flex:1;display:flex;min-height:0;">
+    <nav style="width:56px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0;border-right:1px solid #e6e8eb;background:#fff;">
+      <button onClick="{{ rail.blocks.onClick }}" title="Blocks" style="{{ rail.blocks.style }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><path d="M17.5 14v7M14 17.5h7"></path></svg><span style="font-size:10px;">Blocks</span></button>
+      <button onClick="{{ rail.layers.onClick }}" title="Layers" style="{{ rail.layers.style }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"></path><path d="m3 13 9 5 9-5"></path></svg><span style="font-size:10px;">Layers</span></button>
+      <button onClick="{{ rail.templates.onClick }}" title="Templates" style="{{ rail.templates.style }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18M9 9v11"></path></svg><span style="font-size:10px;">Layouts</span></button>
+      <button onClick="{{ rail.history.onClick }}" title="Version history" style="{{ rail.history.style }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5M12 7v5l3 2"></path></svg><span style="font-size:10px;">History</span></button>
+    </nav>
+
+    <aside style="width:268px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid #e6e8eb;background:#fff;min-height:0;">
+      <div style="padding:14px 14px 4px;">
+        <p style="margin:0;font-size:14px;font-weight:600;">{{ leftTitle }}</p>
+        <p style="margin:3px 0 0;font-size:12px;color:#7a8190;">{{ leftHint }}</p>
+      </div>
+      <div style="flex:1;overflow-y:auto;min-height:0;">
+        <div id="vb-blocks" style="{{ pBlocks }}"></div>
+        <div id="vb-layers" style="{{ pLayers }}"></div>
+        <sc-if value="{{ isTemplates }}" hint-placeholder-val="">
+          <div style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;">
+            <sc-for list="{{ layouts }}" as="l" hint-placeholder-count="5">
+              <button onClick="{{ l.onClick }}" style="display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:10px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;text-align:left;font-family:inherit;" style-hover="border-color:#d9363e;background:#fff7f7;">
+                <span style="font-size:13px;font-weight:600;color:#1f2430;">{{ l.name }}</span>
+                <span style="font-size:12px;line-height:1.45;color:#7a8190;">{{ l.desc }}</span>
+              </button>
+            </sc-for>
+            <p style="margin:4px 2px 0;font-size:11.5px;line-height:1.5;color:#9aa0ab;">Replaces the current design. Undo with ⌘Z.</p>
+          </div>
+        </sc-if>
+        <sc-if value="{{ isHistory }}" hint-placeholder-val="">
+          <div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px;">
+            <sc-for list="{{ versionsV }}" as="v" hint-placeholder-count="0">
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;border:1px solid #e6e8eb;">
+                <div style="flex:1;min-width:0;">
+                  <p style="margin:0;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ v.label }}</p>
+                  <p style="margin:2px 0 0;font-size:11.5px;color:#7a8190;">{{ v.when }}</p>
+                </div>
+                <button onClick="{{ v.restore }}" style="height:28px;padding:0 10px;border-radius:7px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;font-family:inherit;font-size:12px;font-weight:500;color:#2a2f3a;">Restore</button>
+              </div>
+            </sc-for>
+            <sc-if value="{{ noVersions }}" hint-placeholder-val="{{ true }}">
+              <div style="padding:20px 12px;border-radius:10px;border:1px dashed #dfe2e6;text-align:center;font-size:12.5px;line-height:1.5;color:#7a8190;">No saved versions yet. Press Save or ⌘S to keep a restore point. Edits autosave as you work.</div>
+            </sc-if>
+          </div>
+        </sc-if>
+      </div>
+    </aside>
+
+    <div style="position:relative;flex:1;min-width:0;">
+      <div ref="{{ gjsRef }}" style="position:absolute;inset:0;"></div>
+      <sc-if value="{{ loading }}" hint-placeholder-val="{{ true }}">
+        <div style="position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:#eceef1;">
+          <span style="font-size:14px;font-weight:600;animation:pulse 1.4s infinite;">Loading editor…</span>
+          <span style="font-size:12.5px;color:#7a8190;">{{ loadNote }}</span>
+        </div>
+      </sc-if>
+    </div>
+
+    <aside style="position:relative;width:288px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid #e6e8eb;background:#fff;min-height:0;">
+      <div style="display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid #f0f1f3;min-height:36px;">
+        <div style="flex:1;min-width:0;">
+          <p style="margin:0;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#9aa0ab;">Selected</p>
+          <p style="margin:2px 0 0;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ selLabel }}</p>
+        </div>
+        <sc-if value="{{ hasSel }}" hint-placeholder-val="">
+          <sc-if value="{{ selIsText }}" hint-placeholder-val="">
+            <button onClick="{{ aiOnSel }}" title="Rewrite with AI" style="width:30px;height:30px;border-radius:7px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;color:#6e56cf;font-size:13px;" style-hover="background:#f6f4ff;">✦</button>
+          </sc-if>
+          <button onClick="{{ selParent }}" title="Select parent" style="width:30px;height:30px;border-radius:7px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;color:#3b4150;display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg></button>
+          <button onClick="{{ selClone }}" title="Duplicate" style="width:30px;height:30px;border-radius:7px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;color:#3b4150;display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+          <button onClick="{{ selDelete }}" title="Delete" style="width:30px;height:30px;border-radius:7px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;color:#c42f37;display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path></svg></button>
+        </sc-if>
+      </div>
+      <div style="display:flex;gap:2px;padding:0 10px;border-bottom:1px solid #f0f1f3;">
+        <sc-for list="{{ rTabs }}" as="t" hint-placeholder-count="2">
+          <button onClick="{{ t.onClick }}" style="{{ t.style }}">{{ t.label }}</button>
+        </sc-for>
+      </div>
+      <div style="position:relative;flex:1;overflow-y:auto;min-height:0;">
+        <div id="vb-sel"></div>
+        <div id="vb-styles" style="{{ pStyles }}"></div>
+        <div id="vb-traits" style="{{ pTraits }}"></div>
+        <sc-if value="{{ noSel }}" hint-placeholder-val="{{ true }}">
+          <div style="position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:24px;background:#fff;text-align:center;">
+            <p style="margin:0;font-size:13.5px;font-weight:600;">Nothing selected</p>
+            <p style="margin:0;font-size:12.5px;line-height:1.5;color:#7a8190;">Click any element in the email to change its fonts, colors, spacing, links and alt text.</p>
+          </div>
+        </sc-if>
+      </div>
+    </aside>
+
+    <sc-if value="{{ aiOpen }}" hint-placeholder-val="">
+      <aside style="position:absolute;top:0;right:0;bottom:0;z-index:30;width:360px;display:flex;flex-direction:column;border-left:1px solid #e6e8eb;background:#fff;box-shadow:-16px 0 40px -20px rgba(20,24,35,.3);animation:slideIn .18s ease-out;">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px 0;">
+          <span style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:#f1edff;color:#6e56cf;font-size:14px;">✦</span>
+          <p style="margin:0;flex:1;font-size:14px;font-weight:600;">AI assistant</p>
+          <button onClick="{{ toggleAi }}" title="Close" style="width:28px;height:28px;border-radius:7px;border:0;background:transparent;cursor:pointer;font-size:17px;color:#7a8190;" style-hover="background:#f4f5f7;">×</button>
+        </div>
+        <div style="display:flex;gap:2px;padding:10px 12px 0;border-bottom:1px solid #f0f1f3;">
+          <sc-for list="{{ aiTabs }}" as="t" hint-placeholder-count="2">
+            <button onClick="{{ t.onClick }}" style="{{ t.style }}">{{ t.label }}</button>
+          </sc-for>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:16px;">
+          <sc-if value="{{ isWrite }}" hint-placeholder-val="{{ true }}">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:3px;border-radius:10px;background:#f1f2f4;margin-bottom:14px;">
+              <sc-for list="{{ modes }}" as="m" hint-placeholder-count="2">
+                <button onClick="{{ m.onClick }}" style="{{ m.style }}">{{ m.label }}</button>
+              </sc-for>
+            </div>
+            <p style="margin:0 0 8px;font-size:13px;font-weight:500;">{{ promptLabel }}</p>
+            <textarea value="{{ prompt }}" onChange="{{ onPrompt }}" rows="4" placeholder="{{ promptPh }}" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid #e3e5e9;font-family:inherit;font-size:13px;line-height:1.5;outline:0;resize:vertical;color:#1f2430;" style-focus="border-color:#6e56cf;box-shadow:0 0 0 3px rgba(110,86,207,.14);"></textarea>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 16px;">
+              <sc-for list="{{ examples }}" as="x" hint-placeholder-count="4">
+                <button onClick="{{ x.onClick }}" style="height:26px;padding:0 9px;border-radius:13px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;font-family:inherit;font-size:11.5px;color:#4a5060;" style-hover="border-color:#c9bff2;color:#5a45b8;">{{ x.label }}</button>
+              </sc-for>
+            </div>
+            <p style="margin:0 0 8px;font-size:13px;font-weight:500;">Tone</p>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:3px;padding:3px;border-radius:10px;background:#f1f2f4;margin-bottom:16px;">
+              <sc-for list="{{ tones }}" as="t" hint-placeholder-count="3">
+                <button onClick="{{ t.onClick }}" style="{{ t.style }}">{{ t.label }}</button>
+              </sc-for>
+            </div>
+            <button onClick="{{ generate }}" style="{{ genStyle }}">{{ genLabel }}</button>
+            <p style="margin:10px 0 0;font-size:12px;line-height:1.5;color:#7a8190;">{{ genNote }}</p>
+          </sc-if>
+          <sc-if value="{{ isRewrite }}" hint-placeholder-val="">
+            <sc-if value="{{ hasSelText }}" hint-placeholder-val="">
+              <p style="margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#9aa0ab;">Selected text</p>
+              <div style="padding:10px 12px;border-radius:10px;background:#f7f8f9;font-size:13px;line-height:1.55;color:#2a2f3a;margin-bottom:14px;max-height:140px;overflow:auto;">{{ selText }}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;">
+                <sc-for list="{{ rwActions }}" as="a" hint-placeholder-count="5">
+                  <button onClick="{{ a.onClick }}" style="{{ a.style }}">{{ a.label }}</button>
+                </sc-for>
+              </div>
+              <p style="margin:0 0 8px;font-size:13px;font-weight:500;">Or tell AI what to change</p>
+              <div style="display:flex;gap:6px;">
+                <input value="{{ instr }}" onChange="{{ onInstr }}" onKeyDown="{{ instrKey }}" placeholder="e.g. mention free returns" style="flex:1;min-width:0;height:36px;padding:0 11px;border-radius:9px;border:1px solid #e3e5e9;font-family:inherit;font-size:13px;outline:0;color:#1f2430;" style-focus="border-color:#6e56cf;"></input>
+                <button onClick="{{ runInstr }}" style="height:36px;padding:0 12px;border-radius:9px;border:1px solid #5a45b8;background:#6e56cf;color:#fff;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;">Apply</button>
+              </div>
+              <p style="margin:12px 0 0;font-size:12px;line-height:1.5;color:#7a8190;">Changes apply in place and can be undone. Merge tags like first_name are kept.</p>
+            </sc-if>
+            <sc-if value="{{ noSelText }}" hint-placeholder-val="{{ true }}">
+              <div style="padding:22px 14px;border-radius:12px;border:1px dashed #dfe2e6;text-align:center;">
+                <p style="margin:0;font-size:13.5px;font-weight:600;">Select text in the email</p>
+                <p style="margin:5px 0 0;font-size:12.5px;line-height:1.5;color:#7a8190;">Click a heading, paragraph or button, then choose how to rewrite it.</p>
+              </div>
+            </sc-if>
+          </sc-if>
+        </div>
+      </aside>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{ isPreview }}" hint-placeholder-val="">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;z-index:80;background:rgba(20,24,35,.4);"></div>
+    <div style="position:fixed;top:24px;bottom:24px;left:50%;transform:translateX(-50%);z-index:81;width:1040px;max-width:calc(100vw - 32px);display:flex;flex-direction:column;border-radius:16px;background:#fff;box-shadow:0 24px 60px -12px rgba(20,24,35,.4);overflow:hidden;animation:popIn .16s ease-out;">
+      <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #eceef1;">
+        <div style="display:flex;gap:2px;">
+          <sc-for list="{{ pvTabs }}" as="t" hint-placeholder-count="4">
+            <button onClick="{{ t.onClick }}" style="{{ t.style }}">{{ t.label }}</button>
+          </sc-for>
+        </div>
+        <div style="flex:1;"></div>
+        <sc-if value="{{ pvIsInbox }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;gap:2px;padding:3px;border-radius:9px;background:#f1f2f4;">
+            <sc-for list="{{ pvDevices }}" as="d" hint-placeholder-count="2">
+              <button onClick="{{ d.onClick }}" style="{{ d.style }}">{{ d.label }}</button>
+            </sc-for>
+          </div>
+          <button onClick="{{ toggleDark }}" style="{{ darkStyle }}">Dark mode</button>
+        </sc-if>
+        <sc-if value="{{ pvIsCode }}" hint-placeholder-val="">
+          <span style="font-size:12px;color:#7a8190;">{{ exportMeta }}</span>
+          <button onClick="{{ downloadHtml }}" style="height:32px;padding:0 12px;border-radius:8px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;font-family:inherit;font-size:13px;font-weight:500;color:#2a2f3a;">Download .html</button>
+          <button onClick="{{ copyCode }}" style="height:32px;padding:0 12px;border-radius:8px;border:1px solid #c42f37;background:#d9363e;color:#fff;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;">Copy</button>
+        </sc-if>
+        <button onClick="{{ closeModal }}" style="width:32px;height:32px;border-radius:8px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;font-size:16px;color:#3b4150;">×</button>
+      </div>
+      <div style="flex:1;min-height:0;display:flex;background:#f4f5f7;">
+        <sc-if value="{{ pvIsInbox }}" hint-placeholder-val="{{ true }}">
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:14px;padding:20px;overflow:auto;">
+            <div style="{{ inboxRowStyle }}">
+              <span style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;background:#d9363e;color:#fff;font-weight:600;font-size:14px;flex-shrink:0;">{{ fromInitial }}</span>
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;justify-content:space-between;gap:10px;"><span style="font-size:13.5px;font-weight:600;color:#1f2430;">{{ fromName }}</span><span style="font-size:12px;color:#7a8190;">9:41 AM</span></div>
+                <p style="margin:2px 0 0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#1f2430;"><span style="font-weight:600;">{{ subject }}</span><span style="color:#7a8190;"> — {{ preheader }}</span></p>
+              </div>
+            </div>
+            <iframe ref="{{ pvRef }}" title="Email preview" style="{{ pvFrameStyle }}"></iframe>
+          </div>
+        </sc-if>
+        <sc-if value="{{ pvIsHtml }}" hint-placeholder-val="">
+          <pre style="flex:1;margin:0;padding:16px 20px;overflow:auto;background:#1c2029;color:#d6dae2;font-family:'Geist Mono',monospace;font-size:11.5px;line-height:1.6;white-space:pre-wrap;word-break:break-all;">{{ exportHtml }}</pre>
+        </sc-if>
+        <sc-if value="{{ pvIsText }}" hint-placeholder-val="">
+          <pre style="flex:1;margin:0;padding:24px 28px;overflow:auto;background:#fff;color:#2a2f3a;font-family:'Geist Mono',monospace;font-size:12.5px;line-height:1.7;white-space:pre-wrap;">{{ exportText }}</pre>
+        </sc-if>
+        <sc-if value="{{ pvIsChecks }}" hint-placeholder-val="">
+          <div style="flex:1;overflow:auto;padding:24px;display:flex;justify-content:center;">
+            <div style="width:100%;max-width:620px;display:flex;flex-direction:column;gap:8px;">
+              <p style="margin:0 0 6px;font-size:15px;font-weight:600;">{{ checksSummary }}</p>
+              <sc-for list="{{ checksV }}" as="c" hint-placeholder-count="6">
+                <div style="display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:10px;border:1px solid #e6e8eb;background:#fff;">
+                  <span style="{{ c.dot }}"></span>
+                  <div style="flex:1;"><p style="margin:0;font-size:13px;font-weight:500;color:#1f2430;">{{ c.label }}</p><p style="margin:2px 0 0;font-size:12px;color:#7a8190;">{{ c.hint }}</p></div>
+                  <span style="{{ c.tagStyle }}">{{ c.tag }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isTest }}" hint-placeholder-val="">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;z-index:80;background:rgba(20,24,35,.4);"></div>
+    <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:81;width:440px;max-width:calc(100vw - 32px);padding:22px;border-radius:16px;background:#fff;box-shadow:0 24px 60px -12px rgba(20,24,35,.4);animation:popIn .16s ease-out;">
+      <p style="margin:0;font-size:16px;font-weight:600;">Send a test email</p>
+      <p style="margin:4px 0 16px;font-size:12.5px;color:#7a8190;">Merge tags are filled with sample data. Separate addresses with commas.</p>
+      <input value="{{ testTo }}" onChange="{{ onTestTo }}" style="width:100%;box-sizing:border-box;height:38px;padding:0 11px;border-radius:9px;border:1px solid #e3e5e9;font-family:inherit;font-size:13px;outline:0;color:#1f2430;" style-focus="border-color:#d9363e;"></input>
+      <sc-if value="{{ testErr }}" hint-placeholder-val="">
+        <p style="margin:8px 0 0;font-size:12px;color:#c42f37;">{{ testErr }}</p>
+      </sc-if>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+        <button onClick="{{ closeModal }}" style="height:34px;padding:0 13px;border-radius:9px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;font-family:inherit;font-size:13px;color:#2a2f3a;">Cancel</button>
+        <button onClick="{{ sendTest }}" style="height:34px;padding:0 15px;border-radius:9px;border:1px solid #c42f37;background:#d9363e;color:#fff;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;">Send test</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ hasToast }}" hint-placeholder-val="">
+    <div style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:90;display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:10px;background:#1f2430;color:#fff;font-size:13px;font-weight:500;box-shadow:0 10px 30px -8px rgba(20,24,35,.4);animation:popIn .16s ease-out;">
+      <span>{{ toast }}</span>
+      <sc-if value="{{ toastUndo }}" hint-placeholder-val="">
+        <button onClick="{{ undo }}" style="border:0;background:transparent;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;color:#ffb3b6;">Undo</button>
+      </sc-if>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { loading:true, loadNote:'Fetching GrapesJS', name:'Black Friday — VIP early access', fromName:'Acme', subject:'Your early access starts now', preheader:'VIPs get 48 hours before everyone else — 30% off sitewide',
+    left:'blocks', right:'style', device:'Desktop', sel:null, canUndo:false, canRedo:false, saving:false, savedAt:null, versions:[],
+    aiOpen:false, aiTab:'write', aiMode:'email', prompt:'', tone:'Friendly', busy:false, rwBusy:null, instr:'',
+    subjMenu:false, subjBusy:false, subjOpts:[], checks:[], modal:null, pvTab:'inbox', pvDevice:'desktop', dark:false,
+    exportHtml:'', exportText:'', testTo:'sarah@acme.com', testErr:'', toast:null, toastUndo:false };
+  gjsRef = React.createRef(); pvRef = React.createRef();
+  META = 'vb-email-meta-v2';
+  toast = (m, undo) => { clearTimeout(this.tT); this.setState({toast:m, toastUndo:!!undo}); this.tT = setTimeout(()=>this.setState({toast:null}), 3200); };
+
+  componentDidMount(){
+    try { const m = JSON.parse(localStorage.getItem(this.META)||'null'); if(m) this.setState({name:m.name||this.state.name, fromName:m.fromName||'Acme', subject:m.subject??this.state.subject, preheader:m.preheader??this.state.preheader, versions:m.versions||[]}); } catch(e){}
+    let tries = 0;
+    const boot = () => {
+      const gj = window.grapesjs;
+      if(!gj || !this.gjsRef.current || !document.getElementById('vb-blocks')){ if(++tries>100) return this.setState({loadNote:'Couldn’t load the editor — check your connection and reload'}); return void setTimeout(boot, 100); }
+      this.initEditor(gj);
+    };
+    boot();
+    this.onKey = (e) => { if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); this.saveVersion(); } if(e.key==='Escape' && this.state.modal) this.setState({modal:null}); };
+    window.addEventListener('keydown', this.onKey);
+  }
+  componentWillUnmount(){ window.removeEventListener('keydown', this.onKey); clearTimeout(this.tT); try{ this.ed && this.ed.destroy(); }catch(e){} }
+  componentDidUpdate(){
+    const s = this.state;
+    try { const m = JSON.stringify({name:s.name, fromName:s.fromName, subject:s.subject, preheader:s.preheader, versions:s.versions}); if(m!==this._metaStr){ this._metaStr = m; localStorage.setItem(this.META, m); } } catch(e){}
+    this.pushPreview();
+  }
+  pushPreview = () => { try { const s = this.state, f = this.pvRef.current; if(f && s.modal==='preview' && s.pvTab==='inbox' && f._h!==s.exportHtml){ f._h = s.exportHtml; f.srcdoc = this.fill(s.exportHtml); } } catch(e){} };
+  fill(h){ return String(h||'').replace(/\{\{\s*first_name\s*\}\}/g,'Sarah').replace(/\{\{\s*last_name\s*\}\}/g,'Chen').replace(/\{\{\s*company\s*\}\}/g,'Northwind').replace(/\{\{\s*(unsubscribe_url|preferences_url)\s*\}\}/g,'#'); }
+
+  initEditor(gj){
+    const ed = this.ed = gj.init({
+      container:this.gjsRef.current, height:'100%', width:'auto', fromElement:false,
+      panels:{ defaults:[] },
+      storageManager:{ type:'local', autosave:true, autoload:true, stepsBeforeSave:1, options:{ local:{ key:'vb-email-project-v2' } } },
+      blockManager:{ appendTo:'#vb-blocks', blocks:this.blocks() },
+      layerManager:{ appendTo:'#vb-layers' },
+      traitManager:{ appendTo:'#vb-traits' },
+      selectorManager:{ appendTo:'#vb-sel', componentFirst:true },
+      styleManager:{ appendTo:'#vb-styles', sectors:[
+        { name:'Typography', open:true, properties:['font-family','font-size','font-weight','color','line-height','text-align','letter-spacing'] },
+        { name:'Spacing', open:true, properties:['padding','margin'] },
+        { name:'Background & border', open:false, properties:['background-color','border-radius','border'] },
+        { name:'Size', open:false, properties:['width','max-width','height'] },
+      ]},
+      deviceManager:{ devices:[ {id:'Desktop', name:'Desktop', width:''}, {id:'Tablet', name:'Tablet', width:'768px', widthMedia:'992px'}, {id:'Mobile', name:'Mobile', width:'375px', widthMedia:'620px'} ] },
+      canvas:{ styles:[] },
+      protectedCss:'*{box-sizing:border-box;} body{margin:0;background:#eceef1;font-family:Helvetica,Arial,sans-serif;} img{max-width:100%;}',
+    });
+    const rte = ed.RichTextEditor;
+    rte.add('merge', {
+      icon:'<select style="width:104px;"><option value="">Merge tag…</option><option value="first_name">First name</option><option value="last_name">Last name</option><option value="company">Company</option><option value="unsubscribe_url">Unsubscribe URL</option></select>',
+      event:'change', attributes:{ title:'Insert merge tag' },
+      result:(r, a)=>{ const v = a.btn.querySelector('select').value; if(v) r.insertHTML('{{'+v+'}}'); a.btn.querySelector('select').value=''; },
+      update:(r, a)=>{ a.btn.querySelector('select').value=''; },
+    });
+    ed.Keymaps.add('vb:save', '⌘+s, ctrl+s', ()=>this.saveVersion(), { prevent:true });
+    const sync = () => this.setState({ canUndo:ed.UndoManager.hasUndo(), canRedo:ed.UndoManager.hasRedo() });
+    ed.on('component:selected component:deselected', this.syncSel);
+    ed.on('component:update', ()=>{ sync(); this.syncSelSoft(); });
+    ed.on('update', sync);
+    ed.on('storage:start:store', ()=>this.setState({saving:true}));
+    ed.on('storage:end:store', ()=>this.setState({saving:false, savedAt:new Date()}));
+    ed.on('load', ()=>{
+      if(!ed.getComponents().length) ed.setComponents(this.buildEmail('promo', this.copyFor('promo','Friendly')));
+      ed.UndoManager.clear();
+      ed.select(null);
+      this.setState({loading:false, savedAt:new Date()}); sync();
+      this.runReview && this.runReview();
+    });
+  }
+  syncSel = () => {
+    const c = this.ed && this.ed.getSelected();
+    if(!c) return this.setState({sel:null});
+    const type = c.get('type'), el = c.getEl();
+    const txt = el ? (el.innerText||'').trim() : '';
+    const leaf = c.components().filter(x=>x.get('type')!=='textnode').length===0;
+    const tag = (c.get('tagName')||'').toLowerCase();
+    const isText = (['text','link'].includes(type) || /^(h[1-6]|p|a|span|li|td)$/.test(tag)) && !!txt && leaf;
+    const nm = /^h[1-6]$/.test(tag) ? 'Heading' : tag==='p' ? 'Paragraph' : type==='link' ? 'Button / link' : type==='image' ? 'Image' : (c.getName ? c.getName() : type);
+    this.setState({ sel:{ name:nm, type, isText, text: isText?txt:'' } });
+  };
+  syncSelSoft = () => { clearTimeout(this.ssT); this.ssT = setTimeout(this.syncSel, 120); };
+
+  ico(p){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`; }
+  S = {
+    header:(brand)=>`<div style="padding:24px 32px 8px;"><div style="font-size:20px;font-weight:700;letter-spacing:-0.01em;color:#111111;">${brand||'Acme'}</div></div>`,
+    hero:(alt, label)=>`<div style="padding:12px 32px;"><img src="https://placehold.co/1072x520/f3e8e8/b4232a?text=${encodeURIComponent(label||'Hero image')}" alt="${alt||'Hero image'}" style="display:block;width:100%;height:auto;border-radius:8px;"/></div>`,
+    heading:(t)=>`<h1 style="margin:0;padding:16px 32px 4px;font-size:28px;line-height:1.25;font-weight:700;color:#111111;">${t}</h1>`,
+    h2:(t)=>`<h2 style="margin:0;padding:12px 32px 2px;font-size:19px;line-height:1.3;font-weight:700;color:#111111;">${t}</h2>`,
+    text:(t)=>`<p style="margin:0;padding:8px 32px;font-size:15px;line-height:1.65;color:#444444;">${t}</p>`,
+    button:(t,u,align)=>`<div style="padding:16px 32px 20px;text-align:${align||'left'};"><a href="${u||'https://acme.com'}" style="display:inline-block;padding:13px 24px;border-radius:8px;background:#d9363e;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;">${t}</a></div>`,
+    cols:(a,b)=>`<table class="cols" style="width:100%;border-collapse:collapse;"><tbody><tr><td class="col" style="width:50%;padding:8px 6px 8px 32px;vertical-align:top;"><div style="padding:16px;border-radius:8px;background:#f7f7f8;font-size:14px;line-height:1.55;color:#333333;">${a}</div></td><td class="col" style="width:50%;padding:8px 32px 8px 6px;vertical-align:top;"><div style="padding:16px;border-radius:8px;background:#f7f7f8;font-size:14px;line-height:1.55;color:#333333;">${b}</div></td></tr></tbody></table>`,
+    cols3:()=>`<table class="cols" style="width:100%;border-collapse:collapse;"><tbody><tr>${[['32px','6px'],['6px','6px'],['6px','32px']].map((p,i)=>`<td class="col" style="width:33.33%;padding:8px ${p[1]} 8px ${p[0]};vertical-align:top;font-size:14px;line-height:1.55;color:#333333;"><p style="margin:0 0 4px;font-weight:700;color:#111111;">Feature ${i+1}</p><p style="margin:0;">Short supporting line.</p></td>`).join('')}</tr></tbody></table>`,
+    product:()=>`<table class="cols" style="width:100%;border-collapse:collapse;"><tbody><tr>${[['32px','6px','Everyday tote','$48'],['6px','32px','Weekend duffel','$96']].map(p=>`<td class="col" style="width:50%;padding:8px ${p[1]} 8px ${p[0]};vertical-align:top;"><img src="https://placehold.co/500x500/f1f2f4/7a8190?text=Product" alt="${p[2]}" style="display:block;width:100%;height:auto;border-radius:8px;"/><p style="margin:10px 0 2px;font-size:14px;font-weight:600;color:#111111;">${p[2]}</p><p style="margin:0 0 8px;font-size:14px;color:#666666;">${p[3]}</p><a href="https://acme.com/shop" style="font-size:13px;font-weight:600;color:#d9363e;text-decoration:none;">Shop now →</a></td>`).join('')}</tr></tbody></table>`,
+    coupon:(code)=>`<div style="margin:12px 32px;padding:20px;border:2px dashed #d9363e;border-radius:10px;text-align:center;"><p style="margin:0;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#888888;">Use code at checkout</p><p style="margin:6px 0 0;font-family:Menlo,Consolas,monospace;font-size:26px;font-weight:700;letter-spacing:0.14em;color:#d9363e;">${code||'VIP30'}</p></div>`,
+    quote:()=>`<div style="margin:12px 32px;padding:20px 22px;border-radius:10px;background:#f7f7f8;"><p style="margin:0;font-size:16px;line-height:1.6;font-style:italic;color:#222222;">“We cut our reporting time in half the first month.”</p><p style="margin:10px 0 0;font-size:13px;color:#666666;">— Priya Shah, Head of Ops at Northwind</p></div>`,
+    divider:()=>`<div style="padding:12px 32px;"><div style="height:1px;background:#eeeeee;"></div></div>`,
+    spacer:()=>`<div style="height:32px;"></div>`,
+    social:()=>`<div style="padding:16px 32px 4px;text-align:center;font-size:13px;color:#666666;"><a href="https://x.com" style="color:#666666;text-decoration:none;">X</a>  ·  <a href="https://linkedin.com" style="color:#666666;text-decoration:none;">LinkedIn</a>  ·  <a href="https://instagram.com" style="color:#666666;text-decoration:none;">Instagram</a></div>`,
+    footer:()=>`<div style="padding:16px 32px 28px;text-align:center;font-size:12px;line-height:1.6;color:#888888;">Acme Inc · 548 Market St, San Francisco, CA 94104<br/>You’re receiving this because you signed up at acme.com.<br/><a href="{{unsubscribe_url}}" style="color:#888888;">Unsubscribe</a> · <a href="{{preferences_url}}" style="color:#888888;">Manage preferences</a></div>`,
+  };
+  blocks(){
+    const S = this.S, I = (p)=>this.ico(p);
+    return [
+      {id:'b-heading', label:'Heading', category:'Content', media:I('<path d="M6 4v16M18 4v16M6 12h12"/>'), content:S.heading('Your headline here')},
+      {id:'b-text', label:'Text', category:'Content', media:I('<path d="M4 6h16M4 12h16M4 18h10"/>'), content:S.text('Write something your reader will care about. Keep it short.')},
+      {id:'b-button', label:'Button', category:'Content', media:I('<rect x="3" y="8" width="18" height="8" rx="4"/><path d="M9 12h6"/>'), content:S.button('Call to action','https://acme.com')},
+      {id:'b-image', label:'Image', category:'Content', media:I('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>'), content:S.hero('Describe this image','Image')},
+      {id:'b-quote', label:'Testimonial', category:'Content', media:I('<path d="M7 7h4v6H7zM13 7h4v6h-4zM7 13c0 2-1 4-3 4M13 13c0 2-1 4-3 4"/>'), content:S.quote()},
+      {id:'b-coupon', label:'Coupon', category:'Content', media:I('<path d="M3 8a2 2 0 0 0 0 8v2h18v-2a2 2 0 0 1 0-8V6H3z"/><path d="M13 6v12" stroke-dasharray="2 2"/>'), content:S.coupon()},
+      {id:'b-2col', label:'2 columns', category:'Layout', media:I('<rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/>'), content:S.cols('Left column','Right column')},
+      {id:'b-3col', label:'3 columns', category:'Layout', media:I('<rect x="2.5" y="5" width="5.5" height="14" rx="1.2"/><rect x="9.25" y="5" width="5.5" height="14" rx="1.2"/><rect x="16" y="5" width="5.5" height="14" rx="1.2"/>'), content:S.cols3()},
+      {id:'b-product', label:'Products', category:'Layout', media:I('<rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><path d="M3 15h8M3 19h5M13 15h8M13 19h5"/>'), content:S.product()},
+      {id:'b-divider', label:'Divider', category:'Layout', media:I('<path d="M3 12h18"/>'), content:S.divider()},
+      {id:'b-spacer', label:'Spacer', category:'Layout', media:I('<path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/>'), content:S.spacer()},
+      {id:'b-header', label:'Logo header', category:'Brand', media:I('<rect x="3" y="5" width="18" height="6" rx="1.5"/><path d="M6 8h5"/>'), content:S.header('Acme')},
+      {id:'b-social', label:'Social links', category:'Brand', media:I('<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="m8.2 10.8 7.6-3.6M8.2 13.2l7.6 3.6"/>'), content:S.social()},
+      {id:'b-footer', label:'Footer', category:'Brand', media:I('<rect x="3" y="13" width="18" height="6" rx="1.5"/><path d="M8 16h8"/>'), content:S.footer()},
+    ];
+  }
+  buildEmail(kind, c){
+    const S = this.S; let body = '';
+    if(kind==='newsletter') body = S.header()+S.heading(c.heading)+S.text(c.body)+S.divider()+S.hero('Story image','Story')+S.h2(c.col1)+S.text('A two-line summary of this story and why it matters to the reader.')+S.button('Read more', c.url)+S.divider()+S.h2(c.col2)+S.text('Another short summary. Link out for the details.')+S.button('Read more', c.url)+S.social()+S.footer();
+    else if(kind==='letter') body = S.header()+S.text('Hi {{first_name}},')+S.text(c.body)+S.text('If you have questions, just reply — a real person reads every message.')+S.text('— The Acme team')+S.divider()+S.footer();
+    else if(kind==='welcome') body = S.header()+S.hero(c.heading,'Welcome')+S.heading(c.heading)+S.text(c.body)+S.cols3()+S.button(c.cta,c.url)+S.divider()+S.social()+S.footer();
+    else if(kind==='event') body = S.header()+S.hero(c.heading,'Event')+S.heading(c.heading)+S.text(c.body)+S.cols(c.col1,c.col2)+S.button(c.cta,c.url)+S.quote()+S.divider()+S.footer();
+    else body = S.header()+S.hero(c.heading,'Hero image')+S.heading(c.heading)+S.text(c.body)+S.coupon(c.code)+S.product()+S.button(c.cta,c.url,'center')+S.divider()+S.social()+S.footer();
+    return `<div class="email" style="max-width:600px;margin:24px auto;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Helvetica,Arial,sans-serif;">${body}</div>`;
+  }
+  kindOf(p){ const s = String(p||'').toLowerCase(); return /sale|% ?off|black friday|promo|deal|discount/.test(s)?'promo' : /welcome|sign ?up|onboard/.test(s)?'welcome' : /webinar|event|invite|conference/.test(s)?'event' : /newsletter|digest|roundup|monthly/.test(s)?'newsletter' : /win.?back|inactive|miss/.test(s)?'winback' : 'generic'; }
+  copyFor(kind, tone){
+    const C = {
+      promo:{subject:'Your early access starts now', preheader:'VIPs get 48 hours before everyone else — 30% off sitewide', heading:'Your early access is here', body:'As one of our best customers, you get first pick. Take 30% off sitewide — no code needed. Early access ends Sunday at midnight.', col1:'Free shipping on every order', col2:'Price match for 14 days', cta:'Shop the sale', url:'https://acme.com/sale', code:'VIP30'},
+      welcome:{subject:'Welcome to Acme, {{first_name}}', preheader:'Here’s how to get set up in 3 minutes', heading:'Welcome aboard, {{first_name}}', body:'Thanks for joining. Here are the three things most teams do in their first week to get value fast.', col1:'Connect your data', col2:'Invite your team', cta:'Get started', url:'https://acme.com/start'},
+      event:{subject:'You’re invited: live session next Thursday', preheader:'Save your seat — spots are limited', heading:'Join us live next Thursday', body:'A 45-minute session with practical tips you can use the same day. Can’t make it? Register and we’ll send the recording.', col1:'Live Q&A with our team', col2:'Recording for every registrant', cta:'Save my seat', url:'https://acme.com/webinar'},
+      newsletter:{subject:'The Acme monthly: what’s new in October', preheader:'Three things worth your time this month', heading:'October at Acme', body:'Here’s a quick roundup of what we shipped, what we learned, and what’s coming next.', col1:'Faster reports, rebuilt from scratch', col2:'How Northwind cut reporting time in half', cta:'Read more', url:'https://acme.com/blog'},
+      winback:{subject:'We miss you, {{first_name}}', preheader:'Here’s 20% off to welcome you back', heading:'It’s been a while', body:'A lot has changed since your last visit. Come see what’s new — and take 20% off your next order on us.', col1:'New: faster checkout', col2:'New: saved favorites', cta:'Claim 20% off', url:'https://acme.com/welcome-back', code:'BACK20'},
+      generic:{subject:'A quick update from Acme', preheader:'Everything you need to know in under a minute', heading:'Here’s what’s new', body:'We kept this short so you can get back to your day. Here’s what changed and what it means for you.', col1:'What changed', col2:'What to do next', cta:'Learn more', url:'https://acme.com'},
+    };
+    const c = {...(C[kind]||C.generic)};
+    if(tone==='Urgent'){ c.subject = 'Last chance: '+c.subject.charAt(0).toLowerCase()+c.subject.slice(1); c.body += ' This ends soon — don’t miss it.'; c.cta += ' now'; }
+    if(tone==='Professional'){ c.body = c.body.replace(/ — /g,'. ').replace(' on us.','.'); }
+    if(tone==='Friendly' && !/first_name/.test(c.body)) c.body = 'Hi {{first_name}} — '+c.body.charAt(0).toLowerCase()+c.body.slice(1);
+    return c;
+  }
+  saveVersion = () => {
+    if(!this.ed) return;
+    try { this.ed.store(); } catch(e){}
+    const v = { id:Date.now(), label:this.state.subject || this.state.name, when:new Date().toISOString(), data:this.ed.getProjectData(), subject:this.state.subject, preheader:this.state.preheader };
+    this.setState(s=>({ versions:[v, ...s.versions].slice(0,12), savedAt:new Date() }));
+    this.toast('Version saved');
+  };
+  restoreVersion(v){
+    if(!this.ed) return;
+    try { this.ed.loadProjectData(v.data); } catch(e){ return this.toast('Couldn’t restore that version'); }
+    this.setState({subject:v.subject, preheader:v.preheader, sel:null});
+    this.toast('Version restored'); setTimeout(()=>this.runReview && this.runReview(), 200);
+  }
+  applyLayout(kind){
+    if(!this.ed) return;
+    const c = this.copyFor(kind, 'Friendly');
+    this.ed.setComponents(this.buildEmail(kind, c)); this.ed.select(null);
+    this.setState({subject:c.subject, preheader:c.preheader});
+    this.toast('Layout applied', true); setTimeout(()=>this.runReview && this.runReview(), 200);
+  }
+  ago(d){ if(!d) return ''; const s = Math.round((Date.now()-new Date(d).getTime())/1000); if(s<10) return 'just now'; if(s<60) return s+'s ago'; if(s<3600) return Math.round(s/60)+' min ago'; return new Date(d).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); }
+
+  renderVals(){
+    const st = this.state, ed = this.ed;
+    const seg = (on)=>`height:28px;padding:0 12px;border:0;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:${on?600:500};${on?'background:#fff;color:#1f2430;box-shadow:0 1px 2px rgba(20,24,35,.12);':'background:transparent;color:#5d6472;'}`;
+    const tab = (on, c)=>`height:38px;padding:0 10px;border:0;background:transparent;cursor:pointer;font-family:inherit;font-size:13px;font-weight:${on?600:500};border-bottom:2px solid ${on?(c||'#d9363e'):'transparent'};color:${on?'#1f2430':'#7a8190'};margin-bottom:-1px;`;
+    const rail = (k)=>({ onClick:()=>this.setState({left:k}), style:`display:flex;flex-direction:column;align-items:center;gap:3px;width:46px;padding:7px 0;border:0;border-radius:9px;cursor:pointer;font-family:inherit;color:${st.left===k?'#c42f37':'#5d6472'};background:${st.left===k?'#fff1f1':'transparent'};` });
+    const icon = (on)=>`display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px;border:1px solid #e6e8eb;background:#fff;cursor:${on?'pointer':'default'};color:${on?'#2a2f3a':'#c3c7ce'};`;
+    const issues = st.checks.filter(c=>c.level!=='ok'), bad = st.checks.filter(c=>c.level==='bad').length;
+    const LT = { blocks:['Blocks','Drag into the email'], layers:['Layers','Reorder and find elements'], templates:['Layouts','Start from a proven structure'], history:['Version history','Restore any saved version'] }[st.left];
+    const okGen = !!st.prompt.trim() && !st.busy;
+    const sel = st.sel;
+    return {
+      ...st, gjsRef:this.gjsRef, pvRef:this.pvRef,
+      onName:(e)=>this.setState({name:e.target.value}), onFrom:(e)=>this.setState({fromName:e.target.value}),
+      onSubject:(e)=>this.setState({subject:e.target.value}), onPreheader:(e)=>this.setState({preheader:e.target.value}),
+      subjCount:String(st.subject.length), subjCountColor: st.subject.length>60?'#c42f37':'#9aa0ab', preCount:String(st.preheader.length),
+      statusText: st.loading?'Loading…' : st.saving?'Saving…' : 'Autosaved '+this.ago(st.savedAt),
+      statusDot:`display:block;width:6px;height:6px;border-radius:50%;background:${st.saving?'#e0a100':'#1f9d63'};`,
+      devices:['Desktop','Tablet','Mobile'].map(d=>({label:d, style:seg(st.device===d), onClick:()=>{ ed && ed.setDevice(d); this.setState({device:d}); }})),
+      undo:()=>{ if(ed && ed.UndoManager.hasUndo()){ ed.UndoManager.undo(); this.setState({toast:null}); } }, redo:()=>{ ed && ed.UndoManager.hasRedo() && ed.UndoManager.redo(); },
+      undoStyle:icon(st.canUndo), redoStyle:icon(st.canRedo),
+      checksLabel: !st.checks.length ? 'Checks' : issues.length ? `${issues.length} to review` : 'Ready to send',
+      checksDot:`display:block;width:7px;height:7px;border-radius:50%;background:${!st.checks.length?'#c3c7ce':bad?'#d9363e':issues.length?'#e0a100':'#1f9d63'};`,
+      checksBtnStyle:'display:flex;align-items:center;gap:7px;height:32px;padding:0 11px;border-radius:8px;border:1px solid #e6e8eb;background:#fff;cursor:pointer;font-family:inherit;font-size:13px;font-weight:500;color:#2a2f3a;',
+      openChecks:()=>this.openPreview && this.openPreview('checks'),
+      toggleAi:()=>this.setState({aiOpen:!st.aiOpen}),
+      aiBtnStyle:`height:32px;padding:0 11px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;${st.aiOpen?'border:1px solid #6e56cf;background:#f1edff;color:#5a45b8;':'border:1px solid #e6e8eb;background:#fff;color:#5a45b8;'}`,
+      openPreview:()=>this.openPreview && this.openPreview('inbox'), openTest:()=>this.setState({modal:'test', testErr:''}),
+      save:this.saveVersion,
+      rail:{ blocks:rail('blocks'), layers:rail('layers'), templates:rail('templates'), history:rail('history') },
+      leftTitle:LT[0], leftHint:LT[1],
+      pBlocks:`display:${st.left==='blocks'?'block':'none'};`, pLayers:`display:${st.left==='layers'?'block':'none'};padding:4px 0;`,
+      isTemplates:st.left==='templates', isHistory:st.left==='history',
+      layouts:[['promo','Promotion','Hero, coupon code, product grid and a strong CTA.'],['welcome','Welcome','Warm intro, three-step onboarding and a start button.'],['newsletter','Newsletter','Intro plus two stories with read-more links.'],['event','Event invite','Date, value points, CTA and social proof.'],['letter','Plain letter','Personal, text-first — great for deliverability.']].map(l=>({name:l[1], desc:l[2], onClick:()=>this.applyLayout(l[0])})),
+      versionsV: st.versions.map(v=>({label:v.label, when:this.ago(v.when), restore:()=>this.restoreVersion(v)})), noVersions:!st.versions.length,
+      hasSel:!!sel, noSel:!sel, selIsText:!!(sel&&sel.isText), selLabel: sel ? (sel.name.charAt(0).toUpperCase()+sel.name.slice(1)) : 'Email',
+      selParent:()=>{ const c = ed && ed.getSelected(); const p = c && c.parent(); if(p && p.get('type')!=='wrapper') ed.select(p); },
+      selClone:()=>{ const c = ed && ed.getSelected(); if(!c) return; const p = c.parent(); if(!p) return; const cl = p.components().add(c.clone(), {at:c.index()+1}); ed.select(Array.isArray(cl)?cl[0]:cl); },
+      selDelete:()=>{ const c = ed && ed.getSelected(); if(!c) return; ed.select(null); c.remove(); this.toast('Deleted', true); },
+      aiOnSel:()=>this.setState({aiOpen:true, aiTab:'rewrite'}),
+      rTabs:[['style','Style'],['settings','Settings']].map(t=>({label:t[1], style:tab(st.right===t[0]), onClick:()=>this.setState({right:t[0]})})),
+      pStyles:`display:${st.right==='style'?'block':'none'};`, pTraits:`display:${st.right==='settings'?'block':'none'};`,
+      aiTabs:[['write','Write'],['rewrite','Rewrite']].map(t=>({label:t[1], style:tab(st.aiTab===t[0],'#6e56cf'), onClick:()=>this.setState({aiTab:t[0]})})),
+      isWrite:st.aiTab==='write', isRewrite:st.aiTab==='rewrite',
+      modes:[['email','Full email'],['section','Add a section']].map(m=>({label:m[1], style:seg(st.aiMode===m[0])+'width:100%;', onClick:()=>this.setState({aiMode:m[0]})})),
+      promptLabel: st.aiMode==='email' ? 'What’s this email about?' : 'What should the new section say?',
+      promptPh: st.aiMode==='email' ? 'e.g. Black Friday for VIP customers, 30% off, ends Sunday' : 'e.g. A testimonial from a happy customer about fast shipping',
+      onPrompt:(e)=>this.setState({prompt:e.target.value}),
+      examples:(st.aiMode==='email'?['Black Friday sale for VIPs','Welcome new signups','Webinar invite','Monthly newsletter','Win back inactive customers']:['Customer testimonial','FAQ: shipping & returns','Limited-time coupon','Feature highlight']).map(x=>({label:x, onClick:()=>this.setState({prompt:x})})),
+      tones:['Friendly','Professional','Urgent'].map(t=>({label:t, style:seg(st.tone===t)+'width:100%;', onClick:()=>this.setState({tone:t})})),
+      genLabel: st.busy ? 'Writing…' : st.aiMode==='email' ? '✦ Generate email' : '✦ Add section',
+      genStyle:`width:100%;height:40px;border-radius:10px;font-family:inherit;font-size:13.5px;font-weight:600;${okGen?'cursor:pointer;border:1px solid #5a45b8;background:#6e56cf;color:#fff;':'cursor:default;border:1px solid #e6e8eb;background:#f1f2f4;color:#9aa0ab;'}`,
+      genNote: st.aiMode==='email' ? 'Picks the best layout and writes every block. Undo with ⌘Z.' : (sel ? 'Inserted after the selected element.' : 'Added above the footer.'),
+      generate:()=>this.generate && this.generate(),
+      hasSelText:!!(sel&&sel.isText), noSelText:!(sel&&sel.isText), selText: sel?sel.text:'',
+      rwActions:[['shorter','Shorter'],['friendlier','Friendlier'],['punchier','Punchier'],['urgent','More urgent'],['grammar','Fix grammar'],['personal','Personalize']].map(a=>({ label: st.rwBusy===a[0]?'Rewriting…':a[1], onClick:()=>this.rewrite && this.rewrite(a[0]),
+        style:`height:30px;padding:0 10px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:500;${st.rwBusy===a[0]?'border:1px solid #6e56cf;background:#f1edff;color:#5a45b8;':'border:1px solid #ddd6fa;background:#fff;color:#5a45b8;'}` })),
+      onInstr:(e)=>this.setState({instr:e.target.value}), instrKey:(e)=>{ if(e.key==='Enter' && this.rewrite) this.rewrite('custom'); }, runInstr:()=>this.rewrite && this.rewrite('custom'),
+      suggestSubjects:()=>this.suggestSubjects && this.suggestSubjects(), closeSubj:()=>this.setState({subjMenu:false}),
+      subjOptsV: st.subjOpts.map(t=>({text:t, len:String(t.length), onClick:()=>{ this.setState({subject:t, subjMenu:false}); this.toast('Subject updated'); }})),
+      isPreview:st.modal==='preview', isTest:st.modal==='test', closeModal:()=>this.setState({modal:null}),
+      pvTabs:[['inbox','Inbox preview'],['html','HTML'],['text','Plain text'],['checks','Checks']].map(t=>({label:t[1], style:tab(st.pvTab===t[0]), onClick:()=>{ const f = this.pvRef.current; if(f) f._h = null; this.setState({pvTab:t[0]}, ()=>setTimeout(()=>{ const g = this.pvRef.current; if(g) g._h = null; this.pushPreview(); }, 30)); if(t[0]==='checks' && this.runReview) this.runReview(); }})),
+      pvIsInbox:st.pvTab==='inbox', pvIsHtml:st.pvTab==='html', pvIsText:st.pvTab==='text', pvIsChecks:st.pvTab==='checks', pvIsCode:st.pvTab==='html'||st.pvTab==='text',
+      pvDevices:[['desktop','Desktop'],['mobile','Mobile']].map(d=>({label:d[1], style:seg(st.pvDevice===d[0]), onClick:()=>this.setState({pvDevice:d[0]})})),
+      toggleDark:()=>this.setState({dark:!st.dark}),
+      darkStyle:`height:32px;padding:0 11px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:500;${st.dark?'border:1px solid #1f2430;background:#1f2430;color:#fff;':'border:1px solid #e6e8eb;background:#fff;color:#2a2f3a;'}`,
+      inboxRowStyle:`display:flex;gap:12px;align-items:center;width:${st.pvDevice==='mobile'?375:680}px;max-width:100%;box-sizing:border-box;padding:12px 14px;border-radius:12px;background:#fff;border:1px solid #e6e8eb;`,
+      pvFrameStyle:`width:${st.pvDevice==='mobile'?375:680}px;max-width:100%;flex:1;min-height:520px;border:1px solid #e6e8eb;border-radius:12px;background:#fff;${st.dark?'filter:invert(0.9) hue-rotate(180deg);':''}`,
+      fromInitial:(st.fromName||'A').charAt(0).toUpperCase(),
+      exportMeta:`${(st.exportHtml.length/1024).toFixed(1)} KB · CSS inlined${st.exportHtml.length>102000?' · over Gmail’s 102 KB clip limit':''}`,
+      copyCode:()=>{ try{ navigator.clipboard.writeText(st.pvTab==='text'?st.exportText:st.exportHtml); }catch(e){} this.toast('Copied to clipboard'); },
+      downloadHtml:()=>{ const b = new Blob([st.exportHtml], {type:'text/html'}); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = (st.name||'email').replace(/[^\w-]+/g,'-').toLowerCase()+'.html'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000); },
+      checksSummary: !st.checks.length ? 'Running checks…' : bad ? `${bad} issue${bad>1?'s':''} to fix before sending` : issues.length ? `Good to go — ${issues.length} suggestion${issues.length>1?'s':''}` : 'Everything looks good',
+      checksV: st.checks.map(c=>({label:c.label, hint:c.hint, tag:{ok:'Pass',warn:'Review',bad:'Fix'}[c.level],
+        dot:`display:block;width:8px;height:8px;margin-top:5px;border-radius:50%;flex-shrink:0;background:${{ok:'#1f9d63',warn:'#e0a100',bad:'#d9363e'}[c.level]};`,
+        tagStyle:`flex-shrink:0;height:22px;padding:0 8px;display:flex;align-items:center;border-radius:6px;font-size:11.5px;font-weight:600;${{ok:'background:#e9f7f0;color:#167a4b;',warn:'background:#fdf4dc;color:#8a6200;',bad:'background:#fdecec;color:#b4232a;'}[c.level]}`})),
+      onTestTo:(e)=>this.setState({testTo:e.target.value, testErr:''}),
+      sendTest:()=>{ const list = st.testTo.split(',').map(x=>x.trim()).filter(Boolean); const badE = list.filter(x=>!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)); if(!list.length) return this.setState({testErr:'Add at least one address'}); if(badE.length) return this.setState({testErr:'Check: '+badE.join(', ')}); if(list.length>5) return this.setState({testErr:'Up to 5 addresses per test'}); this.setState({modal:null}); this.toast(`Test sent to ${list.length===1?list[0]:list.length+' addresses'}`); },
+      hasToast:!!st.toast,
+    };
+  }
+  async ai(prompt, fallback, ms){
+    try {
+      if(window.claude && window.claude.complete){ const r = await window.claude.complete(prompt); if(r && String(r).trim()) return String(r).trim(); }
+      else await new Promise(r=>setTimeout(r, ms||800));
+    } catch(e) {}
+    return fallback;
+  }
+  json(raw){ try{ return JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}')+1)); }catch(e){ return null; } }
+  esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  generate = async () => {
+    const st = this.state, ed = this.ed; if(!ed || st.busy || !st.prompt.trim()) return;
+    this.setState({busy:true});
+    if(st.aiMode==='email'){
+      const kind = this.kindOf(st.prompt);
+      let c = this.copyFor(kind, st.tone);
+      const raw = await this.ai(`Write an email for the brand "Acme". Brief: ${st.prompt}. Tone: ${st.tone}.\nReturn ONLY minified JSON with keys: subject (<=55 chars), preheader (<=90), heading, body (2-3 sentences), col1, col2 (short benefits), cta (2-4 words), url, code (coupon code or empty). You may use {{first_name}}. No markdown.`, null, 1100);
+      const j = raw && this.json(raw); if(j && j.subject && j.body) c = {...c, ...j};
+      const layout = {promo:'promo', winback:'promo', welcome:'welcome', event:'event', newsletter:'newsletter', generic:'letter'}[kind];
+      const E = (o)=>Object.fromEntries(Object.entries(o).map(([k,v])=>[k, k==='url'?v:this.esc(v)]));
+      ed.setComponents(this.buildEmail(layout, E(c))); ed.select(null);
+      this.setState({busy:false, subject:c.subject, preheader:c.preheader});
+      this.toast('Draft written — review it before sending', true);
+    } else {
+      const p = st.prompt.toLowerCase(), S = this.S; let html;
+      if(/testimonial|review|quote/.test(p)) html = S.quote();
+      else if(/coupon|code|discount/.test(p)) html = S.coupon('SAVE15');
+      else if(/feature|benefit/.test(p)) html = S.cols3();
+      else {
+        let t = {title:/faq|ship|return/.test(p)?'Shipping & returns':'Good to know', body:/faq|ship|return/.test(p)?'Orders ship within 2 business days. Returns are free for 30 days — no questions asked.':'Here’s one more thing worth knowing before you go.'};
+        const raw = await this.ai(`Write one short email section for "Acme". Brief: ${st.prompt}. Tone: ${st.tone}. Return ONLY minified JSON {"title":"...","body":"1-2 sentences"}.`, null, 800);
+        const j = raw && this.json(raw); if(j && j.title) t = j;
+        html = S.h2(this.esc(t.title)) + S.text(this.esc(t.body));
+      }
+      const root = ed.getWrapper().find('.email')[0];
+      if(root){
+        let at = Math.max(0, root.components().length - 1);
+        let c = ed.getSelected();
+        while(c && c.parent() && c.parent()!==root) c = c.parent();
+        if(c && c.parent()===root) at = c.index()+1;
+        const added = root.components().add(html, {at});
+        const first = Array.isArray(added)?added[0]:added; first && ed.select(first);
+      }
+      this.setState({busy:false});
+      this.toast('Section added', true);
+    }
+    setTimeout(this.runReview, 200);
+  };
+  rwLocal(s, m){
+    s = s.trim();
+    if(m==='shorter'){ const p = s.match(/[^.!?]+[.!?]+/g)||[s]; const o = p.slice(0, Math.max(1, Math.ceil(p.length/2))).join(' ').trim(); return o.length<s.length?o:s.split(' ').slice(0, Math.max(3, Math.round(s.split(' ').length*0.6))).join(' '); }
+    if(m==='friendlier') return /^(hi|hey|hello)\b/i.test(s) ? s : 'Hey there — '+s.charAt(0).toLowerCase()+s.slice(1);
+    if(m==='urgent') return /soon|today|now|last chance/i.test(s) ? s : s.replace(/[.!]?$/, s.split(' ').length<6 ? ' — today only' : '. Don’t wait — this ends soon.');
+    if(m==='punchier') return s.replace(/\b(very|really|just|actually|basically|in order to)\s+/gi,'').replace(/^We are /,'We’re ').replace(/\bWe have\b/,'We’ve');
+    if(m==='personal') return /first_name/.test(s) ? s : (s.split(' ').length<6 ? '{{first_name}}, '+s.charAt(0).toLowerCase()+s.slice(1) : 'Hi {{first_name}} — '+s.charAt(0).toLowerCase()+s.slice(1));
+    if(m==='custom') return s;
+    let o = s.replace(/\s+/g,' ').replace(/\s([,.!?])/g,'$1').replace(/\bi\b/g,'I'); return o.charAt(0).toUpperCase()+o.slice(1);
+  }
+  rewrite = async (mode) => {
+    const ed = this.ed, c = ed && ed.getSelected(), st = this.state, el = c && c.getEl(), txt = el ? (el.innerText||'').trim() : '';
+    if(!c || !txt || st.rwBusy) return;
+    if(mode==='custom' && !st.instr.trim()) return;
+    this.setState({rwBusy:mode});
+    const how = {shorter:'Make it about half as long', friendlier:'Make it warmer and friendlier', punchier:'Make it punchier and more direct', urgent:'Add urgency without being pushy', grammar:'Fix grammar and spelling only', personal:'Personalize it using the {{first_name}} merge tag naturally', custom:'Apply this instruction: '+st.instr}[mode];
+    const local = this.rwLocal(txt, mode);
+    let out = await this.ai(`You are editing one piece of email copy (a ${c.get('type')==='link'?'button label':'heading or paragraph'}). ${how}. Keep any {{merge_tags}} exactly as written.\n\nText to rewrite:\n"""\n${txt}\n"""\n\nReturn ONLY the rewritten text — plain text, no quotes, no preamble, no markdown.`, local, 650);
+    if(/i'?d be happy|could you|please (share|provide)|i don'?t see|i can'?t|as an ai|here(’|')s (the|a) rewrite/i.test(out) || out.length > Math.max(60, txt.length*3)) out = local;
+    out = out.replace(/^["“]|["”]$/g,'').replace(/\*\*/g,'').trim();
+    if(mode==='custom' && out===txt) { this.setState({rwBusy:null}); return this.toast('AI is offline in this preview — custom instructions need it'); }
+    c.components(this.esc(out));
+    this.setState({rwBusy:null, instr: mode==='custom'?'':st.instr});
+    this.toast('Rewritten', true);
+    setTimeout(this.syncSel, 60);
+  };
+  suggestSubjects = async () => {
+    if(this.state.subjBusy) return;
+    this.setState({subjMenu:true, subjBusy:true, subjOpts:[]});
+    const h = this.ed ? (this.ed.getWrapper().getEl()?.querySelector('h1')?.innerText || '') : '';
+    const base = (h || this.state.subject || 'A quick update').trim();
+    const lc = base.charAt(0).toLowerCase()+base.slice(1);
+    const fb = [`{{first_name}}, ${lc}`, `${base} — here’s what to know`, `Inside: ${lc}`, `Quick heads-up: ${lc}`];
+    const raw = await this.ai(`Write 4 distinct email subject lines (each under 50 characters) for an email whose headline is "${base}" and preview text is "${this.state.preheader}". Vary the angle: personal, curiosity, benefit, urgency. One per line, no numbering, no quotes.`, fb.join('\n'), 700);
+    const opts = raw.split('\n').map(x=>x.replace(/^\s*[-*\d.)]+\s*/,'').replace(/^["“]|["”]$/g,'').trim()).filter(Boolean).slice(0,4);
+    this.setState({subjBusy:false, subjOpts: opts.length?opts:fb});
+  };
+  exportEmail(){
+    const ed = this.ed; if(!ed) return {html:'', text:''};
+    const doc = new DOMParser().parseFromString(ed.getHtml(), 'text/html');
+    const media = [];
+    ed.Css.getAll().forEach(r=>{
+      const css = r.toCSS ? r.toCSS() : ''; if(!css) return;
+      if(r.get('mediaText') || r.get('state') || r.get('atRuleType')) return void media.push(css);
+      const sel = r.selectorsToString ? r.selectorsToString() : ''; const style = r.getStyle ? r.getStyle() : {};
+      const decl = Object.entries(style).map(([k,v])=>`${k}:${v}`).join(';'); if(!sel || !decl) return;
+      try { doc.querySelectorAll(sel).forEach(el=>{ const cur = el.getAttribute('style')||''; el.setAttribute('style', (cur && !cur.trim().endsWith(';') ? cur+';' : cur) + decl); }); } catch(e){ media.push(css); }
+    });
+    doc.querySelectorAll('[id]').forEach(el=>{ if(/^i[a-z0-9]{2,}(-\d+)?$/i.test(el.id)) el.removeAttribute('id'); });
+    const st = this.state, e = (s)=>this.esc(s);
+    const html = `<!DOCTYPE html>\n<html lang="en" xmlns="http://www.w3.org/1999/xhtml">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<meta name="x-apple-disable-message-reformatting">\n<meta name="color-scheme" content="light dark">\n<meta name="supported-color-schemes" content="light dark">\n<title>${e(st.subject)}</title>\n<style>\n  body{margin:0;padding:0;background:#eceef1;-webkit-text-size-adjust:100%;}\n  img{border:0;outline:none;text-decoration:none;}\n  @media (max-width:620px){ .email{margin:0 !important;border-radius:0 !important;} .col{display:block !important;width:100% !important;padding:8px 24px !important;} }\n  ${media.join('\n  ')}\n</style>\n</head>\n<body style="margin:0;padding:0;background:#eceef1;">\n<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${e(st.preheader)}&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>\n${doc.body.innerHTML.trim()}\n</body>\n</html>`;
+    const lines = [];
+    const walk = (n)=>{ n.childNodes.forEach(k=>{
+      if(k.nodeType===3) return;
+      const tg = k.tagName;
+      if(/^H[1-3]$/.test(tg)) lines.push('', (k.innerText||k.textContent).trim().toUpperCase(), '');
+      else if(tg==='P' || (tg==='DIV' && !k.querySelector('div,p,h1,h2,h3,table,a,img'))){ const t = (k.textContent||'').trim(); if(t) lines.push(t, ''); }
+      else if(tg==='A' && !k.closest('p')) lines.push(`${k.textContent.trim()}: ${k.getAttribute('href')}`, '');
+      else if(tg==='IMG') { const a = k.getAttribute('alt'); if(a) lines.push(`[${a}]`); }
+      else walk(k);
+    }); };
+    walk(doc.body);
+    const text = (st.subject+'\n'+'='.repeat(Math.min(60, st.subject.length))+'\n'+lines.join('\n')).replace(/\n{3,}/g,'\n\n').trim();
+    return {html, text};
+  }
+  openPreview = (tab) => {
+    const {html, text} = this.exportEmail();
+    this.setState({modal:'preview', pvTab:tab||'inbox', exportHtml:html, exportText:text}, ()=>setTimeout(this.pushPreview, 30));
+    this.runReview();
+  };
+  runReview = () => {
+    const ed = this.ed; if(!ed) return;
+    const doc = new DOMParser().parseFromString(ed.getHtml(), 'text/html');
+    const text = (doc.body.textContent||'').replace(/\s+/g,' ').trim(); const st = this.state, C = [];
+    const P = (level, label, hint)=>C.push({level, label, hint});
+    const sl = st.subject.trim().length;
+    if(!sl) P('bad','Subject line is empty','Every email needs a subject.'); else if(sl>60) P('warn',`Subject is ${sl} characters`,'Mobile inboxes cut off around 40–60 characters.'); else P('ok',`Subject length is good (${sl} chars)`,'Fits on mobile without being cut off.');
+    st.preheader.trim() ? P('ok','Preview text is set','Shown next to the subject in most inboxes.') : P('warn','No preview text','Inboxes will show the first line of the email instead.');
+    if(!st.fromName.trim()) P('bad','Sender name is empty','Add a From name people will recognize.');
+    const imgs = [...doc.querySelectorAll('img')], noAlt = imgs.filter(i=>!(i.getAttribute('alt')||'').trim()).length;
+    noAlt ? P('warn',`${noAlt} image${noAlt>1?'s are':' is'} missing alt text`,'Select the image → Settings → Alt. Many clients block images by default.') : P('ok', imgs.length?'All images have alt text':'No images', 'Readable even with images turned off.');
+    const holders = imgs.filter(i=>/placehold\.co/.test(i.getAttribute('src')||'')).length;
+    if(holders) P('warn',`${holders} placeholder image${holders>1?'s':''}`,'Double-click an image to upload your own before sending.');
+    const links = [...doc.querySelectorAll('a')], dead = links.filter(a=>{ const h = (a.getAttribute('href')||'').trim(); return !h || h==='#' || h==='https://' || h==='http://'; }).length;
+    dead ? P('bad',`${dead} link${dead>1?'s have':' has'} no destination`,'Select the link → Settings → Href.') : P('ok',`All ${links.length} links have destinations`,'Tracking will be added at send time.');
+    /unsubscribe/i.test(text) ? P('ok','Unsubscribe link included','Required by CAN-SPAM, GDPR and Gmail/Yahoo sender rules.') : P('bad','Missing unsubscribe link','Add the Footer block — it’s required to send.');
+    /\d+\s+\w+.*(st|street|ave|road|rd|blvd)\b/i.test(text) ? P('ok','Postal address included','Required by CAN-SPAM.') : P('warn','No postal address found','CAN-SPAM requires a physical mailing address.');
+    const spam = ['free!!!','act now','100% free','guaranteed','no cost','winner','cash bonus','click here','risk-free','!!!'].filter(w=>text.toLowerCase().includes(w));
+    spam.length ? P('warn','Possible spam triggers: '+spam.join(', '),'Rephrase to stay out of the promotions/spam folder.') : P('ok','No common spam-trigger phrases','Copy reads naturally.');
+    const caps = (text.match(/\b[A-Z]{4,}\b/g)||[]).length; if(caps>2) P('warn',`${caps} words in ALL CAPS`,'Heavy caps can trigger spam filters.');
+    const words = text.split(' ').length; (imgs.length && words/imgs.length<20) ? P('warn','Image-heavy email','Add more text so filters can read the message.') : P('ok','Healthy text-to-image balance',`${words} words, ${imgs.length} images.`);
+    const tags = (text.match(/\{\{\s*([\w.]+)\s*\}\}/g)||[]).map(t=>t.replace(/[{}\s]/g,'')), known = ['first_name','last_name','company','unsubscribe_url','preferences_url'];
+    const unk = [...new Set(tags.filter(t=>!known.includes(t)))]; unk.length ? P('bad','Unknown merge tags: '+unk.join(', '),'These won’t be filled in for contacts.') : tags.length && P('ok','Merge tags are valid',[...new Set(tags)].join(', '));
+    this.setState({checks:C});
+  };
+}
+</script>
+</body>
+</html>

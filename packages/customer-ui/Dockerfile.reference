@@ -1,0 +1,7 @@
+FROM nginx:stable-alpine
+# Isolated comparison-only export; never the production customer app.
+COPY ["Setup clarification needed (2).zip", "/tmp/customer-design.zip"]
+RUN unzip -q /tmp/customer-design.zip -d /usr/share/nginx/html \
+ && cp "/usr/share/nginx/html/Customer App.dc.html" /usr/share/nginx/html/index.html \
+ && rm /tmp/customer-design.zip
+EXPOSE 80

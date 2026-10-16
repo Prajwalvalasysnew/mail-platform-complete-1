@@ -7,10 +7,15 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace=@platform/shared && npm run build --workspace=@platform/api && npm run build --workspace=@platform/worker && npm run build --workspace=@platform/tracker && npm run build --workspace=@platform/smtp-gateway && npm run build --workspace=@platform/sdk",
+    "build": "npm run build --workspace=@platform/shared && npm run build --workspace=@platform/api && npm run build --workspace=@platform/worker && npm run build --workspace=@platform/tracker && npm run build --workspace=@platform/smtp-gateway && npm run build --workspace=@platform/sdk && npm run build --workspace=@platform/customer-ui",
     "dev:api": "npm run dev --workspace=@platform/api",
     "dev:admin": "npm run dev --workspace=@platform/admin-console",
     "build:admin": "npm run build --workspace=@platform/admin-console",
+    "dev:customer": "npm run dev --workspace=@platform/customer-ui",
+    "build:customer": "npm run build --workspace=@platform/customer-ui",
+    "dev:landing": "npm run dev --workspace=@platform/landing-page",
+    "build:landing": "npm run build --workspace=@platform/landing-page",
+    "start:landing": "npm run start --workspace=@platform/landing-page",
     "dev:worker": "npm run dev --workspace=@platform/worker",
     "dev:tracker": "npm run dev --workspace=@platform/tracker",
     "migrate": "tsx packages/shared/src/bin/migrate.ts",
