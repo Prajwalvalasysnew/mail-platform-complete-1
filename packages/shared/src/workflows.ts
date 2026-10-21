@@ -52,6 +52,9 @@ export interface WorkflowSummary {
   trigger_event_type: string | null;
   created_at: Date;
   updated_at: Date;
+  /** Builder trigger key and node count, so lists can label drafts that have no published definition yet. */
+  builder_trigger?: string | null;
+  builder_steps?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +107,11 @@ export async function listWorkflows(
     if (opts.status) q = q.where('status', '=', opts.status as any);
 
     const [rows, totalRow] = await Promise.all([
-      q.select([...WORKFLOW_COLS]).orderBy('updated_at', 'desc').limit(limit).offset(offset).execute(),
+      q.select([
+        ...WORKFLOW_COLS,
+        sql<string | null>`builder_document->>'tkey'`.as('builder_trigger'),
+        sql<number | null>`CASE WHEN jsonb_typeof(builder_document->'graph'->'nodes') = 'array' THEN jsonb_array_length(builder_document->'graph'->'nodes') END`.as('builder_steps'),
+      ]).orderBy('updated_at', 'desc').limit(limit).offset(offset).execute(),
       q.select(sql<number>`count(*)`.as('c')).executeTakeFirst(),
     ]);
 

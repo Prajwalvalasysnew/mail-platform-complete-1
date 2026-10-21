@@ -2,11 +2,11 @@
   {
     "component": "Customer",
     "reference": "Customer App.dc.html",
-    "sha256": "9f8a42e32e9f865b729f4ec44f0750b4b76d2596225cd2afb09734f410b7a386",
-    "elements": 2413,
-    "conditions": 200,
-    "loops": 178,
-    "bindings": 1354
+    "sha256": "012fbfeffbbcdd8ebeaa031882bd807bd90b812e7e79f22fa9eb5143a249d1b6",
+    "elements": 2448,
+    "conditions": 210,
+    "loops": 180,
+    "bindings": 1374
   },
   {
     "component": "Email",

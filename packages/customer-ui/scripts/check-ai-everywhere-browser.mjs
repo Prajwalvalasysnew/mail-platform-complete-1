@@ -37,7 +37,7 @@ const llm=createServer((req,res)=>{const chunks=[];req.on('data',c=>chunks.push(
 await new Promise(r=>llm.listen(3102,'127.0.0.1',r));
 
 const email=`ai-everywhere-${randomUUID()}@example.test`;
-let customer,user,api,worker,browser,failed=false;const ui=Fastify();
+let customer,user,api,worker,browser,failed=false,logs='';const ui=Fastify();
 try{
  customer=await db.insertInto('customers').values({email,name:'Synthetic AI everywhere check',email_verified_at:new Date()}).returning('id').executeTakeFirstOrThrow();
  user=await db.insertInto('users').values({email,name:'Synthetic AI everywhere check'}).returning('id').executeTakeFirstOrThrow();
@@ -46,7 +46,7 @@ try{
  await db.insertInto('sending_domains').values([1,2,3].map(n=>({customer_id:customer.id,domain:`d${n}-${customer.id}.example.test`,dkim_selector:'s1',dkim_public_key:'p',dkim_private_key:'k',verification_token:randomUUID(),...(n===1?{verified_at:new Date()}:{})}))).execute();
  const session=await createUserSession(user.id,{currentCustomerId:customer.id});
  const env={...process.env,QUEUE_PREFIX:prefix,API_PORT:'3011',AI_ENABLED:'true',AI_BASE_URL:'http://127.0.0.1:3102',AI_MODEL:'fixture-model',AI_ALLOW_PRIVATE_HTTP:'true',AI_ENABLED_TENANTS:customer.id,AI_HEALTH_PORT:'19105'};
- let logs='';const keep=d=>{logs=(logs+d).slice(-6000);};
+ const keep=d=>{logs=(logs+d).slice(-6000);};
  api=spawn(process.execPath,['packages/api/dist/bootstrap.js'],{env,stdio:['ignore','pipe','pipe']});api.stdout.on('data',keep);api.stderr.on('data',keep);
  worker=spawn(process.execPath,['packages/worker/dist/ai-worker.js'],{env,stdio:['ignore','pipe','pipe']});worker.stdout.on('data',keep);worker.stderr.on('data',keep);
  for(let i=0;;i++){try{if((await fetch('http://127.0.0.1:3011/health')).ok)break;}catch{}if(i>60)throw new Error(`API did not start\n${logs}`);await new Promise(r=>setTimeout(r,500));}
@@ -93,7 +93,7 @@ try{
  await page.screenshot({path:`${out}/3-drawer-workflow.png`});
  if(errors.length)throw new Error(`Page errors: ${errors.join(' | ')}`);
  console.log('AI everywhere browser acceptance passed. Screenshots in',out);
-}catch(error){failed=true;console.error('FAILED:',error);}
+}catch(error){failed=true;console.error('FAILED:',error);console.error('API and AI worker log tail:\n'+logs.slice(-3000));await browser?.contexts()[0]?.pages()[0]?.screenshot({path:`${out}/failure.png`}).catch(()=>{});}
 finally{
  await browser?.close();for(const p of [api,worker])p?.kill();await ui.close();llm.close();
  if(customer){await db.deleteFrom('customers').where('id','=',customer.id).execute();await db.deleteFrom('users').where('id','=',user.id).execute();}

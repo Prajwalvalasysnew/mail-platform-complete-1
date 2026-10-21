@@ -17,7 +17,8 @@ export function prepareEmail(base: DesignState) {
   let initial: any = null;
   let dirty = false;
   const disposeAi=installAiWriting(c,()=>{dirty=true;c.setState({});});
-  const name = store.getState().session.identity?.memberships.find(m => m.customer_id === store.getState().session.identity?.current_customer_id)?.org_name || '';
+  const membership = store.getState().session.identity?.memberships.find(m => m.customer_id === store.getState().session.identity?.current_customer_id);
+  const name = membership?.org_name || membership?.customer_name || '';
   c.props.textOverrides={'No saved versions yet. Press Save or ⌘S to keep a restore point. Edits autosave as you work.':'No saved versions yet. Press Save or ⌘S to save this template to your workspace.'};
   c.state = { ...c.state, name:'Untitled template', fromName:name, subject:'', preheader:'', testTo:store.getState().session.identity?.user.email || '', versions:[], savedAt:null, loadNote:'Loading template…' };
   async function versions() {
@@ -106,6 +107,8 @@ export function prepareEmail(base: DesignState) {
   c.renderVals=()=>{
     const values=originalVals();
     values.save=c.saveVersion;
+    // GrapesJS keeps style controls mounted with no target; hide them so stray swatches don't show.
+    if(values.noSel)values.pStyles='display:none;';
     c.bindAiValues(values);
     values.statusText=c.state.loading?'Loading…':c.state.saving?'Saving…':dirty?'Unsaved changes':c.state.savedAt?'Saved '+c.ago(c.state.savedAt):'Unsaved draft';
     for(const field of ['Name','From','Subject','Preheader']) {

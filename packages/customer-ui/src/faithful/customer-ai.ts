@@ -60,5 +60,8 @@ export function installCustomerAi(base:DesignState){
   return v;
  };
  const unsubscribe=store.subscribe(()=>{if(!alive()){++epoch;active?.detach();active=undefined;if(!disposed)c.setState({aiMsgs:[],aiBusy:false,aiInput:''});}});
- return {dispose:()=>{disposed=true;++epoch;active?.detach();unsubscribe();}};
+ // Escape closes the drawer unless a dialog or menu above it handles the key first.
+ const escape=(event:KeyboardEvent)=>{if(event.key==='Escape' && !event.defaultPrevented && c.state.aiOpen && !document.querySelector('[role=dialog][aria-modal=true]'))c.setState({aiOpen:false});};
+ window.addEventListener('keydown',escape);
+ return {dispose:()=>{disposed=true;++epoch;active?.detach();unsubscribe();window.removeEventListener('keydown',escape);}};
 }
