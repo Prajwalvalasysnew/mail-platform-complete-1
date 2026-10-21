@@ -20,3 +20,5 @@ playwright-report
 **/playwright-report
 *.log
 .DS_Store
+
+.cache

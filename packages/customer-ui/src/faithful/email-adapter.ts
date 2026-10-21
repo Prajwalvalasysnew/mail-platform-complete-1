@@ -1,6 +1,7 @@
 import type { DesignState } from './runtime';
 import { errorMessage } from './Login';
 import { getResource, performAction, store } from './store';
+import {installAiWriting} from './AiWriting';
 
 type Controller = DesignState & Record<string, any>;
 const EMPTY_EMAIL = '<div class="email" style="max-width:600px;margin:24px auto;background:#fff;min-height:400px;border-radius:12px;padding:32px"><p style="font-family:Arial,sans-serif;color:#444">Add your email content here.</p></div>';
@@ -15,6 +16,7 @@ export function prepareEmail(base: DesignState) {
   let revision: number | undefined;
   let initial: any = null;
   let dirty = false;
+  const disposeAi=installAiWriting(c,()=>{dirty=true;c.setState({});});
   const name = store.getState().session.identity?.memberships.find(m => m.customer_id === store.getState().session.identity?.current_customer_id)?.org_name || '';
   c.props.textOverrides={'No saved versions yet. Press Save or ⌘S to keep a restore point. Edits autosave as you work.':'No saved versions yet. Press Save or ⌘S to save this template to your workspace.'};
   c.state = { ...c.state, name:'Untitled template', fromName:name, subject:'', preheader:'', testTo:store.getState().session.identity?.user.email || '', versions:[], savedAt:null, loadNote:'Loading template…' };
@@ -56,6 +58,7 @@ export function prepareEmail(base: DesignState) {
         const grapes=(window as any).grapesjs;
         if(!grapes)throw new Error('The email editor could not be loaded. Reload to try again.');
         c.initEditor(grapes);
+        void c.restoreAiWriting(new URLSearchParams(location.search).get('ai_chat') || initial?.editor_document?.ai_chat_id,initial?.editor_document?.ai_design);
       } catch(error) { if(!disposed)c.setState({loading:true,loadNote:errorMessage(error)}); }
     })();
   };
@@ -68,7 +71,7 @@ export function prepareEmail(base: DesignState) {
     if(!c.state.name.trim() || !c.state.subject.trim()){c.toast('Add a template name and subject before saving.');return Promise.resolve();}
     const document=c.exportEmail();
     const payload={name:c.state.name.trim(),subject:c.state.subject,html_body:document.html,text_body:document.text,
-      editor_document:{schemaVersion:1,project:c.ed.getProjectData(),preheader:c.state.preheader,fromName:c.state.fromName},
+      editor_document:{schemaVersion:1,ai_chat_id:c.state.aiMessages?.length?c.state.aiChatId:undefined,ai_design:c.state.aiDesign,project:c.ed.getProjectData(),preheader:c.state.preheader,fromName:c.state.fromName},
       ...(revision!=null?{expected_revision:revision}:{}),
     };
     const savedState={name:c.state.name,subject:c.state.subject,preheader:c.state.preheader,fromName:c.state.fromName,project:JSON.stringify(payload.editor_document.project)};
@@ -100,11 +103,10 @@ export function prepareEmail(base: DesignState) {
       c.toast('Version restored to the editor. Save to create a new version.');
     }catch(error){if(!disposed)c.toast(errorMessage(error));}
   })();
-  c.generate=()=>c.toast('AI writing is not configured for this workspace.');
-  c.rewrite=c.suggestSubjects=c.generate;
   c.renderVals=()=>{
     const values=originalVals();
     values.save=c.saveVersion;
+    c.bindAiValues(values);
     values.statusText=c.state.loading?'Loading…':c.state.saving?'Saving…':dirty?'Unsaved changes':c.state.savedAt?'Saved '+c.ago(c.state.savedAt):'Unsaved draft';
     for(const field of ['Name','From','Subject','Preheader']) {
       const key=`on${field}`;const previous=values[key];
@@ -128,5 +130,5 @@ export function prepareEmail(base: DesignState) {
     return values;
   };
   const beforeUnload=(event:BeforeUnloadEvent)=>{if(dirty || saving){event.preventDefault();event.returnValue='';}};
-  return ()=>{disposed=true;window.removeEventListener('beforeunload',beforeUnload);};
+  return ()=>{disposed=true;disposeAi();window.removeEventListener('beforeunload',beforeUnload);};
 }

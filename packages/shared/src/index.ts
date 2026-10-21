@@ -100,3 +100,15 @@ export * from './secure-messages.js';
 export * from './regulated-rights.js';
 export * from './regulated-archive.js';
 export * from './oidc-policy.js';
+export * from './ai/config.js';
+export * from './ai/contracts.js';
+export * from './ai/provider.js';
+export * from './ai/runs.js';
+export * from './ai/queue.js';
+
+export * from './ai/chats.js';
+
+export * from './ai/tool-contracts.js';
+export * from './ai/workspace-tools.js';
+export * from './ai/agent.js';
+export * from './ai/meter.js';

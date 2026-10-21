@@ -29,6 +29,22 @@ customerUi:
       cpu: 500m
       memory: 256Mi
 
+ai:
+  enabled: false
+  baseUrl: ""
+  model: gpt-oss:120b
+  allowCloud: false
+  enabledTenants: ""
+  concurrency: 1
+  retentionHours: 24
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
 api:
   replicaCount: 3
   image:

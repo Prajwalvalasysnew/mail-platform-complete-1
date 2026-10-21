@@ -6,7 +6,7 @@ import { DesignPage, FrontendErrorBoundary } from './DesignPage';
 import { Login, PasswordRecovery, VerifyEmail, AcceptInvitation } from './Login';
 import { prepareCustomer } from './customer-adapter';
 import { prepareEmail } from './email-adapter';
-import {FeatureUnavailable} from './FeatureUnavailable';
+import {prepareAgent} from './agent-adapter';
 import {prepareWorkflow} from './workflow-adapter';
 import {WorkspaceHandoff} from './WorkspaceHandoff';
 
@@ -23,6 +23,7 @@ const Email = lazy(async()=>{
 });
 const Workflow = lazy(()=>import('./generated/Workflow').then(module=>({default:()=> <DesignPage module={module} />})));
 const LiveWorkflow = lazy(()=>import('./generated/Workflow').then(module=>({default:()=> <DesignPage module={module} prepare={prepareWorkflow} />})));
+const LiveAgent = lazy(()=>import('./generated/Agent').then(module=>({default:()=> <DesignPage module={module} prepare={prepareAgent} />})));
 const Agent = lazy(()=>import('./generated/Agent').then(module=>({default:()=> <DesignPage module={module} />})));
 const ReferenceCustomer = lazy(()=>import('./generated/Customer').then(module=>({default:()=> <DesignPage module={module} />})));
 
@@ -54,7 +55,7 @@ function ApplicationRoutes() {
     <Route path="/accept-invite" element={<AcceptInvitation />} />
     <Route path="/email-builder" element={gated(<Email />)} />
     <Route path="/workflow-builder" element={gated(<LiveWorkflow />)} />
-    <Route path="/ai-agent" element={gated(<FeatureUnavailable name="AI agent" />)} />
+    <Route path="/ai-agent" element={gated(<LiveAgent />)} />
     {import.meta.env.DEV && <><Route path="/__design/customer" element={<ReferenceCustomer />} /><Route path="/__design/email" element={<Email />} /><Route path="/__design/workflow" element={<Workflow />} /><Route path="/__design/agent" element={<Agent />} /></>}
     <Route path="*" element={gated(<Customer />)} />
   </Routes></Suspense>;

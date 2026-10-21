@@ -15,7 +15,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/bootstrap.ts",
-    "start": "node dist/bootstrap.js"
+    "start": "node dist/bootstrap.js",
+    "start:ai": "node dist/ai-worker.js",
+    "dev:ai": "tsx watch src/ai-worker.ts"
   },
   "dependencies": {
     "@platform/shared": "*",

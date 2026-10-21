@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { sql } from 'kysely';
 import { removeSuppression, getBodyStore, clickhouseEnabled, purgeQueuedMessageData, assertNoActiveHold, LegalHoldError, assertNoRegulatoryLock, RegulatoryRetentionError, recordConsentGrant, confirmDoubleOptIn, getConsentProof, withdrawConsent, ConsentEvidenceError, placeRegulatoryLock, releaseRegulatoryLock, listRegulatoryLocks, recipientLockScope, placeLegalHold, releaseLegalHold, listLegalHolds, recipientHoldScope, eraseWorkflowDataForRecipient, erasedRecipientPseudonym, pseudonymizeErasedRecipient, getConsentHistory, createPrivacyCase, verifyPrivacyCaseIdentity, transitionPrivacyCase, extendPrivacyCase, attachPrivacyCaseArtifact, recordPrivacyCaseCommunication, listPrivacyCases, getPrivacyCaseWithEvents, PrivacyCaseError, submitPrivacyCaseAppeal, decidePrivacyCaseAppeal, listPrivacyCaseAppeals, recordSaleShareOptOut, listSaleShareOptOuts, limitSensitivePiUse, releaseSensitivePiLimit, listSensitivePiLimits, restrictProcessing, releaseProcessingRestriction, listProcessingRestrictions, rectifyRecipient, recordObjection, processingRecord } from '@platform/shared';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
@@ -48,8 +49,21 @@ export const privacyRoutes: FastifyPluginAsync = async (app) => {
       // cannot delete a record it is required to retain. Checked in the same
       // transaction, before any row is touched.
       await assertNoRegulatoryLock(auth.customer_id, recipient, trx);
+      // AI writing has no recipient index. Conservatively erase matching free-text
+      // snapshots/results and fence any in-flight attempt in the same transaction.
+      await trx.updateTable('ai_runs').set({status:'cancelled',input:null,result:null,warnings:sql<unknown>`'[]'::jsonb`,lease_until:null,error:null,updated_at:new Date()})
+        .where('customer_id','=',auth.customer_id)
+        .where(sql<boolean>`strpos(lower(coalesce(input::text,'') || coalesce(result::text,'')), ${recipient}) > 0`).execute();
 
-      // Create subquery to select message_ids for the recipient
+      // Removing a matching conversation also removes its checkpoints and fences queued/running chat work.
+    await trx.deleteFrom('ai_chats').where('customer_id','=',auth.customer_id).where(sql<boolean>`(
+      strpos(lower(ai_chats.title || ai_chats.settings::text),${recipient})>0 or
+      exists(select 1 from ai_chat_messages m where m.customer_id=ai_chats.customer_id and m.chat_id=ai_chats.id and strpos(lower(m.text || coalesce(m.result::text,'')),${recipient})>0) or
+      exists(select 1 from ai_run_steps s join ai_runs r on r.id=s.run_id where s.customer_id=ai_chats.customer_id and r.customer_id=ai_chats.customer_id and r.chat_id=ai_chats.id and strpos(lower(s.arguments::text || s.observation::text),${recipient})>0) or
+      exists(select 1 from ai_chat_checkpoints p where p.customer_id=ai_chats.customer_id and p.chat_id=ai_chats.id and strpos(lower(p.summary),${recipient})>0)
+    )`).execute();
+
+    // Create subquery to select message_ids for the recipient
       const subquery = trx
         .selectFrom('messages')
         .select('message_id')

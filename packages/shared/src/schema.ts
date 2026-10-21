@@ -235,6 +235,11 @@ export interface IpPoolsTable {
 // Root DB schema (for Kysely)
 // =====================================================
 export interface Database {
+  ai_runs: AiRunsTable;
+  ai_run_steps: AiRunStepsTable;
+  ai_chats: AiChatsTable;
+  ai_chat_messages: AiChatMessagesTable;
+  ai_chat_checkpoints: AiChatCheckpointsTable;
   audience_collections:AudienceCollectionsTable;
   customer_campaigns:CustomerCampaignsTable;
   audience_collection_members:{customer_id:string;collection_id:string;contact_id:string};
@@ -340,6 +345,16 @@ export interface Database {
   workflow_step_stats: WorkflowStepStatsTable;
   dmarc_reports: DmarcReportsTable;
   dmarc_report_records: DmarcReportRecordsTable;
+}
+
+export interface AiRunsTable {
+ chat_id?: string | null; chat_seq?: number | null;
+ id:string;customer_id:string;user_id:string;session_id:string|null;request_id:string;request_hash:string;
+ input:unknown;result:unknown;warnings:Generated<unknown>;
+ status:Generated<'queued'|'running'|'completed'|'failed'|'cancelled'|'timed_out'>;
+ attempt:Generated<number>;lease_until:Date|null;deadline:Date;expires_at:Date;model:string;error:string|null;
+ prompt_tokens:number|null;output_tokens:number|null;
+ created_at:ColumnType<Date,Date|undefined,never>;updated_at:ColumnType<Date,Date|undefined,Date>;
 }
 
 export interface AudienceCollectionsTable {
@@ -1583,4 +1598,21 @@ export interface WorkflowStepStatsTable {
   completed: Generated<number>;
   failed: Generated<number>;
   updated_at: Generated<Timestamp>;
+}
+
+export interface AiChatsTable {
+ id:string;customer_id:string;user_id:string;title:string;next_seq:Generated<number>;settings:unknown;
+ created_at:ColumnType<Date,Date|string|undefined,never>;updated_at:ColumnType<Date,Date|string|undefined,Date|string>;expires_at:ColumnType<Date,Date|string,Date|string>;
+}
+export interface AiChatMessagesTable {
+ id:string;customer_id:string;chat_id:string;run_id:string|null;seq:number;role:'user'|'assistant';text:Generated<string>;status:Generated<string>;
+ result:unknown;error:string|null;template_id:string|null;decision:'applied'|'skipped'|null;created_at:ColumnType<Date,Date|string|undefined,never>;
+}
+export interface AiChatCheckpointsTable {
+ id:string;customer_id:string;chat_id:string;through_seq:number;summary:string;run_id:string|null;attempt:number;created_at:ColumnType<Date,Date|string|undefined,never>;
+}
+
+export interface AiRunStepsTable {
+ id:string;customer_id:string;run_id:string;attempt:number;seq:number;name:string;status:string;arguments:unknown;observation:unknown;
+ created_at:ColumnType<Date,Date|string|undefined,never>;
 }

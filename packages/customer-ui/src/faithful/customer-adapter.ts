@@ -12,6 +12,7 @@ import {installCustomerAudiences} from './customer-audiences';
 import {installCustomerDeliverability} from './customer-deliverability';
 import {installCustomerAutomations} from './customer-automations';
 import {installCustomerCampaigns} from './customer-campaigns';
+import {installCustomerAi} from './customer-ai';
 
 type Controller = DesignState & Record<string,any>;
 const viewFromPath: Record<string,string> = { '/': 'home', '/api-keys':'apikeys', '/event-logs':'logs', '/domains':'settings', '/team':'settings', '/billing':'settings' };
@@ -164,7 +165,6 @@ export function prepareCustomer(base: DesignState, registration = false) {
   c.dvRecheck = ()=>c.toast('DNS checks require a configured sending domain.');
   c.dvRunTest = ()=>c.toast('Inbox placement testing is not configured for this workspace.');
   const unavailable = ()=>c.toast('This service is not available for this workspace yet.');
-  c.aiAsk=()=>c.toast('AI assistance is not connected to a workspace service yet.');
   c.renderVals = ()=>{
     const values=originalVals();
     values.showAiInsight=false;
@@ -253,5 +253,6 @@ export function prepareCustomer(base: DesignState, registration = false) {
     return values;
   };
   if(!registration){data=installCustomerData(c);settings=installCustomerSettings(c);logs=installCustomerLogs(c);contacts=installCustomerContacts(c);audiences=installCustomerAudiences(c);deliverability=installCustomerDeliverability(c);automations=installCustomerAutomations(c);campaigns=installCustomerCampaigns(c);}
-  return ()=>{disposed=true;data?.dispose();settings?.dispose();logs?.dispose();contacts?.dispose();audiences?.dispose();deliverability?.dispose();automations?.dispose();campaigns?.dispose();clearInterval(poll);window.removeEventListener('popstate',pop);window.removeEventListener('focus',resume);window.removeEventListener('online',reconnected);document.removeEventListener('visibilitychange',resume);};
+  const ai=registration?undefined:installCustomerAi(c);
+  return ()=>{disposed=true;ai?.dispose();data?.dispose();settings?.dispose();logs?.dispose();contacts?.dispose();audiences?.dispose();deliverability?.dispose();automations?.dispose();campaigns?.dispose();clearInterval(poll);window.removeEventListener('popstate',pop);window.removeEventListener('focus',resume);window.removeEventListener('online',reconnected);document.removeEventListener('visibilitychange',resume);};
 }

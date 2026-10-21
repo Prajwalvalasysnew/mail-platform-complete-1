@@ -1,5 +1,6 @@
 import { Queue, type QueueOptions, type BackoffStrategy } from 'bullmq';
 import { redisOptions } from './redis.js';
+import { aiQueue } from './ai/queue.js';
 
 // Allow tests to use an isolated namespace so Docker worker jobs don't
 // interfere with in-process test workers.  Set QUEUE_PREFIX=test_ in tests.
@@ -279,7 +280,7 @@ export async function purgeAllDeadLetters(): Promise<number> {
   }
 }
 
-export const allQueues = [sendQueue, eventsQueue, webhooksQueue, deadLetterQueue, exportsQueue, workflowQueue];
+export const allQueues = [sendQueue, eventsQueue, webhooksQueue, deadLetterQueue, exportsQueue, workflowQueue, aiQueue];
 
 const PRIVACY_REMOVABLE_JOB_STATES = [
   'waiting', 'delayed', 'failed', 'paused', 'completed', 'prioritized', 'waiting-children',
