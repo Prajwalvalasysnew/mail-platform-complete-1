@@ -134,3 +134,39 @@ describe('E2E console workflow builder', () => {
     expect(published.json().builder_revision).toBe(revision + 2);
   });
 });
+
+describe('E2E console campaigns', () => {
+  it('drafts, edits with revision checks, validates launch and cancels', async () => {
+    expect((await send('POST', '/campaigns', { name: '' })).statusCode).toBe(400);
+    expect((await send('POST', '/campaigns', { name: 'Ghost audience', audience_id: randomUUID() })).json().error).toBe('audience_not_found');
+    const created = await send('POST', '/campaigns', { name: 'Spring update', campaign_type: 'ab_subject' });
+    expect(created.statusCode).toBe(201);
+    const campaign = created.json();
+    expect(campaign).toMatchObject({ status: 'draft', revision: 0 });
+
+    const listed = (await get('/campaigns')).json().campaigns.find((c: any) => c.id === campaign.id);
+    expect(listed.stats).toEqual({ total: 0, delivered: 0, opened: 0, clicked: 0, pending: 0 });
+
+    const draft = { name: 'Spring update', audience_id: null, template_id: null, from_email: 'not-an-email', from_name: 'Acme', reply_to: '', subject: 'Hello', subject_b: 'Hello' };
+    const saved = await send('PUT', `/campaigns/${campaign.id}`, { ...draft, expected_revision: 0 });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().revision).toBe(1);
+    expect((await send('PUT', `/campaigns/${campaign.id}`, { ...draft, expected_revision: 0 })).json().error).toBe('stale_revision');
+    expect((await send('PUT', `/campaigns/${campaign.id}`, { ...draft, template_id: randomUUID(), expected_revision: 1 })).statusCode).toBe(409);
+    expect((await send('PUT', `/campaigns/${campaign.id}`, { ...draft, subject: 'line\nbreak', expected_revision: 1 })).statusCode).toBe(400);
+
+    expect((await send('POST', `/campaigns/${campaign.id}/launch`, { expected_revision: 1 })).statusCode).toBe(400);
+    expect((await send('POST', `/campaigns/${campaign.id}/launch`, { expected_revision: 0, ad_identified: true })).json().error).toBe('stale_revision');
+    expect((await send('POST', `/campaigns/${campaign.id}/launch`, { expected_revision: 1, ad_identified: true })).json().error).toBe('incomplete_campaign');
+    expect((await send('POST', `/campaigns/${randomUUID()}/launch`, { expected_revision: 0, ad_identified: true })).statusCode).toBe(404);
+
+    expect((await send('POST', `/campaigns/${campaign.id}/reconcile`, {})).json()).toMatchObject({ status: 'draft', reconciled: false });
+    expect((await send('POST', `/campaigns/${randomUUID()}/reconcile`, {})).statusCode).toBe(404);
+    expect((await send('POST', `/campaigns/${campaign.id}/cancel-scheduled`, { expected_revision: 1 })).json().error).toBe('not_cancellable');
+    expect((await send('POST', `/campaigns/${randomUUID()}/cancel-scheduled`, { expected_revision: 0 })).statusCode).toBe(404);
+
+    expect((await send('POST', `/campaigns/${campaign.id}/cancel`, { expected_revision: 0 })).json().error).toBe('invalid_state');
+    expect((await send('POST', `/campaigns/${campaign.id}/cancel`, { expected_revision: 1 })).json().status).toBe('cancelled');
+    expect((await send('POST', `/campaigns/${campaign.id}/cancel-scheduled`, { expected_revision: 2 })).json()).toMatchObject({ already_cancelled: true });
+  });
+});
