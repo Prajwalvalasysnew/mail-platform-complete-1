@@ -4,7 +4,7 @@
  * and its MCP client calls the Valasys tools served by this worker. The child process gets a
  * minimal environment: no database, Redis, KMS or tenant credentials.
  */
-import {mkdtemp,mkdir,copyFile,rm,readFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,copyFile,rm,readFile,readdir,stat} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
@@ -37,20 +37,37 @@ function turnError(result:RunResult){
  return end?.data?.reason?.kind==='error'?String(end.data.reason.error?.code || 'UNKNOWN'):null;
 }
 
+const HOME_PREFIX='valasys-agent-';
+/** Transcripts left by a crashed worker hold customer content: remove them at startup. */
+async function sweepStaleHomes(){
+ const root=tmpdir();
+ // Only homes older than any possible run, so another worker sharing this tmp dir keeps its live sessions.
+ const cutoff=Date.now()-aiConfig().agentTimeoutMs-10*60000;
+ for(const name of await readdir(root).catch(()=>[] as string[])){
+  if(!name.startsWith(HOME_PREFIX))continue;
+  const info=await stat(join(root,name)).catch(()=>null);
+  if(info && info.mtimeMs<cutoff)await rm(join(root,name),{recursive:true,force:true}).catch(()=>undefined);
+ }
+}
+
 export async function createHarnessRuntime():Promise<AgentRuntime>{
  const dshBin=await harnessBin();
+ await sweepStaleHomes();
  return {open:async({systemPrompt,toolUrl,token,signal})=>{
   const c=aiConfig();
-  const home=await mkdtemp(join(tmpdir(),'valasys-agent-')),work=join(home,'work'),profile=join(home,'profiles',PROFILE);
+  const home=await mkdtemp(join(tmpdir(),HOME_PREFIX)),work=join(home,'work'),profile=join(home,'profiles',PROFILE);
+  let harness:DeepSeekHarness;
+  try{
   await mkdir(work,{recursive:true});await mkdir(profile,{recursive:true});
   for(const file of ['package.json','cordis.yml','cordis.patch.yml'])await copyFile(join(profileSource,file),join(profile,file));
-  const harness=new DeepSeekHarness({
+  harness=new DeepSeekHarness({
    dshBin,profile:PROFILE,dshHome:home,processCwd:work,cwd:work,provider:'valasys',model:c.model,maxTokens:c.maxOutputTokens,initializeTimeoutMs:30000,
    env:{PATH:process.env.PATH || '/usr/local/bin:/usr/bin:/bin',HOME:home,TMPDIR:home,NODE_ENV:'production',DSH_HOME:home,
     VALASYS_SYSTEM_PROMPT:systemPrompt,VALASYS_LLM_BASE_URL:`${c.baseUrl}/v1`,VALASYS_LLM_KEY:c.token || 'not-required',VALASYS_LLM_MODEL:c.model,
     VALASYS_LLM_CONTEXT:String(c.contextTokens),VALASYS_LLM_MAX_TOKENS:String(c.maxOutputTokens),VALASYS_MCP_URL:toolUrl,VALASYS_MCP_TOKEN:token,
     ...(process.env.HTTPS_PROXY?{HTTPS_PROXY:process.env.HTTPS_PROXY,NO_PROXY:'127.0.0.1,localhost'}:{})},
   });
+  }catch(error){await rm(home,{recursive:true,force:true});throw error;}
   // The harness has no mid-turn cancel; stopping a run means ending its process.
   const stop=()=>void harness.close().catch(()=>undefined);
   signal.addEventListener('abort',stop,{once:true});

@@ -16,10 +16,10 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
     return [r?.message || m.text || m.error || (['queued','running'].includes(m.status)?'Working on your request...':'Unable to finish this request.'),...changes.map((x:string)=>`• ${x}`)].join('\n');};
   /** Body HTML of the canvas with editor CSS inlined: the document the AI agent edits. */
   const canvasHtml=()=>{const doc=new DOMParser().parseFromString(c.exportEmail().html,'text/html'),first=doc.body.firstElementChild;if(first && /display:\s*none/.test(first.getAttribute('style') || ''))first.remove();return doc.body.innerHTML.trim();};
-  const addMessage=(role:string,text:string)=>c.setState((state:any)=>({aiMessages:[...state.aiMessages,{id:crypto.randomUUID(),role,text}]}));
+  const addMessage=(role:string,text:string,failed=false)=>c.setState((state:any)=>({aiMessages:[...state.aiMessages,{id:crypto.randomUUID(),role,text,failed}]}));
   async function refreshHistory(){
     const data=await getResource(`/account/ai/chats/${c.state.aiChatId}`,true);if(disposed || owner!==aiIdentity())return;
-    c.setState({aiMessages:data.messages.map((m:any)=>({id:m.id,role:m.role,text:m.role==='user'?m.text:assistantText(m)}))});
+    c.setState({aiMessages:data.messages.map((m:any)=>({id:m.id,role:m.role,text:m.role==='user'?m.text:assistantText(m),failed:m.role!=='user' && ['failed','timed_out','cancelled'].includes(m.status)}))});
     return data;
   }
   c.restoreAiWriting=async(id?:string,design?:unknown)=>{
@@ -55,7 +55,8 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
     if(currentLinks.length>20){c.setState({busy:false});return c.toast('This email has too many links for conversational generation. Select a text block to rewrite.');}
     const brief=section && conversational?`Write a short additional email section, without a footer or sign-off. ${instruction}`:instruction;
     if(conversational){addMessage('user',instruction);c.setState({prompt:''});const url=new URL(location.href);url.searchParams.set('ai_chat',c.state.aiChatId);history.replaceState({},'',url);}
-    const request=requestAi({operation:conversational?'editor':operation,instruction:brief,content:text,subject:c.state.subject,tone:c.state.tone || 'Friendly'},undefined,conversational?{chatId:c.state.aiChatId,settings:{editor:{links:currentLinks,key:new URLSearchParams(location.search).get('id') || c.state.aiChatId,content:text.slice(0,6000),html,subject:c.state.subject,preheader:c.state.preheader || '',tone:c.state.tone || 'Friendly',section},timezone:Intl.DateTimeFormat().resolvedOptions().timeZone}}:{});
+    c.setState({aiSteps:[]});
+    const request=requestAi({operation:conversational?'editor':operation,instruction:brief,content:text,subject:c.state.subject,tone:c.state.tone || 'Friendly'},conversational?(_status,live)=>{if(!disposed)c.setState({aiSteps:live?.steps || []});}:undefined,conversational?{chatId:c.state.aiChatId,settings:{editor:{links:currentLinks,key:new URLSearchParams(location.search).get('id') || c.state.aiChatId,content:text.slice(0,6000),html,subject:c.state.subject,preheader:c.state.preheader || '',tone:c.state.tone || 'Friendly',section},timezone:Intl.DateTimeFormat().resolvedOptions().timeZone}}:{});
     active=request;
     try{
       const row=await request.promise;
@@ -74,7 +75,7 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
       if(conversational)c.setState({prompt:''});
       undoFingerprint=fingerprint();onChanged();c.runReview?.();
       c.toast(row.warnings?.length?'AI draft added. Review the content and delivery checks before saving.':'AI suggestion added. Review before saving or sending.',true);
-    }catch(error){if(!disposed && owner===aiIdentity()){if(conversational)addMessage('assistant',errorMessage(error));c.toast(errorMessage(error));}}
+    }catch(error){if(!disposed && owner===aiIdentity()){if(conversational)addMessage('assistant',errorMessage(error),true);c.toast(errorMessage(error));}}
     finally{if(active===request){active=undefined;if(!disposed)c.setState({busy:false,rwBusy:null,subjBusy:false});}}
   }
   c.applyAiDraft=()=>{
@@ -82,6 +83,11 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
     const result=c.state.pendingAiDraft;remember();c.ed.setComponents(result.html);c.setState({subject:result.subject || c.state.subject,preheader:result.preheader ?? c.state.preheader,pendingAiDraft:null});undoFingerprint=fingerprint();onChanged();c.runReview?.();c.toast('Draft applied. Review before saving.',true);
   };
   c.generate=()=>void run('draft',c.state.prompt || '');
+  c.newAiChat=()=>{
+    if(active)return;
+    c.setState({aiMessages:[],aiChatId:crypto.randomUUID(),pendingAiDraft:null,prompt:''});
+    const url=new URL(location.href);url.searchParams.delete('ai_chat');history.replaceState({},'',url);onChanged();
+  };
   c.suggestSubjects=()=>void run('subjects');
   c.rewrite=(mode:string)=>{
     const how:Record<string,string>={shorter:'Make it about half as long.',friendlier:'Make it warmer and friendlier.',punchier:'Make it direct and concise.',urgent:'Use a direct tone without inventing deadlines or scarcity.',grammar:'Fix grammar and spelling only.',personal:'Preserve existing merge tags. Do not add personal data or merge tags.',custom:c.state.instr || ''};

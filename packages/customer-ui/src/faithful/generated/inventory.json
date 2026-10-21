@@ -29,10 +29,10 @@
   {
     "component": "Agent",
     "reference": "AI Agent.dc.html",
-    "sha256": "cffeb10ca1c3cd1900b152c092436fa7b3f1b983ecdc678a527db7c0c261b591",
-    "elements": 266,
+    "sha256": "ee89f8e2dfccf251bb7fd51b75c0ce252ae79204277ae9c7b24d779ce19d2602",
+    "elements": 268,
     "conditions": 29,
     "loops": 27,
-    "bindings": 174
+    "bindings": 175
   }
 ]

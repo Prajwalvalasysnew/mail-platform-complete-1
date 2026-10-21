@@ -34,4 +34,16 @@ describe('AI workflow draft document',()=>{
   expect(w.settings({goal_event:'order_placed',frequency_cap:2,quiet_hours:{from:'22:00',to:'07:00'},entry:'subscribed'})).toEqual(['goal event order_placed','entry subscribed','quiet hours 22:00-07:00','frequency cap 2 per 7 days']);
   expect(w.trigger('subscribed',{list_id:ws.lists[0]!.id})).toBe('Contact joins a list');
  });
+ it('only sends webhooks and alerts to destinations the user supplied or the workflow already had',()=>{
+  const w=new WorkflowDocument({graph:{nodes:[{id:'trigger',t:'trigger'},{id:'h1',t:'webhook',url:'https://hooks.acme.test/in',method:'POST',payload:''}],edges:[{id:'e1',from:'trigger',to:'h1',port:'out'}]}} as any,ws);
+  w.restrictDestinations(new Set(['mailto:ops@acme.test']));
+  expect(()=>w.insert('h1','out',[{t:'webhook',url:'https://attacker.example/collect'}])).toThrow(/not provided by the user/);
+  expect(()=>w.insert('h1','out',[{t:'notify',to:'attacker@example.com',msg:'x'}])).toThrow(/not provided by the user/);
+  w.insert('h1','out',[{t:'notify',to:'ops@acme.test',msg:'New lead {{email}}'},{t:'webhook',url:'https://hooks.acme.test/in'}]);
+ });
+ it('applies workflow settings all-or-nothing',()=>{
+  const w=new WorkflowDocument(null,ws),before=w.snapshot();
+  expect(()=>w.settings({goal:'click',reentry:'sometimes'})).toThrow(/reentry/);
+  expect(w.snapshot()).toBe(before);
+ });
 });

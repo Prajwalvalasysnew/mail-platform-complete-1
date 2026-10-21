@@ -22,18 +22,22 @@ const results=messages=>{const r=[];for(let i=messages.length-1;i>=0 && messages
 function model(messages){
  const q=ask(messages),done=results(messages),all=messages.map(text).join('\n'),template=all.match(/^([0-9a-f-]{36}): Win-back offer/m)?.[1];
  if(/win-back/i.test(q))return done.length?{content:'I built a win-back workflow: when someone clicks, wait 2 days, send “Win-back offer”, then wait for an open.'}:{calls:[['build_workflow',{name:'Win-back journey',trigger:'clicked',steps:[{t:'wait',mode:'duration',amount:2,unit:'days'},{t:'email',template},{t:'wait',mode:'event',event:'opened',max:3}]}]]};
+ if(/slow summary/i.test(q))return {content:'Here is the summary you asked for.'};
  if(/onboarding workflow/i.test(q))return done.length?{content:'Here is an onboarding workflow draft for you to review.'}:{calls:[['build_workflow',{name:'Onboarding',trigger:'event',steps:[{t:'email',template},{t:'wait',mode:'duration',amount:1,unit:'days'}]}]]};
  if(/connected domains/i.test(q))return done.length?{content:`You have ${JSON.parse(done[0]).data.connected} connected sending domains and ${JSON.parse(done[0]).data.verified} are verified.`}:{calls:[['read_workspace',{tool:'domain_status'}]]};
  return {content:'I can help with that.'};
 }
-let callNo=0;
+let callNo=0,slow=true;
 const llm=createServer((req,res)=>{const chunks=[];req.on('data',c=>chunks.push(c));req.on('end',()=>{
  const body=JSON.parse(Buffer.concat(chunks).toString()||'{}'),tools=(body.tools||[]).map(t=>t.function.name),turn=model(body.messages||[]);
  const calls=(turn.calls||[]).map(([name,args])=>({id:`c${++callNo}`,type:'function',function:{name:tools.find(t=>t.endsWith(`__${name}`))||name,arguments:JSON.stringify(args)}}));
+ // The first "slow summary" request hangs so the browser can press Stop; later ones answer immediately.
+ const hold=slow && /slow summary/i.test(ask(body.messages||[]));
+ setTimeout(()=>{if(res.destroyed)return;
  res.writeHead(200,{'content-type':'text/event-stream'});
  res.write(`data: ${JSON.stringify({id:'r',object:'chat.completion.chunk',choices:[{index:0,delta:calls.length?{role:'assistant',tool_calls:calls.map((c,index)=>({index,...c}))}:{role:'assistant',content:turn.content},finish_reason:null}]})}\n\n`);
  res.write(`data: ${JSON.stringify({id:'r',object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:calls.length?'tool_calls':'stop'}],usage:{prompt_tokens:100,completion_tokens:20,total_tokens:120}})}\n\n`);
- res.end('data: [DONE]\n\n');});});
+ res.end('data: [DONE]\n\n');},hold?60000:0);});});
 await new Promise(r=>llm.listen(3102,'127.0.0.1',r));
 
 const email=`ai-everywhere-${randomUUID()}@example.test`;
@@ -75,6 +79,27 @@ try{
  if(JSON.stringify(types)!==JSON.stringify(['trigger','wait','email','wait']))throw new Error(`Saved workflow steps: ${types}`);
  console.log('Browser: workflow builder AI built and autosaved the workflow draft',types.join(' → '));
  await page.screenshot({path:`${out}/1-workflow-builder.png`});
+
+ // Chat behaviour: live progress, Stop, Retry, restore on reopen, New chat.
+ const conversation=page.locator('[data-editor-ai-conversation]');
+ await page.getByLabel('Message the AI assistant').fill('Give me a slow summary of this workflow');
+ await page.getByLabel('Message the AI assistant').press('Enter');
+ await conversation.locator('[role=status]').waitFor();
+ await conversation.getByRole('button',{name:'Stop',exact:true}).click();
+ await conversation.getByRole('button',{name:'Retry',exact:true}).waitFor({timeout:30000});
+ slow=false;
+ await conversation.getByRole('button',{name:'Retry',exact:true}).click();
+ await conversation.getByText('Here is the summary you asked for.').waitFor({timeout:90000});
+ console.log('Browser: a stopped reply offers Retry, and Retry resends the message');
+ const workflowId=(await db.selectFrom('workflows').select('id').where('customer_id','=',customer.id).executeTakeFirstOrThrow()).id;
+ await page.goto(`http://127.0.0.1:3101/workflow-builder?id=${workflowId}`);
+ await page.getByText('Saved to workspace').waitFor({timeout:45000});
+ await page.getByRole('button',{name:'✦ AI',exact:true}).click();
+ await conversation.getByText('I built a win-back workflow').waitFor({timeout:30000});
+ console.log('Browser: reopening the workflow restores its AI conversation');
+ await conversation.getByRole('button',{name:'New chat',exact:true}).click();
+ await conversation.getByText('Describe the journey you want').waitFor();
+ console.log('Browser: New chat starts an empty conversation');
 
  // 2. Page-aware assistant drawer on Settings and Automations.
  await page.goto('http://127.0.0.1:3101/domains');

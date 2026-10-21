@@ -32,7 +32,7 @@ export function prepareWorkflow(base:DesignState){
    try{
     if(!id){const row=await performAction('/account/data/workflows',{name:document.name});id=row.id;if(disposed)return;c.setState({curId:id,wfs:[{...c.cur(),id}]});history.replaceState({},'',`/workflow-builder?id=${encodeURIComponent(id!)}`);}
     const result=await performAction(`/account/data/workflows/${id}/builder`,{expected_revision:revision,name:document.name,document},'PUT');revision=result.builder_revision;
-    if(!disposed){dirty=snapshot()!==sent;c.setState({savedAt:new Date(),builderError:''});}
+    if(!disposed){dirty=snapshot()!==sent;c.setState({savedAt:new Date(),builderError:''});c.rememberAiChat?.();}
    }catch(error:any){if(!disposed){conflicted=error?.status===409;c.setState({builderError:errorMessage(error)});c.toast(errorMessage(error));}}
    finally{saving=null;if(!disposed){c.setState({builderSaving:false});if(dirty && !conflicted && !c.state.builderError)c.persist();}}
   })();return saving;

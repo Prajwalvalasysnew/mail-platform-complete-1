@@ -3,7 +3,7 @@
  * drafts are validated exactly like workflows people build by hand.
  */
 import {randomBytes} from 'node:crypto';
-import {DocumentToolError} from './email-html.js';
+import {DocumentToolError,normalizeUrl} from './email-html.js';
 import {TRIGGERS,GOALS,RULE_PRESETS,RULE_FIELDS,RULE_OPS,compileWorkflowDetailed,triggerOf,slug,type Rule} from '../workflow-builder.js';
 
 export const WORKFLOW_STEP_TYPES=['email','wait','branch','filter','split','update','notify','webhook'] as const;
@@ -12,7 +12,10 @@ type Edge={id:string;from:string;to:string;port:string};
 export type WorkflowGraphDoc={name:string;tkey:string;tcfg:Record<string,unknown>;settings:Record<string,unknown>;graph:{nodes:Node[];edges:Edge[]}};
 export type StepSpec={t:string;[k:string]:unknown;paths?:{label?:string;steps:StepSpec[]}[]};
 export type TemplateRef={id:string;name:string;subject:string|null};
-export type WorkflowWorkspace={templates:TemplateRef[];domains:string[];lists:{id:string;name:string}[];timezone:string};
+export type WorkflowWorkspace={templates:TemplateRef[];domains:string[];lists:{id:string;name:string}[];timezone:string;
+ /** Webhook URLs and alert recipients the user supplied or the workflow already had. Unset: no restriction (tests, codec checks). */
+ destinations?:Set<string>};
+const emailKey=(value:string)=>`mailto:${value.trim().toLowerCase()}`;
 
 const uid=()=>'n'+randomBytes(4).toString('hex');
 const PORTS:Record<string,string[]>={branch:['yes','no'],split:['a','b']};
@@ -52,8 +55,16 @@ function normalizeStep(spec:StepSpec,ws:WorkflowWorkspace):Node{
    const action=['add_tag','remove_tag','stage','attribute','subscribe','unsubscribe'].includes(String(spec.action))?String(spec.action):'add_tag';
    return {id,t,action,value:Array.isArray(spec.value)?spec.value.join(', '):str(spec.value ?? spec.tags),key:str(spec.key,64)};
   }
-  case 'notify':return {id,t,to:Array.isArray(spec.to)?spec.to.join(', '):str(spec.to),subject:str(spec.subject || 'Workflow alert: {{email}}',200),msg:str(spec.msg ?? spec.message ?? spec.body,5000),from:str(spec.from,200)};
-  case 'webhook':return {id,t,url:str(spec.url,2000),method:'POST',payload:spec.payload && typeof spec.payload==='object'?JSON.stringify(spec.payload):str(spec.payload,4000)};
+  case 'notify':{
+   const to=Array.isArray(spec.to)?spec.to.join(', '):str(spec.to);
+   // Data leaves the workspace through alerts, so recipients must come from the user, not from workspace content.
+   const unknown=to.split(',').map(v=>v.trim()).filter(Boolean).filter(v=>ws.destinations && !ws.destinations.has(emailKey(v)));
+   if(unknown.length)throw new DocumentToolError(`${unknown.join(', ')} was not provided by the user. Ask the user which address should receive alerts.`);
+   return {id,t,to,subject:str(spec.subject || 'Workflow alert: {{email}}',200),msg:str(spec.msg ?? spec.message ?? spec.body,5000),from:str(spec.from,200)};}
+  case 'webhook':{
+   const url=str(spec.url,2000),key=url?normalizeUrl(url):null;
+   if(url && ws.destinations && (!key || !ws.destinations.has(key)))throw new DocumentToolError(`${url} was not provided by the user. Ask the user for the exact webhook URL.`);
+   return {id,t,url,method:'POST',payload:spec.payload && typeof spec.payload==='object'?JSON.stringify(spec.payload):str(spec.payload,4000)};}
  }
  throw new DocumentToolError('Unsupported step.');
 }
@@ -64,6 +75,15 @@ export class WorkflowDocument{
   const nodes=Array.isArray(input?.graph?.nodes) && input!.graph!.nodes.some(n=>n.id==='trigger')?structuredClone(input!.graph!.nodes):[{id:'trigger',t:'trigger',x:0,y:0}];
   const edges=Array.isArray(input?.graph?.edges)?structuredClone(input!.graph!.edges):[];
   this.doc={name:String(input?.name || 'Untitled workflow').slice(0,200),tkey:TRIGGERS.some(t=>t.key===input?.tkey)?String(input!.tkey):'event',tcfg:{...(input?.tcfg || {})},settings:{...DEFAULT_SETTINGS,...(input?.settings || {})},graph:{nodes,edges}};
+ }
+ /** Restrict webhook URLs and alert recipients to the user's links plus those already in this workflow. */
+ restrictDestinations(allowed:Set<string>){
+  const set=new Set(allowed);
+  for(const n of this.doc.graph.nodes){
+   if(n.t==='webhook' && typeof n.url==='string'){const key=normalizeUrl(n.url);if(key)set.add(key);}
+   if(n.t==='notify' && typeof n.to==='string')for(const v of n.to.split(','))if(v.trim())set.add(emailKey(v));
+  }
+  this.ws={...this.ws,destinations:set};
  }
  private node(id:string){const n=this.doc.graph.nodes.find(x=>x.id===id);if(!n)throw new DocumentToolError(`Step ${id} does not exist. Call view_workflow for current step ids.`);return n;}
  private out(id:string,port='out'){return this.doc.graph.edges.filter(e=>e.from===id && e.port===port);}
@@ -183,7 +203,12 @@ export class WorkflowDocument{
   this.doc.tkey=key;this.doc.tcfg=cfg;
   return t.label;
  }
+ /** All-or-nothing: an invalid field leaves the settings unchanged. */
  settings(input:Record<string,unknown>){
+  const backup=this.snapshot();
+  try{return this.applySettings(input);}catch(error){this.doc=JSON.parse(backup);throw error;}
+ }
+ private applySettings(input:Record<string,unknown>){
   const done:string[]=[],s=this.doc.settings;
   if(typeof input.name==='string' && input.name.trim()){this.doc.name=input.name.trim().slice(0,200);done.push(`name “${this.doc.name}”`);}
   if(input.goal){if(!GOALS.some(g=>g.key===input.goal))throw new DocumentToolError(`goal must be one of: ${GOALS.map(g=>g.key).join(', ')}.`);s.goal=input.goal;done.push(`goal ${input.goal}`);}

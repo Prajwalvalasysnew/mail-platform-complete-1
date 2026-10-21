@@ -289,6 +289,12 @@ export const openapiSpec = {
       put: { summary: 'Update a template', operationId: 'updateTemplate', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Updated' }, '404': { description: 'Not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } },
       delete: { summary: 'Delete a template', operationId: 'deleteTemplate', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Deleted' }, '404': { description: 'Not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } },
     },
+    '/templates/{id}/versions': {
+      get: { summary: 'List saved versions of a template (newest first, up to 100)', operationId: 'listTemplateVersions', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { '200': { description: '{ versions: [{ id, revision, name, subject, created_at }] }' }, '400': { description: 'Invalid template id' }, '404': { description: 'Template not found' } } },
+    },
+    '/templates/{id}/versions/{revision}': {
+      get: { summary: 'Get one saved version of a template', operationId: 'getTemplateVersion', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }, { name: 'revision', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }], responses: { '200': { description: 'The version: name, subject, html_body, text_body, editor_document, created_at' }, '400': { description: 'Invalid template id or revision' }, '404': { description: 'Version not found' } } },
+    },
     '/usage': { get: { summary: 'Usage + deliverability rates', operationId: 'getUsage', responses: { '200': { description: 'OK' } } } },
     '/usage/quota': { get: { summary: 'Current quota usage and remaining, with threshold alerts', operationId: 'getQuotaUsage', responses: { '200': { description: 'Daily/monthly used, limit, remaining, pct, and 80%/100% alert flags' } } } },
     '/stats': {

@@ -43,4 +43,11 @@ describe('AI email document tools',()=>{
   expect(detached.html?.length).toBe(40000);expect(detached.preheader).toBe('Pre');expect(detached.input.content).not.toContain('<p>');
   expect(()=>AiInput.parse({operation:'chat',instruction:'x',content:'x'.repeat(20000)})).toThrow(/too long/);
  });
+ it('keeps existing mailto links editable and checks CSS image URLs against the link policy',()=>{
+  const doc='<table><tr><td style="background-image:url(https://cdn.acme.test/hero.png)"><a href="mailto:Support@Acme.test?subject=Hi">Email us</a></td></tr></table>';
+  const policy=linkPolicy('Make the button orange',doc);
+  expect(policyProblems(doc,policy)).toEqual([]);
+  expect(policyProblems('<td style="background-image:url(https://evil.example/p.png)">x</td>',policy).join(' ')).toMatch(/evil\.example/);
+  expect(sanitizeEmailHtml('<td style="background:url(https://a.test/x.png),url(https://b.test/y.png)">x</td>')).not.toContain('url(');
+ });
 });

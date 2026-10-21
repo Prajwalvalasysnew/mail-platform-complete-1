@@ -20,6 +20,8 @@ export type AgentWorkspace={
  changes:string[];reads:number;seen:Map<string,number>;seq:number;section:boolean;
  /** The one artifact (email or workflow) this turn edits; assistant turns pick it with their first edit. */
  artifact:'email'|'workflow'|null;
+ /** Ends the agent session when the model keeps calling tools past the budget; the turn then finishes with what was done. */
+ stop?:()=>void;stopped?:boolean;
 };
 export type ToolOutcome={text:string;isError:boolean};
 type Tool={name:string;scope:'email'|'workflow'|'workspace';description:string;inputSchema:Record<string,unknown>;mutates:boolean;run:(ws:AgentWorkspace,args:any)=>Promise<string>|string};
@@ -151,11 +153,17 @@ export async function runAgentTool(ws:AgentWorkspace,name:string,args:unknown):P
  }
  const key=name+JSON.stringify(args ?? {}),count=(ws.seen.get(key) || 0)+1;ws.seen.set(key,count);
  if(tool.mutates && count>1 || count>2){await record(ws,name,args,{error:'repeat_call_blocked'},'blocked');return {text:'You already made this exact call and its result is above. Do something different, or reply to the user.',isError:true};}
- if(ws.seq>=40)return {text:'Tool budget for this turn is exhausted. Reply to the user now with what you have done.',isError:true};
+ if(ws.seq>=40){
+  const over=(ws.seen.get('\u0000budget') || 0)+1;ws.seen.set('\u0000budget',over);
+  if(over>=3){ws.stopped=true;ws.stop?.();}
+  return {text:'Tool budget for this turn is exhausted. Reply to the user now with what you have done.',isError:true};
+ }
  try{
   const text=await tool.run(ws,args && typeof args==='object'?args:{});
   if(tool.mutates && tool.scope!=='workspace')ws.artifact=tool.scope;
-  await record(ws,name,args,tool.mutates?{result:text}:{chars:text.length},'completed');
+  // The edit is already applied: a failed audit write must not tell the model it failed (it would redo it).
+  try{await record(ws,name,args,tool.mutates?{result:text}:{chars:text.length},'completed');}
+  catch(error){if(error instanceof Error && error.message==='Stale tool call')throw error;ws.signal.throwIfAborted();console.warn('[valasys-ai] tool step not recorded',{tool:name});}
   return {text,isError:false};
  }catch(error){
   ws.signal.throwIfAborted();

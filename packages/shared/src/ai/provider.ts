@@ -63,14 +63,15 @@ export async function generateAi(input: AiInput, signal: AbortSignal, fetcher: t
       method: 'POST', redirect: 'error', signal: combined,
       headers: { 'Content-Type': 'application/json', ...(c.token ? { Authorization: `Bearer ${c.token}` } : {}) },
       body: JSON.stringify({
-        model: c.model, stream: false, think: ['editor','assist','draft'].includes(input.operation)?'medium':'low', format: AI_FORMATS[input.operation],
+        model: c.model, stream: false, // Small structured outputs have tight token caps; reasoning would consume them and end with done_reason=length.
+        think: ['editor','assist','draft'].includes(input.operation)?'medium':['subjects','compact','route'].includes(input.operation)?false:'low', format: AI_FORMATS[input.operation],
         options: { num_ctx: c.contextTokens, num_predict: input.operation === 'subjects' ? Math.min(700, c.maxOutputTokens) : input.operation==='compact'?Math.min(1200,c.maxOutputTokens):input.operation==='route'?Math.min(700,c.maxOutputTokens):c.maxOutputTokens },
         messages,
       }),
     });
     }catch(error){combined.throwIfAborted();throw new AiProviderUnavailableError();}
     if (!response.ok) {
-      if([429,502,503,504].includes(response.status) && transportRetries++===0){const retry=Number(response.headers.get('Retry-After'));await response.body?.cancel().catch(()=>undefined);await delay(Number.isFinite(retry) && retry>0?Math.min(2000,retry*1000):500,undefined,{signal:combined});continue;}
+      if([429,500,502,503,504].includes(response.status) && transportRetries++===0){const retry=Number(response.headers.get('Retry-After'));await response.body?.cancel().catch(()=>undefined);await delay(Number.isFinite(retry) && retry>0?Math.min(2000,retry*1000):500,undefined,{signal:combined});continue;}
       if([400,413].includes(response.status)){const error=await readJson(response,combined).catch(()=>null);if(/context.{0,50}(length|window|limit|exceed)|(length|window|exceed).{0,50}context/i.test(JSON.stringify(error)))throw new AiContextOverflowError();}
       await response.body?.cancel().catch(()=>undefined);throw new AiProviderUnavailableError();
     }
@@ -84,7 +85,7 @@ export async function generateAi(input: AiInput, signal: AbortSignal, fetcher: t
       return {result,promptTokens,outputTokens,estimatedPromptTokens:estimateAiEnvelope(messages,AI_FORMATS[input.operation])};
     }catch(error){
       if(repairs++>=1)throw new AiOutputValidationError(validationCode(error));
-      messages.push({role:'user',content:'Validation failed: '+(error instanceof Error?error.message.slice(0,1200):'invalid output')+'. The previous JSON did not satisfy the required schema or safety constraints. Return a corrected JSON object matching the exact schema, with no markdown or extra fields. Preserve rewrite merge tags exactly and use only links in the original input. Omit a button block entirely if no approved URL is available; never return an empty-url button. Do not invent merge tags, footer copyright fields or product capabilities. For other draft blocks set url to an empty string.'});
+      messages.push({role:'assistant',content:raw.message.content.slice(0,20000)},{role:'user',content:'Validation failed: '+(error instanceof Error?error.message.slice(0,1200):'invalid output')+'. The previous JSON did not satisfy the required schema or safety constraints. Return a corrected JSON object matching the exact schema, with no markdown or extra fields. Preserve rewrite merge tags exactly and use only links in the original input. Omit a button block entirely if no approved URL is available; never return an empty-url button. Do not invent merge tags, footer copyright fields or product capabilities. For other draft blocks set url to an empty string.'});
     }
   }
   throw new Error('Invalid writing output');

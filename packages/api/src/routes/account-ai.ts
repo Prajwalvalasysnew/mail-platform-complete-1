@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { sql } from 'kysely';
 import { AiInput, AiRunError, aiContextCatalog, ChatTurn,createChatTurn,listAiChats,getAiChat,decideAiDraft,deleteAiChat, aiEnabledFor, createAiRun, getAiRun, cancelAiRun, enqueueAiRun, redis, withTenant } from '@platform/shared';
 import { requireCapability } from '../plugins/session-auth.js';
 
@@ -83,8 +84,13 @@ export const accountAiRoutes:FastifyPluginAsync=async app=>{
       if(hold || lock)return reply.code(409).send({error:'retention_hold',message:'Workspace retention policy prevents deleting this record.'});
       const target=await trx.selectFrom('ai_runs').select('chat_id').where('customer_id','=',req.user!.current_customer_id!).where('user_id','=',req.user!.user_id).where('id','=',id.data).executeTakeFirst();
       if(target?.chat_id)return reply.code(409).send({error:'delete_conversation',message:'Delete the conversation to erase its messages and context checkpoints together.'});
-      const result=await trx.deleteFrom('ai_runs').where('customer_id','=',req.user!.current_customer_id!).where('user_id','=',req.user!.user_id).where('id','=',id.data).executeTakeFirst();
-      return Number(result.numDeletedRows)?{deleted:true}:reply.code(404).send({error:'not_found'});
+      // Erase the content now; the row stays as a quota marker until retention maintenance removes it.
+      const cid=req.user!.current_customer_id!,now=new Date();
+      const result=await trx.updateTable('ai_runs').set({status:sql`case when status in ('queued','running') then 'cancelled' else status end`,input:null,result:null,warnings:sql`'[]'::jsonb`,lease_until:null,expires_at:now,updated_at:now})
+        .where('customer_id','=',cid).where('user_id','=',req.user!.user_id).where('id','=',id.data).where('expires_at','>',now).executeTakeFirst();
+      if(!Number(result.numUpdatedRows))return reply.code(404).send({error:'not_found'});
+      await trx.deleteFrom('ai_run_steps').where('customer_id','=',cid).where('run_id','=',id.data).execute();
+      return {deleted:true};
     });
   });
 };

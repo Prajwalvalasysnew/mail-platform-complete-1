@@ -6,7 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {sql,type Selectable} from 'kysely';
 import {withTenant,type TenantExecutor} from '../tenant-context.js';
 import type {AiRunsTable} from '../schema.js';
-import {AiInput} from './contracts.js';
+import {AiInput,AiUserFacingError} from './contracts.js';
 import {aiInputByteLimit} from './config.js';
 import {generateAi} from './provider.js';
 type Turn={through:number;messages:{role:string;content:string}[]};
@@ -18,12 +18,16 @@ export function chatRequest(input:AiInput,summary:string,turns:Turn[],requestedA
 export async function prepareChatContext(row:Selectable<AiRunsTable>,input:AiInput,signal:AbortSignal,allowed:(trx:TenantExecutor)=>Promise<boolean>,force=false){
  const cid=row.customer_id,chatId=row.chat_id!,manual=input.instruction==='/compact';
  let checkpoint=await withTenant(cid,trx=>trx.selectFrom('ai_chat_checkpoints').select(['through_seq','summary']).where('customer_id','=',cid).where('chat_id','=',chatId).orderBy('through_seq','desc').executeTakeFirst());
- const rows=await withTenant(cid,trx=>trx.selectFrom('ai_chat_messages').select(['seq','role','text','status','result']).where('customer_id','=',cid).where('chat_id','=',chatId).where('seq','>',checkpoint?.through_seq || 0).where('seq','<',row.chat_seq!).where(sql<boolean>`(role='assistant' and status='completed') or (role='user' and exists(select 1 from ai_chat_messages a where a.customer_id=ai_chat_messages.customer_id and a.chat_id=ai_chat_messages.chat_id and a.seq=ai_chat_messages.seq+1 and a.role='assistant' and a.status='completed'))`).orderBy('seq').limit(2001).execute());
+ const rows=await withTenant(cid,trx=>trx.selectFrom('ai_chat_messages').select(['seq','role','text','status','result']).where('customer_id','=',cid).where('chat_id','=',chatId).where('seq','>',checkpoint?.through_seq || 0).where('seq','<',row.chat_seq!)// Parenthesized: Kysely splices raw SQL as-is, and a bare OR would escape the chat_id filter.
+  .where(sql<boolean>`((role='assistant' and status='completed') or role='user')`).orderBy('seq').limit(2001).execute());
  if(rows.length>2000)throw new Error('Compaction backlog exceeds bounded page');
  const turns:Turn[]=[];
- for(let i=0;i<rows.length-1;i++){
-  const user=rows[i]!,assistant=rows[i+1]!;
-  if(user.role==='user' && assistant.role==='assistant' && assistant.seq===user.seq+1 && assistant.status==='completed'){
+ for(let i=0;i<rows.length;i++){
+  const user=rows[i]!,assistant=rows[i+1];
+  if(user.role!=='user')continue;
+  // Earlier turns without a saved reply failed or were stopped (one run per user at a time); keep the request so "try again" has a referent.
+  if(!assistant || assistant.role!=='assistant' || assistant.seq!==user.seq+1){turns.push({through:user.seq+1,messages:[{role:'user',content:user.text},{role:'assistant',content:'(No reply was saved for this message: it failed or was stopped.)'}]});continue;}
+  {
    const result=assistant.result as any;
    // Drafts: keep what was said and changed; the email itself is supplied to the agent as tool state.
    const text=result?.operation==='workflow'?[result.message,result.changes?.length?`Changes made: ${result.changes.join('; ')}`:''].filter(Boolean).join('\n'):result?.operation==='draft'?[result.message,result.changes?.length?`Changes made: ${result.changes.join('; ')}`:'',`Subject: ${result.subject}`,result.message?'':result.text].filter(Boolean).join('\n'):assistant.text;
@@ -31,9 +35,12 @@ export async function prepareChatContext(row:Selectable<AiRunsTable>,input:AiInp
   }
  }
  let summary=checkpoint?.summary || '',changed=false,promptTokens:number|null=0,outputTokens:number|null=0;
- const budget=Math.min(16000,aiInputByteLimit(input.operation)),threshold=Math.floor(budget*0.8);
+ // Budget the conversation only: the fixed part (this message and its editor/workflow settings) is admitted separately.
+ const limit=aiInputByteLimit(input.operation),fixed=chatInputBytes(chatRequest(input,'',[],row.created_at.toISOString()));
+ const budget=Math.max(2000,Math.min(16000,limit-fixed)),threshold=Math.floor(budget*0.8);
+ const historyBytes=(value:AiInput)=>chatInputBytes(value)-fixed;
  let context=chatRequest(input,summary,turns,row.created_at.toISOString());
- if(!manual && !force && chatInputBytes(context)<=threshold)return {input:context,manual,changed,promptTokens,outputTokens};
+ if(!manual && !force && historyBytes(context)<=threshold)return {input:context,manual,changed,promptTokens,outputTokens};
  // Retain recent complete turns, aiming for the harness's 16% recent-tail policy.
  let keep=turns.length;
  if(!manual){let bytes=0;while(keep>0){const size=Buffer.byteLength(JSON.stringify(turns[keep-1]),'utf8');if(bytes+size>budget*0.16)break;bytes+=size;keep--;}}
@@ -75,6 +82,6 @@ export async function prepareChatContext(row:Selectable<AiRunsTable>,input:AiInp
  }
  if(older.length)throw new Error('Compaction limit reached');
  context=chatRequest(input,summary,tail,row.created_at.toISOString());
- if(!manual && chatInputBytes(context)>budget)throw new Error('Current instructions exceed context budget');
+ if(!manual && chatInputBytes(context)>limit)throw new AiUserFacingError('This message and its context are too long. Shorten your message or start a new chat.','ai_context_limit');
  return {input:context,manual,changed,promptTokens,outputTokens};
 }

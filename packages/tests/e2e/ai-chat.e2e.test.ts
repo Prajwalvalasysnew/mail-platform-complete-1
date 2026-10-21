@@ -29,6 +29,41 @@ describe('durable AI chat and harness-style checkpoints',()=>{
   expect((await app.inject({method:'GET',url:`/ai/chats/${id}`,headers:headers(b)})).statusCode).toBe(404);
   expect((await app.inject({method:'POST',url:`/ai/chats/${id}/turns`,headers:headers(b),payload:{request_id:randomUUID(),operation:'chat',instruction:'Steal',settings:{}}})).statusCode).not.toBe(202);
  });
+ it('keeps each chat context to its own messages, even for other chats and members of the same workspace',async()=>{
+  const a=await actor(),fetcher=model();vi.stubGlobal('fetch',fetcher);
+  const teammate=await db.insertInto('users').values({email:`chat-${randomUUID()}@example.test`}).returning('id').executeTakeFirstOrThrow();
+  await db.insertInto('memberships').values({customer_id:a.cid,user_id:teammate.id,role:'owner'}).execute();
+  const session=await createUserSession(teammate.id,{currentCustomerId:a.cid}),b={cid:a.cid,uid:teammate.id,token:session.token,sid:session.id};
+  const other=randomUUID(),own=randomUUID();
+  const secret=await turn(b,other,'Teammate secret PLUM-404');await executeAiRun(b.cid,secret.id,new AbortController().signal);
+  const sibling=await turn(a,randomUUID(),'Other chat note KIWI-12');await executeAiRun(a.cid,sibling.id,new AbortController().signal);
+  const first=await turn(a,own,'Remember ORCHID-731');await executeAiRun(a.cid,first.id,new AbortController().signal);
+  const next=await turn(a,own,'What is the codename?');await executeAiRun(a.cid,next.id,new AbortController().signal);
+  const sent=JSON.stringify(fetcher.mock.calls.at(-1));
+  expect(sent).toContain('ORCHID-731');expect(sent).not.toContain('PLUM-404');expect(sent).not.toContain('KIWI-12');
+  await db.deleteFrom('users').where('id','=',teammate.id).execute();
+ });
+ it('keeps failed requests in context and extends chat expiry on every message',async()=>{
+  const a=await actor(),id=randomUUID();
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response('{}',{status:503})));
+  const failed=await turn(a,id,'Draft the ORCHID-731 announcement');await executeAiRun(a.cid,failed.id,new AbortController().signal);
+  expect((await chat(a,id)).messages.at(-1).status).toBe('failed');
+  await withTenant(a.cid,trx=>trx.updateTable('ai_chats').set({expires_at:new Date(Date.now()+60000)}).where('id','=',id).execute());
+  const fetcher=model();vi.stubGlobal('fetch',fetcher);
+  const retry=await turn(a,id,'Try again');await executeAiRun(a.cid,retry.id,new AbortController().signal);
+  const conversation=JSON.parse(JSON.parse(JSON.parse((fetcher.mock.calls.at(-1) as any)[1].body).messages[1].content).content).conversation;
+  expect(conversation[0].content).toBe('Draft the ORCHID-731 announcement');expect(conversation[1].content).toMatch(/failed or was stopped/);
+  const saved=await chat(a,id);expect(new Date(saved.chat.expires_at).getTime()).toBeGreaterThan(Date.now()+29*86400000);
+ });
+ it('does not reset the daily limit when conversations are deleted',async()=>{
+  vi.stubEnv('AI_USER_DAILY_LIMIT','2');
+  try{
+   const a=await actor();vi.stubGlobal('fetch',model());
+   for(let n=0;n<2;n++){const id=randomUUID(),r=await turn(a,id,`Request ${n}`);await executeAiRun(a.cid,r.id,new AbortController().signal);expect((await app.inject({method:'DELETE',url:`/ai/chats/${id}`,headers:headers(a)})).statusCode).toBe(200);}
+   const blocked=await app.inject({method:'POST',url:`/ai/chats/${randomUUID()}/turns`,headers:headers(a),payload:{request_id:randomUUID(),operation:'chat',instruction:'One more',settings:{}}});
+   expect(blocked.statusCode).toBe(429);expect(blocked.json().message).toMatch(/More become available at/);
+  }finally{vi.stubEnv('AI_USER_DAILY_LIMIT','50');}
+ });
  it('automatically checkpoints older balanced turns without deleting the transcript or losing the prior checkpoint',async()=>{
   const a=await actor(),id=randomUUID(),fetcher=model('Status detail '.repeat(190));vi.stubGlobal('fetch',fetcher);
   for(let n=0;n<5;n++){const r=await turn(a,id,n===0?'Remember ORCHID-731. Keep a plain tone.':`Continue update ${n}`);await executeAiRun(a.cid,r.id,new AbortController().signal);}
@@ -108,6 +143,9 @@ describe('durable AI chat and harness-style checkpoints',()=>{
   await withTenant(a.cid,trx=>trx.updateTable('ai_chats').set({expires_at:new Date(Date.now()-1000)}).where('id','=',id).execute());await maintainAiRuns(a.cid);
   expect(await withTenant(a.cid,trx=>trx.selectFrom('ai_chats').select('id').where('id','=',id).executeTakeFirst())).toBeDefined();
   await withTenant(a.cid,trx=>trx.updateTable('legal_holds').set({released_at:new Date()}).where('id','=',hold.id).execute());await maintainAiRuns(a.cid);
+  // Its reply is still queued, so the chat is kept until that run settles.
+  expect(await withTenant(a.cid,trx=>trx.selectFrom('ai_chats').select('id').where('id','=',id).executeTakeFirst())).toBeDefined();
+  await withTenant(a.cid,trx=>trx.updateTable('ai_runs').set({status:'failed',input:null}).where('chat_id','=',id).execute());await maintainAiRuns(a.cid);
   expect(await withTenant(a.cid,trx=>trx.selectFrom('ai_chats').select('id').where('id','=',id).executeTakeFirst())).toBeUndefined();
  });
  it('grounds delivery answers in actual tenant rollups and persists read observations',async()=>{
@@ -160,9 +198,13 @@ describe('durable AI chat and harness-style checkpoints',()=>{
   const a=await actor(),id=randomUUID(),r=await turn(a,id,'Remember this');
   expect((await app.inject({method:'DELETE',url:`/ai/runs/${r.id}`,headers:headers(a)})).json().error).toBe('delete_conversation');
   expect((await app.inject({method:'DELETE',url:`/ai/chats/${id}`,headers:headers(a)})).statusCode).toBe(200);
-  expect(await withTenant(a.cid,trx=>trx.selectFrom('ai_runs').select('id').where('id','=',r.id).executeTakeFirst())).toBeUndefined();
+  // The run stays as a quota marker (deleting must not reset the daily limit) but its content is erased and it is stopped.
+  const marker=await withTenant(a.cid,trx=>trx.selectFrom('ai_runs').select(['chat_id','input','result','status','expires_at']).where('id','=',r.id).executeTakeFirstOrThrow());
+  expect(marker).toMatchObject({chat_id:null,input:null,result:null,status:'cancelled'});expect(marker.expires_at.getTime()).toBeLessThanOrEqual(Date.now());
+  expect((await app.inject({method:'GET',url:`/ai/runs/${r.id}`,headers:headers(a)})).statusCode).toBe(404);
   const expired=randomUUID();await turn(a,expired,'Expire this');await withTenant(a.cid,trx=>trx.updateTable('ai_chats').set({expires_at:new Date(Date.now()-1000)}).where('id','=',expired).execute());
-  expect((await app.inject({method:'GET',url:`/ai/chats/${expired}`,headers:headers(a)})).statusCode).toBe(404);await maintainAiRuns(a.cid);
+  expect((await app.inject({method:'GET',url:`/ai/chats/${expired}`,headers:headers(a)})).statusCode).toBe(404);
+  await withTenant(a.cid,trx=>trx.updateTable('ai_runs').set({status:'failed',input:null}).where('chat_id','=',expired).execute());await maintainAiRuns(a.cid);
   expect(await withTenant(a.cid,trx=>trx.selectFrom('ai_chats').select('id').where('id','=',expired).executeTakeFirst())).toBeUndefined();
  });
 });

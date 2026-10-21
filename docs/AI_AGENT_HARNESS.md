@@ -77,16 +77,28 @@ The editor sends the canvas body HTML (editor CSS inlined, up to 60,000 characte
 | `AI_MAX_OUTPUT_TOKENS` | 8192 | Was 3000; a full designed email needs room |
 | `AI_AGENT_TIMEOUT_MS` | 240000 | Whole multi-step turn; run deadline adds 30 s |
 | `AI_PROVIDER` | `ollama` | Only for the simple operations (subjects/rewrite/compact); `openai` uses `/v1/chat/completions` in JSON mode |
-| `AI_THINK` | `medium` | Ollama `think` value for simple operations |
+| `AI_THINK` | `medium` | Ollama `think` value for simple operations (subject lines, compaction and routing run without reasoning so their small output caps are not used up) |
+| `AI_USER_DAILY_LIMIT` | 50 | Requests per user in a rolling 24 hours. Deleting chats does not reset it |
+| `AI_RETENTION_HOURS` | 24 | Run inputs and results (the per-request records) |
+| `AI_CHAT_RETENTION_DAYS` | 30 | Saved conversations. Each new message extends the window; a chat with a reply in progress is never purged |
 
 Helm: the AI worker now mounts an `emptyDir` at `/tmp`, because its root filesystem is read-only. Its memory limit is raised to 1.5 Gi for the harness child process. The worker image installs about 550 MB of extra harness packages. The harness publishes only release-candidate versions, so they are pinned exactly.
+
+## Chat experience and reliability
+
+- **Plain chat in the builders.** The template editor and workflow builder panels show only the conversation and one message box (Enter sends, Shift+Enter adds a line). While the agent works, the status names the current step ("Editing the email…", "Building the workflow…") and offers Stop. AI replies can be copied. A failed or stopped reply offers Retry. New chat starts over.
+- **Conversations persist.** The editor stores its chat with the template; each workflow remembers its chat in the browser, including a new workflow once it is first saved. The AI agent page lists saved chats and can delete them.
+- **Context.** Each chat sees only its own messages. Requests that failed or were stopped stay in context, marked as such, so "try again" works. Compaction measures only the conversation, not the editor or workflow state sent with each message.
+- **Clear errors.** Failures say what to do: a link the user did not provide, an email that grew too large, a request that took too long, the daily limit (with when it frees up), or a conversation that is too long.
+- **Safety.** Links already in the email (including `mailto:` and CSS background images) stay editable; new links, CSS `url()` images, webhook URLs and alert recipients must come from the user's own words. Workflow settings apply all-or-nothing. If the model keeps calling tools past the 40-step budget, the worker ends the session and returns what was done.
+- **Deleting.** Deleting a chat or a run stops it and erases its content immediately; a minimal record remains until retention ends so the daily limit cannot be reset.
 
 ## Verification
 
 - `packages/tests/e2e/ai-agent-harness.e2e.test.ts` runs the real harness against a scripted OpenAI-compatible model. It covers create → CTA + orange background (the invented link is rejected, then `#` is used) → link the CTA. It checks that untouched content is unchanged and that history is carried between turns. It also covers claim verification, bare domains, questions that must not edit, and main-chat drafting, revision and approval.
 - `packages/tests/ai-email-document.test.ts` covers the sanitiser, the link and merge-tag policy, targeted edits, outlines and the HTML budget.
 - `packages/tests/ai-workflow-draft.test.ts` covers workflow building, inserting, editing, removing and publish issues; the harness e2e suite also builds and edits workflows in the builder, has the Automations drawer draft one, and approves it into an inactive draft workflow.
-- `packages/customer-ui/scripts/check-ai-everywhere-browser.mjs` runs the real API server and AI worker against the production bundle. It builds a workflow from the builder's AI panel (autosaved to the workspace), answers a domain question from the Settings drawer using workspace data, and drafts a workflow from the Automations drawer. Screenshots are written to `packages/customer-ui/test-results/ai-everywhere/`.
+- `packages/customer-ui/scripts/check-ai-everywhere-browser.mjs` runs the real API server and AI worker against the production bundle. It builds a workflow from the builder's AI panel (autosaved to the workspace), stops a reply and retries it, reopens the workflow to check the chat is restored, starts a new chat, answers a domain question from the Settings drawer using workspace data, and drafts a workflow from the Automations drawer. Screenshots are written to `packages/customer-ui/test-results/ai-everywhere/`.
 - `packages/customer-ui/scripts/check-ai-agent-browser.mjs` replays the original conversation in Chromium through the production UI bundle, API, queue, AI worker process and harness. Screenshots are written to `packages/customer-ui/test-results/ai-agent/`.
 
 These checks use a scripted model, so they prove the plumbing, the tools, the policy and the UI, not how good a particular model's writing is. Before enabling tenants, run the browser script against the real Ollama route with the scripted server disabled, and review the generated emails.
@@ -97,3 +109,6 @@ These checks use a scripted model, so they prove the plumbing, the tools, the po
 - Each turn starts a harness process, which adds roughly 1 s. Turns run one at a time per worker (`AI_CONCURRENCY`).
 - Models that do not support OpenAI-style tool calling will answer without editing. The verification step then makes them say so rather than claim a change.
 - The `<style>` blocks and media queries that GrapesJS keeps outside inline styles are not sent to the agent.
+- Replies are delivered when complete (with live step progress), not streamed token by token.
+- Workspace data the agent read in an earlier turn is not replayed in later turns; it reads again when needed.
+- Token usage is recorded only for successful runs.

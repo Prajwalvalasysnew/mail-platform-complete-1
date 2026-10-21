@@ -67,7 +67,10 @@ describe('AI writing content and transport',()=>{
     expect(result.result.operation).toBe('subjects');expect(result.promptTokens).toBeNull();
     const [url,options]=fetcher.mock.calls[0] as unknown as [string,RequestInit];
     expect(url).toBe('https://inference.test/api/chat');expect(options.redirect).toBe('error');
-    expect(JSON.parse(options.body as string)).toMatchObject({model:'fixture-model',stream:false,think:'low'});
+    expect(JSON.parse(options.body as string)).toMatchObject({model:'fixture-model',stream:false,think:false});
+    // Subject lines have a small output cap, so reasoning is off; longer writing keeps it.
+    await generateAi(input('rewrite'),new AbortController().signal,fetcher).catch(()=>undefined);
+    expect(JSON.parse((fetcher.mock.calls[1] as unknown as [string,RequestInit])[1].body as string).think).toBe('low');
   });
   it('refuses token exhaustion, malformed JSON, unsuccessful responses and oversized bodies',async()=>{
     configured();const signal=new AbortController().signal;

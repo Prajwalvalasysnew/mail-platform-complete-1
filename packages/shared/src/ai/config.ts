@@ -29,6 +29,8 @@ export function aiConfig(env: NodeJS.ProcessEnv = process.env) {
     concurrency: number('AI_CONCURRENCY', 1, 8),
     dailyLimit: number('AI_USER_DAILY_LIMIT', 50, 1000),
     retentionHours: number('AI_RETENTION_HOURS', 24, 168),
+    // Saved conversations; each new message extends the window, like other chat products.
+    chatRetentionDays: number('AI_CHAT_RETENTION_DAYS', 30, 365),
   };
 }
 

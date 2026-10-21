@@ -22,6 +22,7 @@ export const ChatSettings=z.object({
 export const ChatTurn=z.object({request_id:z.string().uuid(),operation:z.enum(['chat','draft','assist','editor','workflow']),instruction:z.string().trim().min(1).max(4000),settings:ChatSettings.default({})}).strict().refine(v=>Buffer.byteLength(JSON.stringify(withoutCanvas(v.settings)),'utf8')<=(v.settings.editor?10000:3000) && Buffer.byteLength(JSON.stringify(v.settings.workflow?.document ?? null),'utf8')<=200000,'Settings too long');
 /** Settings minus canvas state (email HTML, workflow graph), which is never stored with chat history. */
 function withoutCanvas(settings:z.infer<typeof ChatSettings>){return {...settings,editor:settings.editor?{...settings.editor,html:undefined}:undefined,workflow:settings.workflow?{...settings.workflow,document:undefined}:undefined};}
+const chatExpiry=()=>new Date(Date.now()+aiConfig().chatRetentionDays*86400000);
 const missing=()=>new AiRunError('not_found',404,'This conversation is unavailable or has expired.');
 export async function ownedChat(trx:TenantExecutor,cid:string,uid:string,id:string){
  return trx.selectFrom('ai_chats').selectAll().where('customer_id','=',cid).where('user_id','=',uid).where('id','=',id).where('expires_at','>',new Date()).executeTakeFirst();
@@ -29,7 +30,9 @@ export async function ownedChat(trx:TenantExecutor,cid:string,uid:string,id:stri
 export async function createChatTurn(cid:string,uid:string,sid:string,id:string,body:z.infer<typeof ChatTurn>){
  return withTenant(cid,async trx=>{
   await sql`select pg_advisory_xact_lock(hashtextextended(${cid+':'+uid+':ai'},0))`.execute(trx);
-  const input=AiInput.parse({operation:body.operation,instruction:body.instruction,content:JSON.stringify(body.settings),subject:'',tone:body.settings.editor?.tone || 'Professional'});
+  const parsed=AiInput.safeParse({operation:body.operation,instruction:body.instruction,content:JSON.stringify(body.settings),subject:'',tone:body.settings.editor?.tone || 'Professional'});
+  if(!parsed.success)throw new AiRunError('ai_context_limit',400,body.settings.workflow?'This workflow is too large for the AI assistant. Remove some steps or ask about one part at a time.':'This request is too large for the AI assistant. Shorten your message or the selected content.');
+  const input=parsed.data;
   const stored=withoutCanvas(body.settings);
   if(Buffer.byteLength(JSON.stringify(detachEditorHtml(input).input),'utf8')+1200>aiInputByteLimit(input.operation))throw new AiRunError('ai_context_limit',400,'Shorten your message or workspace instructions to leave room for conversation context.');
   const prior=await trx.selectFrom('ai_runs').select(['chat_id','chat_seq']).where('customer_id','=',cid).where('user_id','=',uid).where('request_id','=',body.request_id).executeTakeFirst();
@@ -37,14 +40,14 @@ export async function createChatTurn(cid:string,uid:string,sid:string,id:string,
   if(prior){if(prior.chat_id!==id || !chat)throw missing();return createAiRun(cid,uid,sid,body.request_id,input,{trx,id,seq:prior.chat_seq!});}
   if(!chat){
    const collision=await trx.selectFrom('ai_chats').select('id').where('id','=',id).executeTakeFirst();if(collision)throw missing();
-   chat=await trx.insertInto('ai_chats').values({id,customer_id:cid,user_id:uid,title:body.instruction.slice(0,80),settings:stored,expires_at:new Date(Date.now()+aiConfig().retentionHours*3600000)}).returningAll().executeTakeFirstOrThrow();
+   chat=await trx.insertInto('ai_chats').values({id,customer_id:cid,user_id:uid,title:Array.from(body.instruction).slice(0,80).join(''),settings:stored,expires_at:chatExpiry()}).returningAll().executeTakeFirstOrThrow();
   }
   const seq=chat.next_seq,run=await createAiRun(cid,uid,sid,body.request_id,input,{trx,id,seq});
   await trx.insertInto('ai_chat_messages').values([
    {id:randomUUID(),customer_id:cid,chat_id:id,run_id:run.id,seq,role:'user' as const,text:body.instruction,status:'completed',result:{context_settings:stored},error:null,template_id:null,decision:null},
    {id:randomUUID(),customer_id:cid,chat_id:id,run_id:run.id,seq:seq+1,role:'assistant' as const,text:'',status:'queued',result:null,error:null,template_id:null,decision:null},
   ]).execute();
-  await trx.updateTable('ai_chats').set({next_seq:seq+2,settings:stored,updated_at:new Date()}).where('customer_id','=',cid).where('id','=',id).execute();
+  await trx.updateTable('ai_chats').set({next_seq:seq+2,settings:stored,updated_at:new Date(),expires_at:chatExpiry()}).where('customer_id','=',cid).where('id','=',id).execute();
   return run;
  });
 }
@@ -52,7 +55,7 @@ export async function listAiChats(cid:string,uid:string){return withTenant(cid,a
 export async function getAiChat(cid:string,uid:string,id:string,before=2147483647){return withTenant(cid,async trx=>{
  const chat=await ownedChat(trx,cid,uid,id);if(!chat)throw missing();
  const messages=await trx.selectFrom('ai_chat_messages as m').leftJoin('ai_runs as r','r.id','m.run_id').select(['m.id','m.seq','m.role','m.text','m.result','m.error','m.status','m.run_id','m.template_id','m.workflow_id','m.decision','m.created_at','r.status as run_status','r.error as run_error','r.created_at as run_created_at','r.updated_at as run_updated_at',sql<boolean>`r.session_id is not null`.as('run_has_session')]).where('m.customer_id','=',cid).where('m.chat_id','=',id).where('m.seq','<',before).orderBy('m.seq','desc').limit(201).execute();
- const steps=await trx.selectFrom('ai_run_steps as s').innerJoin('ai_runs as r','r.id','s.run_id').select(['s.run_id','s.name','s.status','s.created_at']).where('s.customer_id','=',cid).where('r.customer_id','=',cid).where('r.chat_id','=',id).whereRef('s.attempt','=','r.attempt').orderBy('s.created_at').limit(500).execute();
+ const steps=await trx.selectFrom('ai_run_steps as s').innerJoin('ai_runs as r','r.id','s.run_id').select(['s.run_id','s.name','s.status','s.created_at']).where('s.customer_id','=',cid).where('r.customer_id','=',cid).where('r.chat_id','=',id).whereRef('s.attempt','=','r.attempt').orderBy('s.created_at','desc').limit(500).execute().then(rows=>rows.reverse());
  return {chat,steps,has_more:messages.length>200,before_seq:messages.slice(0,200).at(-1)?.seq,messages:messages.slice(0,200).reverse().map(m=>({...m,status:m.role==='assistant'?(!m.run_has_session && ['queued','running'].includes(m.run_status || m.status)?'failed':m.run_status || m.status):m.status,error:m.run_error || m.error || (!m.run_has_session && m.role==='assistant' && ['queued','running'].includes(m.status)?'The original login session ended. Send a new message to continue.':null)})),checkpoints:await trx.selectFrom('ai_chat_checkpoints').select(['through_seq','created_at']).where('customer_id','=',cid).where('chat_id','=',id).orderBy('through_seq','desc').execute()};
  });}
 export async function decideAiDraft(cid:string,uid:string,chatId:string,messageId:string,decision:'applied'|'skipped'){
@@ -85,6 +88,11 @@ export async function deleteAiChat(cid:string,uid:string,id:string){return withT
  const held=await trx.selectFrom('legal_holds').select('id').where('customer_id','=',cid).where('released_at','is',null).executeTakeFirst();
  const locked=await trx.selectFrom('regulatory_retention_locks').select('id').where('customer_id','=',cid).where('released_at','is',null).where('retain_until','>',new Date()).executeTakeFirst();
  if(held || locked)throw new AiRunError('retention_hold',409,'Workspace retention policy prevents deletion.');
+ // Stop any reply in flight and erase run content, but keep the run rows: they are the user's quota markers.
+ const now=new Date();
+ await trx.updateTable('ai_runs').set({status:'cancelled',lease_until:null,updated_at:now}).where('customer_id','=',cid).where('chat_id','=',id).where('status','in',['queued','running']).execute();
+ await trx.updateTable('ai_runs').set({input:null,result:null,warnings:sql<unknown>`'[]'::jsonb`,expires_at:now}).where('customer_id','=',cid).where('chat_id','=',id).execute();
+ await trx.deleteFrom('ai_run_steps').where('customer_id','=',cid).where('run_id','in',trx.selectFrom('ai_runs').select('id').where('customer_id','=',cid).where('chat_id','=',id)).execute();
  await trx.deleteFrom('ai_chats').where('customer_id','=',cid).where('user_id','=',uid).where('id','=',id).execute();return {deleted:true};
  });}
 

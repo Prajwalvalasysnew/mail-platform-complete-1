@@ -194,6 +194,32 @@ export const ERROR_CODES = {
   attachment_too_large: { description: 'An attachment (or the attachment total) exceeds the size limit.', httpStatus: 422 },
   attachment_malware_detected: { description: 'An attachment was identified as malicious by the configured scanner.', httpStatus: 422 },
   attachment_scan_unavailable: { description: 'Attachment scanning is required but temporarily unavailable.', httpStatus: 503 },
+  // ── AI assistant ──────────────────────────────────────────────
+  ai_disabled: { description: 'AI is not enabled for this workspace.', httpStatus: 403 },
+  ai_unavailable: { description: 'AI is not enabled for this workspace or for the role of the caller.', httpStatus: 403 },
+  ai_temporarily_unavailable: { description: 'The AI service or its queue is temporarily unavailable; retry the same request.', httpStatus: 503 },
+  ai_busy: { description: 'Another AI request from this user is still running; finish or stop it first.', httpStatus: 409 },
+  ai_limit: { description: 'The AI request limit for this user over the last 24 hours has been reached.', httpStatus: 429 },
+  ai_context_limit: { description: 'The message or its context is too long for the configured AI context.', httpStatus: 400 },
+  invalid_ai_request: { description: 'The AI generation request is malformed or exceeds limits.', httpStatus: 400 },
+  invalid_chat_id: { description: 'The conversation ID is not a valid UUID.', httpStatus: 400 },
+  invalid_chat_request: { description: 'The chat message or its settings are malformed or exceed limits.', httpStatus: 400 },
+  invalid_run_id: { description: 'The AI run ID is not a valid UUID.', httpStatus: 400 },
+  invalid_decision: { description: 'The draft decision must be applied or skipped.', httpStatus: 400 },
+  request_conflict: { description: 'This request ID was already used with different content.', httpStatus: 409 },
+  run_expired: { description: 'This AI result has expired; start a new request.', httpStatus: 410 },
+  delete_conversation: { description: 'This run belongs to a conversation; delete the conversation instead.', httpStatus: 409 },
+  retention_hold: { description: 'A legal hold or retention lock prevents deleting this record.', httpStatus: 409 },
+  // ── Console data, campaigns and sign-in handoff ──────────────────────────────────────────────
+  audience_not_found: { description: 'The audience (list or segment) does not exist in this workspace.', httpStatus: 404 },
+  contact_exists: { description: 'A contact with this email address already exists.', httpStatus: 409 },
+  invalid_handoff: { description: 'The sign-in handoff link expired, was revoked or was already used.', httpStatus: 410 },
+  launch_in_progress: { description: 'A campaign launch may still be running; wait before retrying.', httpStatus: 409 },
+  missing_messages: { description: 'Some campaign launch records are missing; the launch cannot be reconciled.', httpStatus: 409 },
+  request_changed: { description: 'The request changed since it was first submitted with this key.', httpStatus: 409 },
+  revision_conflict: { description: 'The document was changed elsewhere; reload and retry with the latest revision.', httpStatus: 409 },
+  stale_revision: { description: 'The supplied revision is out of date; reload and retry.', httpStatus: 409 },
+  unresolved_launch: { description: 'An earlier campaign launch has not been reconciled yet.', httpStatus: 409 },
 } as const satisfies Record<string, ErrorCodeSpec | { description: string; httpStatus: number }>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

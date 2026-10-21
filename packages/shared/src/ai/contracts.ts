@@ -1,4 +1,7 @@
 import { z } from 'zod';
+
+/** A failure the user can act on; its message is shown instead of the generic retry text. */
+export class AiUserFacingError extends Error{constructor(public userMessage:string,code='ai_user_facing'){super(code);}}
 import {renderEmailLayout} from './email-layout.js';
 import {ReadPlan,READ_PLAN_FORMAT,type ReadCall} from './tool-contracts.js';
 

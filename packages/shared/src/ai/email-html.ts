@@ -20,7 +20,9 @@ function cleanCss(value:string){
   const prop=part.slice(0,index).trim().toLowerCase(),val=part.slice(index+1).trim();
   if(!/^-?[a-z][a-z0-9-]*$/.test(prop) || !val || val.length>500)return '';
   if(/expression\s*\(|javascript:|vbscript:|@import|behavior\s*:|-moz-binding|[<>\\]/i.test(val))return '';
-  if(/url\s*\(/i.test(val) && !/^url\(\s*['"]?https:\/\/[^'")\s]+['"]?\s*\)/i.test(val.replace(/^.*?(url\()/i,'$1')))return '';
+  // At most one url(), and it must be https; policyProblems also checks it against the allowed links.
+  const urls=val.match(/url\s*\(/gi);
+  if(urls && (urls.length>1 || !/^url\(\s*['"]?https:\/\/[^'")\s]+['"]?\s*\)/i.test(val.replace(/^.*?(url\()/i,'$1'))))return '';
   return `${prop}:${val}`;
  }).filter(Boolean).join(';');
 }
@@ -73,12 +75,16 @@ export function extractUserUrls(text:string):string[]{
 }
 
 export type LinkPolicy={allowed:Set<string>;tags:Set<string>};
+/** https URLs inside CSS url(...) values of style attributes. */
+const cssUrls=(style:string)=>[...style.matchAll(/url\(\s*['"]?([^'")\s]+)['"]?\s*\)/gi)].map(m=>m[1]!);
 export function linkPolicy(userText:string,documentHtml:string,extraUrls:string[]=[]):LinkPolicy{
  const allowed=new Set<string>(),tags=new Set(PLATFORM_MERGE_TAGS);
  const add=(u:string)=>{const n=normalizeUrl(u);if(n)allowed.add(n);};
  extractUserUrls(userText).forEach(add);extraUrls.forEach(add);
  const $=load(documentHtml,null,false);
- $('[href],[src],[background]').each((_,el)=>{for(const key of ['href','src','background']){const v=$(el).attr(key);if(v && /^https?:/i.test(v))add(v);}});
+ // Links already in the user's email stay allowed, including mailto: addresses and CSS background images.
+ $('[href],[src],[background]').each((_,el)=>{for(const key of ['href','src','background']){const v=$(el).attr(key)?.trim();if(!v)continue;if(/^https?:/i.test(v))add(v);else if(/^mailto:/i.test(v))allowed.add(v.toLowerCase().split('?')[0]!);}});
+ $('[style]').each((_,el)=>{cssUrls($(el).attr('style') || '').forEach(add);});
  for(const m of `${userText}\n${documentHtml}`.matchAll(/{{\s*([\w.]+)\s*}}/g))tags.add(m[1]!);
  for(const m of userText.matchAll(/(?:mailto:)?([\w.+-]+@[\w-]+\.[\w.-]+)/g))allowed.add(`mailto:${m[1]!.toLowerCase()}`);
  return {allowed,tags};
@@ -93,6 +99,7 @@ export function policyProblems(html:string,policy:LinkPolicy):string[]{
   const n=normalizeUrl(v);
   if(!n || !policy.allowed.has(n))problems.add(`${v} was not provided by the user. Use only links the user gave (or href="#" and ask for the link)`);
  }});
+ $('[style]').each((_,el)=>{for(const v of cssUrls($(el).attr('style') || '')){const n=normalizeUrl(v);if(!n || !policy.allowed.has(n))problems.add(`${v} was not provided by the user. Use only image URLs the user gave`);}});
  for(const m of html.matchAll(/{{\s*([\w.]+)\s*}}/g))if(!policy.tags.has(m[1]!))problems.add(`Merge tag {{${m[1]}}} does not exist. Available: ${[...policy.tags].map(t=>`{{${t}}}`).join(', ')}`);
  return [...problems];
 }
