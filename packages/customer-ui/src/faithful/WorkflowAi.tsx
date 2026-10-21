@@ -27,11 +27,11 @@ export function installWorkflowAi(c:Controller,context:()=>{id:string|null;ready
   return data;
  }
  // Only the persisted builder fields; transient layout keys (prefixed "_") stay in the browser.
- const documentOf=(w:any)=>({name:w.name,tkey:w.tkey,settings:w.settings,graph:{nodes:w.graph.nodes.map((n:any)=>Object.fromEntries(Object.entries(n).filter(([k])=>!k.startsWith('_')))),edges:w.graph.edges}});
+ const documentOf=(w:any)=>({name:w.name,tkey:w.tkey,tcfg:w.tcfg || {},settings:w.settings,graph:{nodes:w.graph.nodes.map((n:any)=>Object.fromEntries(Object.entries(n).filter(([k])=>!k.startsWith('_')))),edges:w.graph.edges}});
  const snapshot=()=>JSON.stringify(documentOf(c.cur()));
  function apply(result:any){
   const d=result.document;
-  c.change((w:any)=>({...w,name:d.name,tkey:d.tkey,trigger:c.tLabel(d.tkey),settings:{...w.settings,...d.settings},graph:c.tidy({graph:structuredClone(d.graph)}).graph}));
+  c.change((w:any)=>({...w,name:d.name,tkey:d.tkey,tcfg:d.tcfg || {},trigger:c.tLabel(d.tkey),settings:{...w.settings,...d.settings},graph:c.tidy({graph:structuredClone(d.graph)}).graph}));
   c.setState({sel:null,selEdge:null,pendingAiDraft:null});setTimeout(()=>c.fit?.(),30);
  }
  async function follow(request:ReturnType<typeof requestAi>,before:string){

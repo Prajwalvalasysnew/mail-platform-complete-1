@@ -365,6 +365,9 @@ export const openapiSpec = {
     '/workflows/{id}/trigger': {
       post: { summary: 'Start a run for a subject (external/API trigger; supports Idempotency-Key)', operationId: 'triggerWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, run_id }' }, '409': { description: 'Not started (re-entry policy / already active / capacity)' } } },
     },
+    '/workflows/events': {
+      post: { summary: 'Send a named business event (order_placed, appointment_booked, trial_started...) for a contact: starts custom-event workflows, resumes waits on it, records goals (supports Idempotency-Key)', operationId: 'sendWorkflowEvent', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['event', 'email'], properties: { event: { type: 'string', pattern: '^[a-z0-9][a-z0-9_.-]{0,63}$' }, email: { type: 'string', format: 'email' }, data: { type: 'object', description: 'Up to 16 KB; available to rules as context.<field> and to emails as {{field}}' } } } } } }, responses: { '202': { description: '{ accepted, event, id }' }, '400': { description: 'Invalid event name or data' } } },
+    },
     '/workflows/{id}/trigger/bulk': {
       post: { summary: 'Enroll up to 1000 subjects in one call, with per-subject results', operationId: 'triggerWorkflowBulk', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, total, results: [{ email, started, run_id | skipped_reason }] }' } } },
     },

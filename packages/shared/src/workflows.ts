@@ -18,6 +18,7 @@ import {
   validateWorkflowDefinition,
   type DefinitionValidation,
   type WorkflowDefinition,
+  customEventKey,
 } from './workflow-definition.js';
 
 export class WorkflowError extends Error {
@@ -292,6 +293,25 @@ export async function publishWorkflow(
     }
   }
 
+  // Senders (email + team notifications) must use a verified domain, and an
+  // audience trigger must point at a list/segment of this tenant.
+  const senderDomains = [...new Set(def.steps.flatMap((s) => (s.type === 'send_email' || s.type === 'notify' ? [s.from.split('@')[1]!.toLowerCase()] : [])))];
+  if (senderDomains.length > 0) {
+    const verified = await runForTenant(customerId, executor, (trx) =>
+      trx.selectFrom('sending_domains').select('domain').where('customer_id', '=', customerId).where('domain', 'in', senderDomains).where('verified_at', 'is not', null).execute()
+    );
+    const ok = new Set(verified.map((d) => d.domain.toLowerCase()));
+    const bad = senderDomains.filter((d) => !ok.has(d));
+    if (bad.length) throw new WorkflowError('invalid_sender', `Sender domain not verified: ${bad.join(', ')}`);
+  }
+  if (def.trigger.type === 'audience') {
+    const collectionId = def.trigger.collection_id;
+    const found = await runForTenant(customerId, executor, (trx) =>
+      trx.selectFrom('audience_collections').select('id').where('customer_id', '=', customerId).where('id', '=', collectionId).executeTakeFirst()
+    );
+    if (!found) throw new WorkflowError('invalid_definition', 'The list or segment for this trigger no longer exists');
+  }
+
   // Webhook URLs: DNS-resolving SSRF gate at publish time for immediate
   // feedback (also re-checked at delivery, matching webhooks.ts). Network I/O
   // happens before the write transaction below.
@@ -336,7 +356,12 @@ export async function publishWorkflow(
         published_version_id: version.id,
         published_version: version.version,
         trigger_type: def.trigger.type,
-        trigger_event_type: def.trigger.type === 'event' ? def.trigger.event_type : null,
+        // Indexed lookup key per trigger kind: email event, custom:<name>, or list id.
+        trigger_event_type:
+          def.trigger.type === 'event' ? def.trigger.event_type
+          : def.trigger.type === 'custom_event' ? customEventKey(def.trigger.event_name)
+          : def.trigger.type === 'audience' ? def.trigger.collection_id
+          : null,
         allow_reentry: def.settings.allow_reentry,
         reentry_cooldown_seconds: def.settings.reentry_cooldown_seconds,
       })

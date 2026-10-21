@@ -114,12 +114,16 @@ export interface WorkflowJobData {
   // advance: execute steps from the run's current position.
   // wake:    a delay elapsed — transition waiting_delay -> running, advance.
   // timeout: a wait_for_event timed out — take the on_timeout branch, advance.
-  kind: 'advance' | 'wake' | 'timeout';
+  // custom_event: a named business event to dispatch (triggers, waits, goals, exits).
+  kind: 'advance' | 'wake' | 'timeout' | 'custom_event';
   run_id: string;
   customer_id: string;
   // Guard for wake/timeout: only fires if the run is still waiting on this
   // step (an event may have resumed it first).
   step_id?: string;
+  event_name?: string;
+  subject_email?: string;
+  data?: Record<string, unknown>;
 }
 
 export const workflowQueue = new Queue<WorkflowJobData>(`${QUEUE_PREFIX}workflow`, defaultQueueOpts);

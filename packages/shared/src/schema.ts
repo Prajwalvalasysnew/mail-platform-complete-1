@@ -385,6 +385,9 @@ export interface AudienceContactsTable {
   revision:Generated<number>;
   created_at:ColumnType<Date,Date|string|undefined,never>;
   updated_at:ColumnType<Date,Date|string|undefined,Date|string>;
+  tags:Generated<string[]>;
+  attributes:Generated<Record<string,unknown>>;
+  timezone:string|null;
 }
 
 // =====================================================
@@ -1521,7 +1524,7 @@ export type WorkflowRunStatus =
   | 'exited'
   | 'failed'
   | 'canceled';
-export type WorkflowTriggerSource = 'event' | 'api' | 'manual' | 'test';
+export type WorkflowTriggerSource = 'event' | 'api' | 'manual' | 'test' | 'audience' | 'schedule';
 
 export interface WorkflowsTable {
   builder_document:Record<string,unknown>|null;
@@ -1536,6 +1539,7 @@ export interface WorkflowsTable {
   published_version: number | null;
   trigger_type: string | null;
   trigger_event_type: string | null;
+  date_trigger_swept_on: ColumnType<string | null, string | null | undefined, string | null>;
   allow_reentry: Generated<boolean>;
   reentry_cooldown_seconds: Generated<number>;
   created_by_user_id: string | null;

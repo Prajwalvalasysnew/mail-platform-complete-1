@@ -1,7 +1,7 @@
 import type {FastifyPluginAsync} from 'fastify';
 import {sql} from 'kysely';
 import {z} from 'zod';
-import {recordAuditSafe,type TenantExecutor} from '@platform/shared';
+import {recordAuditSafe,enrollAudienceWorkflows,kickWorkflowRun,type TenantExecutor} from '@platform/shared';
 import {tenantScoped} from '../lib/tenant.js';
 
 const Rule=z.object({field:z.enum(['Created','Opened any email','Clicked any email']),op:z.enum(['in last','not in last']),val:z.enum(['7 days','30 days','60 days','90 days','120 days'])}).strict();
@@ -38,11 +38,17 @@ export const customerAudienceRoutes:FastifyPluginAsync=async app=>{
    const result=await tenantScoped(req,async trx=>{
      const collection=await trx.selectFrom('audience_collections').select('id').where('customer_id','=',cid).where('id','=',id.data).where('kind','=','list').forUpdate().executeTakeFirst();if(!collection)return null;
      const contacts=await trx.selectFrom('audience_contacts').select('id').where('customer_id','=',cid).where('id','in',parsed.data.ids).execute();if(contacts.length!==parsed.data.ids.length)return null;
-     if(parsed.data.action==='add')await trx.insertInto('audience_collection_members').values(parsed.data.ids.map(contact_id=>({customer_id:cid,collection_id:id.data,contact_id}))).onConflict(oc=>oc.columns(['customer_id','collection_id','contact_id']).doNothing()).execute();
+     let runs:string[]=[];
+     if(parsed.data.action==='add'){
+      const added=await trx.insertInto('audience_collection_members').values(parsed.data.ids.map(contact_id=>({customer_id:cid,collection_id:id.data,contact_id}))).onConflict(oc=>oc.columns(['customer_id','collection_id','contact_id']).doNothing()).returning('contact_id').execute();
+      // Newly added members enter workflows triggered by this list.
+      if(added.length){const emails=await trx.selectFrom('audience_contacts').select('email').where('customer_id','=',cid).where('id','in',added.map(a=>a.contact_id)).where('status','!=','Unsubscribed').execute();runs=await enrollAudienceWorkflows(cid,id.data,emails.map(e=>e.email),trx as any);}
+     }
      else await trx.deleteFrom('audience_collection_members').where('customer_id','=',cid).where('collection_id','=',id.data).where('contact_id','in',parsed.data.ids).execute();
-     await trx.updateTable('audience_collections').set({updated_at:new Date()}).where('customer_id','=',cid).where('id','=',id.data).execute();return {processed:contacts.length};
+     await trx.updateTable('audience_collections').set({updated_at:new Date()}).where('customer_id','=',cid).where('id','=',id.data).execute();return {processed:contacts.length,runs};
    });
-   if(!result)return reply.code(404).send({error:'not_found'});recordAuditSafe({customerId:cid,actorType:'user',actorId:req.user?.user_id,action:`audience.members.${parsed.data.action}`,resource:id.data,metadata:{count:result.processed}});return result;
+   if(!result)return reply.code(404).send({error:'not_found'});
+   for(const run of result.runs)await kickWorkflowRun(run,cid).catch(()=>undefined);recordAuditSafe({customerId:cid,actorType:'user',actorId:req.user?.user_id,action:`audience.members.${parsed.data.action}`,resource:id.data,metadata:{count:result.processed}});return {processed:result.processed,enrolled:result.runs.length};
  });
  app.delete('/audiences/:id',async(req,reply)=>{
    const id=z.string().uuid().safeParse((req.params as any).id);if(!id.success)return reply.code(400).send({error:'validation_failed'});

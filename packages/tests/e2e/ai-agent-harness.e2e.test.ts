@@ -129,6 +129,7 @@ describe('email agent on the DeepSeek Harness runtime',()=>{
  it('builds and edits workflows in the workflow builder and drafts workflows from any page',async()=>{
   const a=await actor(),chat=randomUUID();
   const template=await withTenant(a.cid,trx=>trx.insertInto('templates').values({customer_id:a.cid,name:'Win-back offer',subject:'We miss you',html_body:'<p>Hi</p>',text_body:'Hi'}).returning('id').executeTakeFirstOrThrow());
+  await withTenant(a.cid,trx=>trx.insertInto('sending_domains').values({customer_id:a.cid,domain:`acme-${a.cid.slice(0,8)}.example.test`,dkim_selector:'s1',dkim_public_key:'p',dkim_private_key:'k',verification_token:randomUUID(),verified_at:new Date(),dkim_verified:true}).execute());
   script=({messages})=>{
    const ask=lastUserText(messages),results=toolResults(messages),prompt=messages.map(m=>typeof m.content==='string'?m.content:'').join('\n');
    const templateId=prompt.match(/^([0-9a-f-]{36}): Win-back offer/m)?.[1];
@@ -149,6 +150,7 @@ describe('email agent on the DeepSeek Harness runtime',()=>{
   expect(edited.steps.map(s=>`${s.name}:${s.status}`)).toEqual(['update_step:completed','add_steps:failed']);
   expect(edited.result.document.graph.nodes.find((n:any)=>n.t==='wait').amount).toBe(3);expect(edited.result.document.graph.nodes).toHaveLength(3);
   expect(edited.result.message).toContain('not supported');
+  expect(JSON.stringify(await withTenant(a.cid,trx=>trx.selectFrom('ai_run_steps').select('observation').where('name','=','add_steps').execute()))).toContain('SMS is not available');
   // The browser never stores canvas state with chat history.
   const stored=await withTenant(a.cid,trx=>trx.selectFrom('ai_chat_messages').select('result').where('chat_id','=',chat).where('role','=','user').execute());
   expect(JSON.stringify(stored)).not.toContain('"graph"');

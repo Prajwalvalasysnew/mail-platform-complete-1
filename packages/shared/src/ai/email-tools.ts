@@ -10,6 +10,7 @@ import type {AiRunsTable} from '../schema.js';
 import {EmailDocument,DocumentToolError,policyProblems,type LinkPolicy} from './email-html.js';
 import {READ_TOOLS,ReadCall} from './tool-contracts.js';
 import {WorkflowDocument,WORKFLOW_STEP_TYPES,type TemplateRef} from './workflow-draft.js';
+import {TRIGGERS,GOALS} from '../workflow-builder.js';
 import {readWorkspace} from './workspace-tools.js';
 
 type Run=Selectable<AiRunsTable>;
@@ -92,16 +93,18 @@ export const AGENT_TOOLS:Tool[]=[
 ];
 
 function stepSchema(depth:number):Record<string,unknown>{
- return {type:'object',description:'A workflow step. email: {t:"email",template:"<template id>"}; wait: {t:"wait",mode:"duration",amount:2,unit:"days"} or {t:"wait",mode:"event",event:"opened"|"clicked",max:3}; branch: {t:"branch",cond:"activated"|"score",paths:[{label:"Yes",steps:[...]},{label:"No",steps:[...]}]}; filter: {t:"filter",rule:"activated"|"score"}; split: {t:"split",pct:50,paths:[{steps:[...]},{steps:[...]}]}; webhook: {t:"webhook",url:"https://..."}.',
-  properties:{t:{type:'string',enum:[...WORKFLOW_STEP_TYPES]},template:{type:'string'},mode:{type:'string',enum:['duration','event']},amount:{type:'number'},unit:{type:'string',enum:['minutes','hours','days']},event:{type:'string',enum:['opened','clicked']},max:{type:'number'},cond:{type:'string',enum:['activated','score']},rule:{type:'string',enum:['activated','score']},pct:{type:'number'},url:{type:'string'},
+ return {type:'object',description:'A workflow step. email {t:"email",template:"<template id>",subject?}; wait {t:"wait",mode:"duration",amount:2,unit:"days"} | {mode:"time",time:"09:00",tz:"contact"} | {mode:"event",event:"opened"|"clicked"|"custom",event_name?,max:3} | {mode:"date",field:"context.appointment_at",direction:"before"|"after",amount:1,unit:"days",if_missed:"continue"|"exit"}; branch/filter {t:"branch",preset:"opened"} or {rules:[{field:"contact.tags",op:"contains",value:"vip"}],match:"all"} with branch paths [{steps:[...]},{steps:[...]}] (yes, no); split {t:"split",pct:50,paths:[{steps},{steps}]}; update {t:"update",action:"add_tag"|"remove_tag"|"stage"|"attribute"|"subscribe"|"unsubscribe",value,key?}; notify {t:"notify",to:["team@x.com"],subject,msg}; webhook {t:"webhook",url:"https://...",payload?}.',
+  properties:{t:{type:'string',enum:[...WORKFLOW_STEP_TYPES]},template:{type:'string'},subject:{type:'string'},mode:{type:'string',enum:['duration','time','event','date']},amount:{type:'number'},unit:{type:'string',enum:['minutes','hours','days','weeks']},time:{type:'string'},tz:{type:'string'},event:{type:'string',enum:['opened','clicked','custom']},event_name:{type:'string'},max:{type:'number'},field:{type:'string'},direction:{type:'string',enum:['before','after']},if_missed:{type:'string',enum:['continue','exit']},
+   preset:{type:'string'},rules:{type:'array',items:{type:'object',properties:{field:{type:'string'},op:{type:'string'},value:{}},required:['field','op']}},match:{type:'string',enum:['all','any']},pct:{type:'number'},action:{type:'string'},value:{},key:{type:'string'},to:{type:'array',items:{type:'string'}},msg:{type:'string'},url:{type:'string'},payload:{type:'object'},
    ...(depth>0?{paths:{type:'array',maxItems:2,items:{type:'object',properties:{label:{type:'string'},steps:{type:'array',items:stepSchema(depth-1)}},required:['steps']}}}:{})},required:['t']};
 }
+function triggerConfigSchema(){return {type:'object',description:'event_name and filters for event triggers; list_id for "subscribed"; date_field, offset_days, recurrence (yearly|once), hour for date triggers.',properties:{event_name:{type:'string'},filters:{type:'array',items:{type:'object'}},list_id:{type:'string'},date_field:{type:'string'},offset_days:{type:'number'},recurrence:{type:'string',enum:['yearly','once']},hour:{type:'number'}}};}
 const issuesNote=(ws:AgentWorkspace)=>{const issues=ws.workflow.issues();return issues.length?` Remaining publish issues: ${issues.join(' ')}`:' The workflow has no publish issues.';};
 function workflowTools():Tool[]{return [
  {name:'view_workflow',scope:'workflow',mutates:false,description:'Show the current workflow: trigger, settings, every step with its id and connections, and any publish issues.',
   inputSchema:{type:'object',properties:{},additionalProperties:false},run:ws=>ws.workflow.view()},
  {name:'build_workflow',scope:'workflow',mutates:true,description:'Create the whole workflow from a step list (with nested paths for branch/split). Use ONLY when the workflow is empty or the user explicitly asks for a new workflow or full redesign; otherwise use add_steps/update_step/remove_step.',
-  inputSchema:{type:'object',properties:{name:{type:'string'},trigger:{type:'string',enum:['event','opened','clicked','delivered']},goal:{type:'string',enum:['none','click']},reentry:{type:'string',enum:['once','every','30d']},steps:{type:'array',items:stepSchema(1)},full_rewrite_reason:{type:'string',description:'Required when the workflow already has steps: quote the user asking for a new workflow or redesign.'}},required:['trigger','steps'],additionalProperties:false},
+  inputSchema:{type:'object',properties:{name:{type:'string'},trigger:{type:'string',enum:TRIGGERS.map(t=>t.key)},trigger_config:triggerConfigSchema(),goal:{type:'string',enum:GOALS.map(g=>g.key)},goal_event:{type:'string'},reentry:{type:'string',enum:['once','every','30d']},steps:{type:'array',items:stepSchema(1)},full_rewrite_reason:{type:'string',description:'Required when the workflow already has steps: quote the user asking for a new workflow or redesign.'}},required:['trigger','steps'],additionalProperties:false},
   run:(ws,a)=>{
    if(!ws.workflow.isBlank() && !String(a.full_rewrite_reason || '').trim())throw new DocumentToolError('The workflow already has steps. Use add_steps/update_step/remove_step for changes. If the user explicitly asked for a new workflow, call build_workflow again with full_rewrite_reason quoting them.');
    const blank=ws.workflow.isBlank();ws.workflow.build(a);
@@ -116,11 +119,11 @@ function workflowTools():Tool[]{return [
  {name:'remove_step',scope:'workflow',mutates:true,description:'Remove one step; its single incoming and outgoing connections are joined.',
   inputSchema:{type:'object',properties:{id:{type:'string'}},required:['id'],additionalProperties:false},
   run:(ws,a)=>confirmation(ws,`Removed ${ws.workflow.remove(String(a.id))}`)+issuesNote(ws)},
- {name:'set_trigger',scope:'workflow',mutates:true,description:'Set what starts the workflow: event (custom API event), opened, clicked or delivered (email engagement).',
-  inputSchema:{type:'object',properties:{trigger:{type:'string',enum:['event','opened','clicked','delivered']}},required:['trigger'],additionalProperties:false},
-  run:(ws,a)=>confirmation(ws,`Set the trigger to ${ws.workflow.trigger(String(a.trigger))}`)},
- {name:'update_workflow_settings',scope:'workflow',mutates:true,description:'Rename the workflow or change its goal (none/click) or re-entry policy (once/every/30d).',
-  inputSchema:{type:'object',properties:{name:{type:'string'},goal:{type:'string',enum:['none','click']},reentry:{type:'string',enum:['once','every','30d']}},additionalProperties:false},
+ {name:'set_trigger',scope:'workflow',mutates:true,description:'Set what starts the workflow: an industry business event (order placed, appointment booked, trial started...), a list join, a date (birthday, renewal), email engagement, or API/manual enrollment.',
+  inputSchema:{type:'object',properties:{trigger:{type:'string',enum:TRIGGERS.map(t=>t.key)},trigger_config:triggerConfigSchema()},required:['trigger'],additionalProperties:false},
+  run:(ws,a)=>confirmation(ws,`Set the trigger to ${ws.workflow.trigger(String(a.trigger),a.trigger_config || {})}`)+issuesNote(ws)},
+ {name:'update_workflow_settings',scope:'workflow',mutates:true,description:'Rename the workflow; set the goal (a preset or goal_event for any custom event), re-entry (once/every/30d), who can enter (all/subscribed/rules + entry_rules), quiet hours ({from:"21:00",to:"08:00"} or null) and frequency cap (emails per 7 days, or null).',
+  inputSchema:{type:'object',properties:{name:{type:'string'},goal:{type:'string',enum:GOALS.map(g=>g.key)},goal_event:{type:'string'},reentry:{type:'string',enum:['once','every','30d']},entry:{type:'string',enum:['all','subscribed','rules']},entry_rules:{type:'array',items:{type:'object'}},quiet_hours:{type:['object','null'],properties:{from:{type:'string'},to:{type:'string'}}},frequency_cap:{type:['number','null']}},additionalProperties:false},
   run:(ws,a)=>{const done=ws.workflow.settings(a);if(!done.length)throw new DocumentToolError('Provide name, goal or reentry.');return confirmation(ws,`Set ${done.join(', ')}`);}},
 ];}
 

@@ -8,7 +8,7 @@ import type {AiRunsTable} from '../schema.js';
 import type {AiInput,AiOutput} from './contracts.js';
 import {EmailDocument,linkPolicy,policyProblems} from './email-html.js';
 import type {AgentWorkspace,AgentMode} from './email-tools.js';
-import {WorkflowDocument,type TemplateRef,type WorkflowGraphDoc} from './workflow-draft.js';
+import {WorkflowDocument,WORKFLOW_GUIDE,type TemplateRef} from './workflow-draft.js';
 import {startAgentToolServer,type AgentToolServer} from './mcp-server.js';
 import {validateTemplate} from '../templates.js';
 import {readWorkspace} from './workspace-tools.js';
@@ -63,8 +63,10 @@ Your valasys tools act on real workspace data. The request says which tools appl
 - When you create a new email also call set_subject with a compelling subject (≤60 characters) and preheader (≤100 characters).
 
 ## Workflows
-- Supported triggers: event (custom API event), opened, clicked, delivered. Supported steps: email (uses a saved template id from the list in the request), wait (a duration, or wait up to N days for an open/click), if/else branch and filter on the context conditions activated or score, A/B split, webhook (an https URL the user gave).
-- Not supported yet: SMS, tags, team notifications, segment or purchase conditions, quiet hours, frequency caps. If asked, say so plainly and build the closest supported version.
+- Triggers cover every industry: business events the user's systems send (order placed, cart abandoned, appointment booked, trial started, payment failed, course enrolled, donation made...), joining a list, dates on contacts (birthdays, renewals, trial ends), email engagement, or API/manual enrollment.
+- Steps: email (a saved template id from the list in the request, optional subject override), wait (a duration; a local time of day; until an open/click/custom event with a maximum; or before/after a date such as an appointment), if/else and filter with rules over contact tags/fields/status, email engagement and event data, A/B split, update contact (tags, lifecycle stage, fields, subscription), notify the team by email, and signed webhooks.
+- Settings: who can enter (everyone, subscribed only, or rules), re-entry, goal (exit on a business event), quiet hours and frequency cap.
+- Not supported yet: SMS. If asked, say so plainly and use email instead.
 - Put a wait between emails. Prefer targeted edits (add_steps, update_step, remove_step) over rebuilding. When an email step needs a template that does not exist yet, leave template empty and tell the user which template to create.
 - Tool results list remaining publish issues; fix what you can. You never publish or activate a workflow; the user reviews and publishes it.
 
@@ -98,10 +100,12 @@ function promptFor(ws:AgentWorkspace,input:AiInput,history:{checkpoint?:string;c
  }else if(mode==='workflow'){
   parts.push('Context: the user is in the workflow builder; your edits appear on their canvas as an unpublished draft (they can Undo). Use the workflow tools.');
   parts.push(templates);
+  parts.push(WORKFLOW_GUIDE);
  }else{
   const page=String(s.page?.view || '');
   parts.push(`Context: the Valasys AI ${s.page?'assistant panel':'chat'}${page?`, opened on ${PAGE_HINTS[page] || page}`:''}. Answer questions (use read_workspace for anything about their account, especially data relevant to that page). When the user asks for an email or template, build it with the email tools; when they ask for an automation or journey, build it with the workflow tools. Drafts are shown to the user to review and save; make one draft per turn.`);
   parts.push(templates);
+  parts.push(WORKFLOW_GUIDE);
  }
  if(mode!=='workflow'){
   // Merge tags live here, not in the system prompt: the harness persona is itself a template.
@@ -116,6 +120,13 @@ function promptFor(ws:AgentWorkspace,input:AiInput,history:{checkpoint?:string;c
 async function workspaceTemplates(row:Run):Promise<TemplateRef[]>{
  return withTenant(row.customer_id,trx=>trx.selectFrom('templates').select(['id','name','subject']).where('customer_id','=',row.customer_id).orderBy('updated_at','desc').limit(40).execute());
 }
+async function workflowWorkspace(row:Run,templates:TemplateRef[],timezone:string){
+ return withTenant(row.customer_id,async trx=>({
+  templates,timezone,
+  domains:(await trx.selectFrom('sending_domains').select('domain').where('customer_id','=',row.customer_id).where('verified_at','is not',null).execute()).map(d=>d.domain.toLowerCase()),
+  lists:await trx.selectFrom('audience_collections').select(['id','name']).where('customer_id','=',row.customer_id).where('kind','=','list').orderBy('name').limit(50).execute(),
+ }));
+}
 
 /** Run one agent turn through the registered harness runtime. */
 export async function runEmailAgent(row:Run,input:AiInput,history:{checkpoint?:string;conversation?:{role:string;content:string}[];settings?:any},canvas:{html:string|null;preheader:string;workflow?:unknown},signal:AbortSignal,allowed:(trx:TenantExecutor)=>Promise<boolean>):Promise<{result:AiOutput;promptTokens:number|null;outputTokens:number|null}>{
@@ -124,7 +135,7 @@ export async function runEmailAgent(row:Run,input:AiInput,history:{checkpoint?:s
  const priorEmail=mode==='assist'?await latestDraft(row,'draft'):null,priorFlow=mode==='assist'?await latestDraft(row,'workflow'):null;
  const seed=mode==='editor'?{html:canvas.html || '',subject:settings.editor?.subject || '',preheader:canvas.preheader}:priorEmail?{html:priorEmail.html,subject:priorEmail.subject,preheader:priorEmail.preheader || ''}:{html:'',subject:'',preheader:''};
  const templates=mode==='editor'?[]:await workspaceTemplates(row);
- const doc=new EmailDocument(seed.html,seed.subject,seed.preheader),workflow=new WorkflowDocument(mode==='workflow'?(canvas.workflow as any):priorFlow?.document || null,templates);
+ const doc=new EmailDocument(seed.html,seed.subject,seed.preheader),workflow=new WorkflowDocument(mode==='workflow'?(canvas.workflow as any):priorFlow?.document || null,mode==='editor'?undefined:await workflowWorkspace(row,templates,typeof settings.timezone==='string'?settings.timezone:'UTC'));
  const emailBefore=doc.html()+'\u0000'+doc.subject+'\u0000'+doc.preheader,flowBefore=workflow.snapshot();
  const userText=[input.instruction,...(history.conversation || []).filter(t=>t.role==='user').map(t=>t.content)].join('\n');
  const evidence:unknown[]=[];
