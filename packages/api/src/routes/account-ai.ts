@@ -3,14 +3,14 @@ import { z } from 'zod';
 import { AiInput, AiRunError, aiContextCatalog, ChatTurn,createChatTurn,listAiChats,getAiChat,decideAiDraft,deleteAiChat, aiEnabledFor, createAiRun, getAiRun, cancelAiRun, enqueueAiRun, redis, withTenant } from '@platform/shared';
 import { requireCapability } from '../plugins/session-auth.js';
 
-const Request=z.object({request_id:z.string().uuid(),input:AiInput.refine(input=>!['route','compact','assist','editor'].includes(input.operation))}).strict();
+const Request=z.object({request_id:z.string().uuid(),input:AiInput.refine(input=>!['route','compact','assist','editor','workflow'].includes(input.operation))}).strict();
 const Id=z.string().uuid();
 
 /** Human-session plane only; never exposes inference credentials or raw provider errors. */
 export const accountAiRoutes:FastifyPluginAsync=async app=>{
   app.addHook('preHandler',requireCapability('send'));
   app.get('/context',async req=>aiContextCatalog(req.user!.current_customer_id!));
-  app.get('/capabilities',async req=>({enabled:aiEnabledFor(req.user!.current_customer_id!),operations:['subjects','rewrite','draft','chat']}));
+  app.get('/capabilities',async req=>({enabled:aiEnabledFor(req.user!.current_customer_id!),operations:['subjects','rewrite','draft','chat','assist','editor','workflow']}));
   const chatError=(error:unknown,reply:any)=>{
     if(error instanceof AiRunError)return reply.code(error.status).send({error:error.code,message:error.message});
     app.log.error({code:'ai_chat_failed'},'AI conversation request failed');

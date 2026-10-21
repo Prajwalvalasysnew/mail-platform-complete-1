@@ -1606,7 +1606,7 @@ export interface AiChatsTable {
 }
 export interface AiChatMessagesTable {
  id:string;customer_id:string;chat_id:string;run_id:string|null;seq:number;role:'user'|'assistant';text:Generated<string>;status:Generated<string>;
- result:unknown;error:string|null;template_id:string|null;decision:'applied'|'skipped'|null;created_at:ColumnType<Date,Date|string|undefined,never>;
+ result:unknown;error:string|null;template_id:string|null;workflow_id:Generated<string|null>;decision:'applied'|'skipped'|null;created_at:ColumnType<Date,Date|string|undefined,never>;
 }
 export interface AiChatCheckpointsTable {
  id:string;customer_id:string;chat_id:string;through_seq:number;summary:string;run_id:string|null;attempt:number;created_at:ColumnType<Date,Date|string|undefined,never>;

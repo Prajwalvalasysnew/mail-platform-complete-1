@@ -126,4 +126,42 @@ describe('email agent on the DeepSeek Harness runtime',()=>{
   const approved=await app.inject({method:'POST',url:`/ai/chats/${chat}/messages/${drafts[1].id}/decision`,headers:{authorization:`Bearer ${a.token}`},payload:{decision:'applied'}});
   expect(approved.statusCode,approved.body).toBe(200);expect(approved.json().template_id).toBeTruthy();
  },120000);
+ it('builds and edits workflows in the workflow builder and drafts workflows from any page',async()=>{
+  const a=await actor(),chat=randomUUID();
+  const template=await withTenant(a.cid,trx=>trx.insertInto('templates').values({customer_id:a.cid,name:'Win-back offer',subject:'We miss you',html_body:'<p>Hi</p>',text_body:'Hi'}).returning('id').executeTakeFirstOrThrow());
+  script=({messages})=>{
+   const ask=lastUserText(messages),results=toolResults(messages),prompt=messages.map(m=>typeof m.content==='string'?m.content:'').join('\n');
+   const templateId=prompt.match(/^([0-9a-f-]{36}): Win-back offer/m)?.[1];
+   if(/win-back journey/.test(ask))return results.length?{content:'I built a win-back workflow: on click, wait 2 days, then send “Win-back offer”.'}:{calls:[{name:'build_workflow',arguments:{name:'Win-back journey',trigger:'clicked',steps:[{t:'wait',mode:'duration',amount:2,unit:'days'},{t:'email',template:templateId}]}}]};
+   if(/wait 3 days and add an SMS/.test(ask)){
+    if(!results.length){const wait=prompt.match(/→ (n[0-9a-f]{8}): wait 2 days/)![1]!,email=prompt.match(/→ (n[0-9a-f]{8}): send email/)![1]!;return {calls:[{name:'update_step',arguments:{id:wait,fields:{amount:3}}},{name:'add_steps',arguments:{after:email,steps:[{t:'sms',text:'Come back'}]}}]};}
+    return {content:'The wait is now 3 days. SMS steps are not supported yet, so I did not add one.'};
+   }
+   if(/welcome workflow/.test(ask))return results.length?{content:'Drafted a welcome workflow for you to review.'}:{calls:[{name:'build_workflow',arguments:{name:'Welcome',trigger:'event',steps:[{t:'email',template:templateId},{t:'wait',mode:'event',event:'opened',max:3},{t:'branch',cond:'activated',paths:[{label:'Yes',steps:[]},{label:'No',steps:[{t:'email',template:templateId}]}]}]}}]};
+   return {content:'unexpected'};
+  };
+  const blank={name:'Untitled workflow 1',tkey:'event',settings:{reentry:'once',goal:'none',audience:'all',quiet:false,cap:false},graph:{nodes:[{id:'trigger',t:'trigger',x:0,y:0}],edges:[]}};
+  const flowTurn=async(instruction:string,document:unknown)=>{const r=await app.inject({method:'POST',url:`/ai/chats/${chat}/turns`,headers:{authorization:`Bearer ${a.token}`},payload:{request_id:randomUUID(),operation:'workflow',instruction,settings:{workflow:{document}}}});expect(r.statusCode,r.body).toBe(202);await executeAiRun(a.cid,r.json().id,new AbortController().signal);const run=await withTenant(a.cid,trx=>trx.selectFrom('ai_runs').selectAll().where('id','=',r.json().id).executeTakeFirstOrThrow());expect(run.status,String(run.error)).toBe('completed');return {result:run.result as any,steps:await withTenant(a.cid,trx=>trx.selectFrom('ai_run_steps').select(['name','status']).where('run_id','=',run.id).orderBy('seq').execute())};};
+  const built=await flowTurn('Set up a win-back journey for people who click',blank);
+  expect(built.result.operation).toBe('workflow');expect(built.result.document.tkey).toBe('clicked');expect(built.result.issues).toEqual([]);
+  const nodes=built.result.document.graph.nodes;expect(nodes.map((n:any)=>n.t)).toEqual(['trigger','wait','email']);expect(nodes[2].template).toBe(template.id);
+  const edited=await flowTurn('make the wait 3 days and add an SMS after the email',built.result.document);
+  expect(edited.steps.map(s=>`${s.name}:${s.status}`)).toEqual(['update_step:completed','add_steps:failed']);
+  expect(edited.result.document.graph.nodes.find((n:any)=>n.t==='wait').amount).toBe(3);expect(edited.result.document.graph.nodes).toHaveLength(3);
+  expect(edited.result.message).toContain('not supported');
+  // The browser never stores canvas state with chat history.
+  const stored=await withTenant(a.cid,trx=>trx.selectFrom('ai_chat_messages').select('result').where('chat_id','=',chat).where('role','=','user').execute());
+  expect(JSON.stringify(stored)).not.toContain('"graph"');
+
+  const assistChat=randomUUID();
+  const r=await app.inject({method:'POST',url:`/ai/chats/${assistChat}/turns`,headers:{authorization:`Bearer ${a.token}`},payload:{request_id:randomUUID(),operation:'assist',instruction:'Build a welcome workflow for new signups',settings:{page:{view:'automations'}}}});
+  expect(r.statusCode,r.body).toBe(202);await executeAiRun(a.cid,r.json().id,new AbortController().signal);
+  expect(llm.requests.at(-2)!.messages.map(m=>typeof m.content==='string'?m.content:'').join('\n')).toContain('opened on Automations (workflows)');
+  const saved=(await app.inject({method:'GET',url:`/ai/chats/${assistChat}`,headers:{authorization:`Bearer ${a.token}`}})).json(),draft=saved.messages.at(-1);
+  expect(draft.result.operation).toBe('workflow');expect(draft.result.issues).toEqual([]);
+  const approved=await app.inject({method:'POST',url:`/ai/chats/${assistChat}/messages/${draft.id}/decision`,headers:{authorization:`Bearer ${a.token}`},payload:{decision:'applied'}});
+  expect(approved.statusCode,approved.body).toBe(200);
+  const workflow=await withTenant(a.cid,trx=>trx.selectFrom('workflows').select(['name','status','builder_document']).where('id','=',approved.json().workflow_id).executeTakeFirstOrThrow());
+  expect(workflow.status).toBe('draft');expect((workflow.builder_document as any).graph.nodes.map((n:any)=>n.t)).toEqual(['trigger','email','wait','branch','email']);
+ },120000);
 });

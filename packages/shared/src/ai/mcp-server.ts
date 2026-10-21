@@ -4,9 +4,9 @@
  */
 import {createServer,type Server} from 'node:http';
 import {randomBytes,timingSafeEqual} from 'node:crypto';
-import {AGENT_TOOLS,runAgentTool,type AgentWorkspace} from './email-tools.js';
+import {toolsFor,runAgentTool,type AgentWorkspace} from './email-tools.js';
 
-const SERVER_INSTRUCTIONS='Valasys email tools. Element ids come from the data-ai attributes shown by view_email. Edits are applied to the user\'s email immediately; tool errors explain how to correct the call.';
+const SERVER_INSTRUCTIONS='Valasys workspace tools. Email element ids come from the data-ai attributes shown by view_email; workflow step ids come from view_workflow. Edits apply to the user\'s draft immediately; tool errors explain how to correct the call.';
 export type AgentToolServer={url:string;register:(ws:AgentWorkspace)=>string;unregister:(token:string)=>void;close:()=>Promise<void>};
 
 export async function startAgentToolServer():Promise<AgentToolServer>{
@@ -32,7 +32,7 @@ export async function startAgentToolServer():Promise<AgentToolServer>{
     switch(message.method){
      case 'initialize':return reply({result:{protocolVersion:typeof message.params?.protocolVersion==='string'?message.params.protocolVersion:'2025-06-18',capabilities:{tools:{listChanged:false}},serverInfo:{name:'valasys',version:'1.0.0'},instructions:SERVER_INSTRUCTIONS}});
      case 'ping':return reply({result:{}});
-     case 'tools/list':return reply({result:{tools:AGENT_TOOLS.map(t=>({name:t.name,description:t.description,inputSchema:t.inputSchema}))}});
+     case 'tools/list':return reply({result:{tools:toolsFor(ws).map(t=>({name:t.name,description:t.description,inputSchema:t.inputSchema}))}});
      case 'tools/call':{
       const outcome=await runAgentTool(ws,String(message.params?.name || ''),message.params?.arguments ?? {});
       return reply({result:{content:[{type:'text',text:outcome.text}],isError:outcome.isError}});

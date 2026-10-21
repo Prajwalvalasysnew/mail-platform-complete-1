@@ -11,7 +11,7 @@ import { AiInput, type AiOutput } from './contracts.js';
 import { generateAi,AiContextOverflowError,AiProviderUnavailableError,AiOutputValidationError } from './provider.js';
 import {groundAiRequest,needsWorkspace,attachWorkspaceEvidence} from './agent.js';
 import { prepareChatContext } from './chat-context.js';
-import {runEmailAgent,detachEditorHtml,AgentRuntimeUnavailableError} from './email-agent.js';
+import {runEmailAgent,detachEditorHtml,AgentRuntimeUnavailableError,AGENT_OPERATIONS} from './email-agent.js';
 
 export class AiRunError extends Error {
   constructor(public code: string, public status: number, message: string) { super(message); }
@@ -56,7 +56,7 @@ export async function createAiRun(customerId:string,userId:string,sessionId:stri
     if(recent.length>=c.dailyLimit)throw new AiRunError('ai_limit',429,'Your daily AI writing limit has been reached.');
     if(recent.some(r=>['queued','running'].includes(r.status) && r.deadline>new Date()))throw new AiRunError('ai_busy',409,'Finish or stop your current AI request first.');
     const row=await trx.insertInto('ai_runs').values({id:randomUUID(),customer_id:customerId,user_id:userId,session_id:sessionId,request_id:requestId,request_hash:hash,input,
-      deadline:new Date(Date.now()+(['editor','assist'].includes(input.operation)?c.agentTimeoutMs:c.timeoutMs)+30000),expires_at:new Date(Date.now()+c.retentionHours*3600000),model:c.model,...(chat?{chat_id:chat.id,chat_seq:chat.seq}:{})}).returningAll().executeTakeFirstOrThrow();
+      deadline:new Date(Date.now()+(AGENT_OPERATIONS.includes(input.operation)?c.agentTimeoutMs:c.timeoutMs)+30000),expires_at:new Date(Date.now()+c.retentionHours*3600000),model:c.model,...(chat?{chat_id:chat.id,chat_seq:chat.seq}:{})}).returningAll().executeTakeFirstOrThrow();
     return publicAiRun(row);
   };
   return chat?admit(chat.trx):withTenant(customerId,admit);
@@ -114,7 +114,7 @@ export async function executeAiRun(customerId:string,id:string,shutdown:AbortSig
     const detached=detachEditorHtml(input);
     let context=row.chat_id?await prepareChatContext(row,detached.input,signal,allowed):null;
     let generated:{result:AiOutput;promptTokens:number|null;outputTokens:number|null};
-    if(['editor','assist'].includes(input.operation) && context && !context.manual){
+    if(AGENT_OPERATIONS.includes(input.operation) && context && !context.manual){
       const history=JSON.parse(context.input.content || '{}');
       generated=await runEmailAgent(row,input,{checkpoint:history.checkpoint,conversation:history.conversation,settings:history.settings},detached,signal,allowed);
       generated.promptTokens=context.promptTokens===null || generated.promptTokens===null?null:context.promptTokens+generated.promptTokens;
@@ -136,7 +136,7 @@ export async function executeAiRun(customerId:string,id:string,shutdown:AbortSig
     signal.throwIfAborted();
     const output:AiOutput=generated.result;
     const subject=output.operation==='draft'?output.subject:output.operation==='subjects'?output.subjects.join('\n'):input.subject;
-    const text=output.operation==='compact'?output.summary:(output.operation==='rewrite'||output.operation==='chat')?output.text:output.operation==='draft'?output.text:'';
+    const text=output.operation==='compact'?output.summary:(output.operation==='rewrite'||output.operation==='chat')?output.text:output.operation==='draft'?output.text:output.operation==='workflow'?output.message:'';
     const html=output.operation==='draft'?output.html:'';
     const scan=scanContent(subject,html,text),classification=await classify(subject,html,text);
     const warnings:string[]=[];

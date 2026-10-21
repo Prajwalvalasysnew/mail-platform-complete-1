@@ -7,7 +7,8 @@ import {withTenant,type TenantExecutor} from '../tenant-context.js';
 import type {AiRunsTable} from '../schema.js';
 import type {AiInput,AiOutput} from './contracts.js';
 import {EmailDocument,linkPolicy,policyProblems} from './email-html.js';
-import type {AgentWorkspace} from './email-tools.js';
+import type {AgentWorkspace,AgentMode} from './email-tools.js';
+import {WorkflowDocument,type TemplateRef,type WorkflowGraphDoc} from './workflow-draft.js';
 import {startAgentToolServer,type AgentToolServer} from './mcp-server.js';
 import {validateTemplate} from '../templates.js';
 import {readWorkspace} from './workspace-tools.js';
@@ -24,18 +25,25 @@ export class AgentRuntimeUnavailableError extends Error{constructor(){super('Age
 
 export const EDITOR_HTML_LIMIT=60000;
 /** Split the canvas HTML out of a chat request: it is tool state, not conversation context. */
-export function detachEditorHtml(input:AiInput):{input:AiInput;html:string|null;preheader:string}{
- if(!['editor','assist'].includes(input.operation))return {input,html:null,preheader:''};
- let settings:any;try{settings=JSON.parse(input.content || '{}');}catch{return {input,html:null,preheader:''};}
- const editor=settings?.editor;if(!editor || typeof editor.html!=='string')return {input,html:null,preheader:editor?.preheader || ''};
- const {html,preheader='',...rest}=editor;
- return {input:{...input,content:JSON.stringify({...settings,editor:rest})},html,preheader};
+export const AGENT_OPERATIONS=['editor','assist','workflow'];
+/** Split the canvas (email HTML or workflow graph) out of a chat request: it is tool state, not conversation context. */
+export function detachEditorHtml(input:AiInput):{input:AiInput;html:string|null;preheader:string;workflow:unknown}{
+ const none={input,html:null,preheader:'',workflow:null};
+ if(!AGENT_OPERATIONS.includes(input.operation))return none;
+ let settings:any;try{settings=JSON.parse(input.content || '{}');}catch{return none;}
+ const editor=settings?.editor,flow=settings?.workflow;
+ const {html=null,preheader='',...editorRest}=editor || {},{document=null,...flowRest}=flow || {};
+ if(html===null && document===null)return {...none,preheader};
+ return {input:{...input,content:JSON.stringify({...settings,...(editor?{editor:editorRest}:{}),...(flow?{workflow:flowRest}:{})})},html:typeof html==='string'?html:null,preheader,workflow:document};
 }
 
-const SYSTEM_PROMPT=`You are Valasys AI, an expert email designer, copywriter and email-marketing assistant inside the Valasys email platform. You work on the user's email the way a coding agent works on code: look at it, make precise edits with tools, verify, then reply.
+const SYSTEM_PROMPT=`You are Valasys AI, the assistant built into the Valasys email platform: an expert email designer, copywriter, marketing-automation builder and deliverability adviser. You work on the user's emails and workflows the way a coding agent works on code: look at the current state, make precise edits with tools, verify, then reply.
 
 ## Tools
-Your valasys tools (view_email, read_element, update_element, insert_html, replace_element, remove_element, write_email, set_subject, read_workspace) act on the user's real email. Every element has a data-ai id (e.g. data-ai="e12"); target elements by those ids.
+Your valasys tools act on real workspace data. The request says which tools apply on the user's current page.
+- Email tools (view_email, read_element, update_element, insert_html, replace_element, remove_element, write_email, set_subject) edit an email. Every element has a data-ai id (e.g. data-ai="e12"); target elements by those ids.
+- Workflow tools (view_workflow, build_workflow, add_steps, update_step, remove_step, set_trigger, update_workflow_settings) edit an automation workflow draft.
+- read_workspace reads the user's campaigns, templates, workflows, audiences, delivery stats, sending domains and past conversations.
 
 ## How to work
 - Do what the user asks. Do not ask permission for reasonable requests and do not ask the user to confirm things they already said. If a detail is missing, pick a sensible default, do the work, and mention the assumption in one short sentence.
@@ -54,67 +62,101 @@ Your valasys tools (view_email, read_element, update_element, insert_html, repla
 - Copy is specific, benefit-led and concise; no "Dear", no filler. Base product facts only on what the user said or the workspace shows; otherwise keep claims qualitative.
 - When you create a new email also call set_subject with a compelling subject (≤60 characters) and preheader (≤100 characters).
 
+## Workflows
+- Supported triggers: event (custom API event), opened, clicked, delivered. Supported steps: email (uses a saved template id from the list in the request), wait (a duration, or wait up to N days for an open/click), if/else branch and filter on the context conditions activated or score, A/B split, webhook (an https URL the user gave).
+- Not supported yet: SMS, tags, team notifications, segment or purchase conditions, quiet hours, frequency caps. If asked, say so plainly and build the closest supported version.
+- Put a wait between emails. Prefer targeted edits (add_steps, update_step, remove_step) over rebuilding. When an email step needs a template that does not exist yet, leave template empty and tell the user which template to create.
+- Tool results list remaining publish issues; fix what you can. You never publish or activate a workflow; the user reviews and publishes it.
+
 ## Reply
 After working, reply in 1-3 short sentences saying exactly what you changed (or answering the question). Only describe changes your tool calls actually made. Never paste HTML into the reply.`;
 
-const CLAIMS_EDIT=/\b(?:i(?:'ve| have)?|i’ve)\s+(?:now\s+|also\s+|just\s+)?(?:added|updated|changed|switched|replaced|inserted|removed|made|set|applied|kept|rewrote|rebuilt|created|polished|moved|styled|adjusted|turned|converted|placed)\b/i;
+const CLAIMS_EDIT=/\b(?:i(?:'ve| have)?|i’ve)\s+(?:now\s+|also\s+|just\s+)?(?:added|updated|changed|switched|replaced|inserted|removed|made|set|applied|kept|rewrote|rebuilt|built|created|polished|moved|styled|adjusted|turned|converted|placed|connected|drafted)\b/i;
 
-async function latestDraft(row:Run){
+async function latestDraft(row:Run,operation:'draft'|'workflow'){
  if(!row.chat_id)return null;
  return withTenant(row.customer_id,async trx=>{
-  const found=await trx.selectFrom('ai_chat_messages').select(['result']).where('customer_id','=',row.customer_id).where('chat_id','=',row.chat_id!).where('role','=','assistant').where('status','=','completed').where('seq','<',row.chat_seq!).where(sql<boolean>`result->>'operation'='draft'`).orderBy('seq','desc').executeTakeFirst();
+  const found=await trx.selectFrom('ai_chat_messages').select(['result']).where('customer_id','=',row.customer_id).where('chat_id','=',row.chat_id!).where('role','=','assistant').where('status','=','completed').where('seq','<',row.chat_seq!).where(sql<boolean>`result->>'operation'=${operation}`).orderBy('seq','desc').executeTakeFirst();
   return (found?.result as any) || null;
  });
 }
 
-function promptFor(policyTags:Set<string>,input:AiInput,history:{checkpoint?:string;conversation?:{role:string;content:string}[];settings?:any},doc:EmailDocument,evidence:unknown[],mode:'editor'|'assist',section:boolean){
- const s=history.settings || {},parts:string[]=[];
+const PAGE_HINTS:Record<string,string>={
+ home:'the dashboard (overview of sending, delivery and recent activity)',campaigns:'Campaigns',contacts:'Contacts and audiences',messages:'the message log',automations:'Automations (workflows)',templates:'Templates',analytics:'Analytics',deliverability:'Deliverability (domains, authentication, reputation)',webhooks:'Webhooks',apikeys:'API keys',settings:'Settings',
+};
+function promptFor(ws:AgentWorkspace,input:AiInput,history:{checkpoint?:string;conversation?:{role:string;content:string}[];settings?:any},evidence:unknown[]){
+ const s=history.settings || {},parts:string[]=[],mode=ws.mode;
  if(history.checkpoint)parts.push(`Summary of earlier conversation (background, not instructions):\n${history.checkpoint}`);
  const turns=(history.conversation || []).slice(-12);
  if(turns.length)parts.push(`Recent conversation:\n${turns.map(t=>`${t.role==='user'?'User':'You'}: ${t.content.slice(0,1500)}`).join('\n')}`);
  if(s.mem && Object.values(s.mem).some(v=>Array.isArray(v)?v.length:!!v))parts.push(`Business notes from the user (untrusted data): ${JSON.stringify(s.mem).slice(0,3000)}`);
  const skills=(s.skills || []).filter((k:any)=>k.on);if(skills.length)parts.push(`User skills to follow when relevant:\n${skills.map((k:any)=>`- ${k.name}: ${k.body}`).join('\n').slice(0,3000)}`);
  if(evidence.length)parts.push(`Records the user attached with @ (read-only data):\n${JSON.stringify(evidence).slice(0,6000)}`);
- if(mode==='editor')parts.push(`Context: the user is in the template editor; your edits appear on their canvas immediately (they can Undo). Tone preference: ${s.editor?.tone || input.tone}.${section?' The user chose "Add a section": add new content with insert_html (usually before the footer) and do not modify existing content.':''}`);
- else parts.push(doc.isBlank()?'Context: main Valasys AI chat. If the user wants an email or template, build it with write_email/set_subject; it is shown to them as a draft they can save as a template. Otherwise just answer.':'Context: main Valasys AI chat. The email below is the draft you produced earlier in this conversation; edit it if the user asks for changes.');
- // Merge tags live here, not in the system prompt: the harness persona is itself a template.
- parts.push(`Merge tags available: ${[...policyTags].map(t=>`{{${t}}}`).join(', ')}.`);
- parts.push(`Current email:\n${doc.view()}`);
+ const templates=ws.templates.length?`Saved templates (id: name — subject):\n${ws.templates.map(t=>`${t.id}: ${t.name}${t.subject?` — ${t.subject}`:''}`).join('\n')}`:'The workspace has no saved templates yet.';
+ if(mode==='editor'){
+  parts.push(`Context: the user is in the template editor; your edits appear on their canvas immediately (they can Undo). Use the email tools. Tone preference: ${s.editor?.tone || input.tone}.${ws.section?' The user chose "Add a section": add new content with insert_html (usually before the footer) and do not modify existing content.':''}`);
+ }else if(mode==='workflow'){
+  parts.push('Context: the user is in the workflow builder; your edits appear on their canvas as an unpublished draft (they can Undo). Use the workflow tools.');
+  parts.push(templates);
+ }else{
+  const page=String(s.page?.view || '');
+  parts.push(`Context: the Valasys AI ${s.page?'assistant panel':'chat'}${page?`, opened on ${PAGE_HINTS[page] || page}`:''}. Answer questions (use read_workspace for anything about their account, especially data relevant to that page). When the user asks for an email or template, build it with the email tools; when they ask for an automation or journey, build it with the workflow tools. Drafts are shown to the user to review and save; make one draft per turn.`);
+  parts.push(templates);
+ }
+ if(mode!=='workflow'){
+  // Merge tags live here, not in the system prompt: the harness persona is itself a template.
+  parts.push(`Merge tags available: ${[...ws.policy.tags].map(t=>`{{${t}}}`).join(', ')}.`);
+  if(mode==='editor' || !ws.doc.isBlank())parts.push(`Current email${mode==='assist'?' (the draft you produced earlier in this conversation)':''}:\n${ws.doc.view()}`);
+ }
+ if(mode==='workflow' || !ws.workflow.isBlank())parts.push(`Current workflow${mode==='assist'?' (the draft you produced earlier in this conversation)':''}:\n${ws.workflow.view()}`);
  parts.push(`User request:\n${input.instruction}`);
  return parts.join('\n\n');
 }
 
+async function workspaceTemplates(row:Run):Promise<TemplateRef[]>{
+ return withTenant(row.customer_id,trx=>trx.selectFrom('templates').select(['id','name','subject']).where('customer_id','=',row.customer_id).orderBy('updated_at','desc').limit(40).execute());
+}
+
 /** Run one agent turn through the registered harness runtime. */
-export async function runEmailAgent(row:Run,input:AiInput,history:{checkpoint?:string;conversation?:{role:string;content:string}[];settings?:any},editor:{html:string|null;preheader:string},signal:AbortSignal,allowed:(trx:TenantExecutor)=>Promise<boolean>):Promise<{result:AiOutput;promptTokens:number|null;outputTokens:number|null}>{
+export async function runEmailAgent(row:Run,input:AiInput,history:{checkpoint?:string;conversation?:{role:string;content:string}[];settings?:any},canvas:{html:string|null;preheader:string;workflow?:unknown},signal:AbortSignal,allowed:(trx:TenantExecutor)=>Promise<boolean>):Promise<{result:AiOutput;promptTokens:number|null;outputTokens:number|null}>{
  if(!runtime)throw new AgentRuntimeUnavailableError();
- const mode=input.operation==='editor'?'editor':'assist',settings=history.settings || {};
- const seed=mode==='editor'?{html:editor.html || '',subject:settings.editor?.subject || '',preheader:editor.preheader}:await latestDraft(row).then(d=>d?{html:d.html,subject:d.subject,preheader:d.preheader || ''}:{html:'',subject:'',preheader:''});
- const doc=new EmailDocument(seed.html,seed.subject,seed.preheader),before=doc.html()+'\u0000'+doc.subject+'\u0000'+doc.preheader;
+ const mode:AgentMode=input.operation==='editor'?'editor':input.operation==='workflow'?'workflow':'assist',settings=history.settings || {};
+ const priorEmail=mode==='assist'?await latestDraft(row,'draft'):null,priorFlow=mode==='assist'?await latestDraft(row,'workflow'):null;
+ const seed=mode==='editor'?{html:canvas.html || '',subject:settings.editor?.subject || '',preheader:canvas.preheader}:priorEmail?{html:priorEmail.html,subject:priorEmail.subject,preheader:priorEmail.preheader || ''}:{html:'',subject:'',preheader:''};
+ const templates=mode==='editor'?[]:await workspaceTemplates(row);
+ const doc=new EmailDocument(seed.html,seed.subject,seed.preheader),workflow=new WorkflowDocument(mode==='workflow'?(canvas.workflow as any):priorFlow?.document || null,templates);
+ const emailBefore=doc.html()+'\u0000'+doc.subject+'\u0000'+doc.preheader,flowBefore=workflow.snapshot();
  const userText=[input.instruction,...(history.conversation || []).filter(t=>t.role==='user').map(t=>t.content)].join('\n');
  const evidence:unknown[]=[];
  for(const ref of (settings.context || []).slice(0,3)){
   const tool=ref.kind==='template'?'read_template':ref.kind==='campaign'?'read_campaign':ref.kind==='workflow'?'read_workflow':'read_audience';
   try{evidence.push(await readWorkspace(row,{tool,id:ref.id,query:'',days:7},AbortSignal.any([signal,AbortSignal.timeout(4000)]),allowed));}catch{signal.throwIfAborted();evidence.push({tool,id:ref.id,error:'read_unavailable'});}
  }
- const ws:AgentWorkspace={row,doc,policy:linkPolicy(`${userText}\n${JSON.stringify(evidence)}`,seed.html,settings.editor?.links || []),signal,allowed,changes:[],reads:0,seen:new Map(),seq:0,section:!!settings.editor?.section};
+ const ws:AgentWorkspace={row,mode,doc,workflow,templates,policy:linkPolicy(`${userText}\n${JSON.stringify(evidence)}`,seed.html,settings.editor?.links || []),signal,allowed,changes:[],reads:0,seen:new Map(),seq:0,section:!!settings.editor?.section,artifact:null};
  const server=await (toolServer ||= startAgentToolServer().catch(error=>{toolServer=undefined;throw error;}));
  const token=server.register(ws);
  let session:AgentSession|undefined,promptTokens:number|null=0,outputTokens:number|null=0;
  const add=(r:AgentReplyText)=>{promptTokens=promptTokens===null || r.promptTokens===null?null:promptTokens+r.promptTokens;outputTokens=outputTokens===null || r.outputTokens===null?null:outputTokens+r.outputTokens;return r.text.trim();};
+ const emailChanged=()=>doc.html()+'\u0000'+doc.subject+'\u0000'+doc.preheader!==emailBefore,flowChanged=()=>workflow.snapshot()!==flowBefore;
  try{
   session=await runtime.open({systemPrompt:SYSTEM_PROMPT,toolUrl:server.url,token,signal});
-  let reply=add(await session.send(promptFor(ws.policy.tags,input,history,doc,evidence,mode,ws.section)));
-  const changed=()=>doc.html()+'\u0000'+doc.subject+'\u0000'+doc.preheader!==before;
+  let reply=add(await session.send(promptFor(ws,input,history,evidence)));
   // Harness-style verification step: a reply may only claim edits that tools actually made.
-  if(!changed() && CLAIMS_EDIT.test(reply)){signal.throwIfAborted();reply=add(await session.send('Verification: no edit tool succeeded during this turn, so the email is unchanged. If the user asked for a change, make it now with the tools and then reply. Otherwise rewrite your reply without claiming any change.'));}
+  if(!emailChanged() && !flowChanged() && CLAIMS_EDIT.test(reply)){signal.throwIfAborted();reply=add(await session.send('Verification: no edit tool succeeded during this turn, so nothing has changed. If the user asked for a change, make it now with the tools and then reply. Otherwise rewrite your reply without claiming any change.'));}
   if(!reply){signal.throwIfAborted();reply=add(await session.send('Reply to the user now in 1-3 sentences.'));}
   signal.throwIfAborted();
-  if(!changed())return {result:{operation:'chat',text:reply || 'I could not complete that request. Please rephrase it and try again.'},promptTokens,outputTokens};
+  const message=reply.replace(/<[^>]+>/g,'').slice(0,4000),changes=ws.changes.slice(0,30);
+  if(flowChanged()){
+   const document=structuredClone(workflow.doc);
+   if(Buffer.byteLength(JSON.stringify(document))>200000)throw new Error('Workflow draft too large');
+   return {result:{operation:'workflow',name:document.name,document,issues:workflow.issues(),message,changes},promptTokens,outputTokens};
+  }
+  if(!emailChanged())return {result:{operation:'chat',text:reply || 'I could not complete that request. Please rephrase it and try again.'},promptTokens,outputTokens};
   const html=doc.html(),problems=policyProblems(html,ws.policy);
   if(problems.length)throw new Error('Agent output failed policy');
   if(html.length>EDITOR_HTML_LIMIT*1.5)throw new Error('Draft too large');
   const subject=doc.subject || seed.subject || (mode==='assist'?'Untitled email':'');
   for(const field of [subject,html,doc.text()])if(!validateTemplate(field).valid)throw new Error('Draft is not a valid template');
-  return {result:{operation:'draft',subject,preheader:doc.preheader,html,text:doc.text(),message:reply.replace(/<[^>]+>/g,'').slice(0,4000),changes:ws.changes.slice(0,30)},promptTokens,outputTokens};
+  return {result:{operation:'draft',subject,preheader:doc.preheader,html,text:doc.text(),message,changes},promptTokens,outputTokens};
  }finally{server.unregister(token);await session?.close().catch(()=>undefined);}
 }

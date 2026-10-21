@@ -1,6 +1,6 @@
 # Valasys AI agent on the DeepSeek Harness
 
-Updated 21 October 2026. This replaces the structured-draft approach for the template editor and the main AI chat. Earlier documents (`AI_QUALITY_FIXES.md`, `AI_CHAT_SESSION_RELIABILITY_REVIEW.md`) describe the previous design.
+Updated 21 October 2026. This replaces the structured-draft approach for the template editor, the workflow builder, the assistant drawer on every workspace page and the main AI chat. Earlier documents (`AI_QUALITY_FIXES.md`, `AI_CHAT_SESSION_RELIABILITY_REVIEW.md`) describe the previous design.
 
 ## Why the approach changed
 
@@ -44,6 +44,25 @@ editor / AI chat ──► API (/account/ai/chats/:id/turns) ──► ai_runs +
 - **Claims are checked.** If the model says it changed something and no tool changed the document, the worker sends the harness a verification follow-up in the same session. The model then either makes the change or corrects its reply. Every successful edit produces a plain-English summary ("Updated link “Book your demo”: href: https://valasys.com/product"). The editor shows these summaries under the reply.
 - **Workspace reads** use the existing tenant-scoped read tools (`read_workspace`) inside the same loop. Records attached with `@` are read before the turn starts.
 
+## Where the agent works
+
+| Surface | Operation | Tools | Result |
+|---|---|---|---|
+| Template editor (AI panel) | `editor` | email tools + workspace reads | Edited canvas applied as one undoable step |
+| Workflow builder (AI panel, Build tab) | `workflow` | workflow tools + workspace reads | Edited graph applied as one undoable step; autosaved as an unpublished draft |
+| Assistant drawer on every workspace page (Home, Campaigns, Contacts, Messages, Automations, Templates, Analytics, Deliverability, Webhooks, API keys, Settings) | `assist` with `settings.page` | all tools | Answers from workspace data; email or workflow drafts with a Review action |
+| AI agent page | `assist` | all tools | Same, with the approval card: email drafts become templates, workflow drafts become inactive draft workflows (migration 109 adds `ai_chat_messages.workflow_id`) |
+
+The assistant drawer sends the current page, so "why are messages bouncing?" on Messages or "how many domains are verified?" on Settings uses the matching workspace reads. Each turn edits at most one draft (an email or a workflow).
+
+### Workflow tools
+
+`view_workflow`, `build_workflow` (empty workflow or explicit redesign only), `add_steps` (inserted between existing steps), `update_step`, `remove_step` (orphaned branches are cleaned up), `set_trigger` and `update_workflow_settings`. The document is the builder's own graph (`packages/shared/src/ai/workflow-draft.ts`). It accepts only what the execution engine can publish, matching `workflow-codec.ts`:
+- triggers: `event`, `opened`, `clicked`, `delivered`;
+- steps: email (an existing template id), duration or engagement waits, if/else and filter on the two context conditions, A/B split, and an https webhook.
+
+Unsupported requests (SMS, tags, notifications, segment conditions, quiet hours) get a tool error and the model explains this to the user. Each tool result lists the remaining publish issues. The agent never publishes or activates a workflow.
+
 ## Editor behaviour
 
 The editor sends the canvas body HTML (editor CSS inlined, up to 60,000 characters), the subject and the preheader. It applies the edited document as one undoable step. The existing stale-edit protection and Undo still apply. The main AI chat uses the same agent: a new request builds an email with `write_email`, and follow-ups ("make the heading blue") edit the latest draft in that conversation. Saving still goes through the existing draft-approval card.
@@ -66,6 +85,8 @@ Helm: the AI worker now mounts an `emptyDir` at `/tmp`, because its root filesys
 
 - `packages/tests/e2e/ai-agent-harness.e2e.test.ts` runs the real harness against a scripted OpenAI-compatible model. It covers create → CTA + orange background (the invented link is rejected, then `#` is used) → link the CTA. It checks that untouched content is unchanged and that history is carried between turns. It also covers claim verification, bare domains, questions that must not edit, and main-chat drafting, revision and approval.
 - `packages/tests/ai-email-document.test.ts` covers the sanitiser, the link and merge-tag policy, targeted edits, outlines and the HTML budget.
+- `packages/tests/ai-workflow-draft.test.ts` covers workflow building, inserting, editing, removing and publish issues; the harness e2e suite also builds and edits workflows in the builder, has the Automations drawer draft one, and approves it into an inactive draft workflow.
+- `packages/customer-ui/scripts/check-ai-everywhere-browser.mjs` runs the real API server and AI worker against the production bundle. It builds a workflow from the builder's AI panel (autosaved to the workspace), answers a domain question from the Settings drawer using workspace data, and drafts a workflow from the Automations drawer. Screenshots are written to `packages/customer-ui/test-results/ai-everywhere/`.
 - `packages/customer-ui/scripts/check-ai-agent-browser.mjs` replays the original conversation in Chromium through the production UI bundle, API, queue, AI worker process and harness. Screenshots are written to `packages/customer-ui/test-results/ai-agent/`.
 
 These checks use a scripted model, so they prove the plumbing, the tools, the policy and the UI, not how good a particular model's writing is. Before enabling tenants, run the browser script against the real Ollama route with the scripted server disabled, and review the generated emails.

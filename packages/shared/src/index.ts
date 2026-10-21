@@ -117,3 +117,4 @@ export * from './ai/email-tools.js';
 export * from './ai/email-agent.js';
 export * from './ai/mcp-server.js';
 export * from './ai/llm.js';
+export * from './ai/workflow-draft.js';

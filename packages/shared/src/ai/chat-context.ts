@@ -26,7 +26,7 @@ export async function prepareChatContext(row:Selectable<AiRunsTable>,input:AiInp
   if(user.role==='user' && assistant.role==='assistant' && assistant.seq===user.seq+1 && assistant.status==='completed'){
    const result=assistant.result as any;
    // Drafts: keep what was said and changed; the email itself is supplied to the agent as tool state.
-   const text=result?.operation==='draft'?[result.message,result.changes?.length?`Changes made: ${result.changes.join('; ')}`:'',`Subject: ${result.subject}`,result.message?'':result.text].filter(Boolean).join('\n'):assistant.text;
+   const text=result?.operation==='workflow'?[result.message,result.changes?.length?`Changes made: ${result.changes.join('; ')}`:''].filter(Boolean).join('\n'):result?.operation==='draft'?[result.message,result.changes?.length?`Changes made: ${result.changes.join('; ')}`:'',`Subject: ${result.subject}`,result.message?'':result.text].filter(Boolean).join('\n'):assistant.text;
    turns.push({through:assistant.seq,messages:[{role:'user',content:user.text},{role:'assistant',content:text}]});i++;
   }
  }
