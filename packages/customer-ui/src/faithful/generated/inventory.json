@@ -2,37 +2,37 @@
   {
     "component": "Customer",
     "reference": "Customer App.dc.html",
-    "sha256": "9f8a42e32e9f865b729f4ec44f0750b4b76d2596225cd2afb09734f410b7a386",
-    "elements": 2413,
-    "conditions": 200,
-    "loops": 178,
-    "bindings": 1354
+    "sha256": "012fbfeffbbcdd8ebeaa031882bd807bd90b812e7e79f22fa9eb5143a249d1b6",
+    "elements": 2448,
+    "conditions": 210,
+    "loops": 180,
+    "bindings": 1374
   },
   {
     "component": "Email",
     "reference": "Email Builder.dc.html",
-    "sha256": "73dde44dc6eeba0c1d8a99dc8995460c694158c294b995dac81c5028800864ba",
-    "elements": 239,
-    "conditions": 25,
-    "loops": 13,
-    "bindings": 144
+    "sha256": "78d6ed57be90d1ac0d255770e35a558aa00fda60642dd60de1a001cb0aec940e",
+    "elements": 205,
+    "conditions": 21,
+    "loops": 8,
+    "bindings": 114
   },
   {
     "component": "Workflow",
     "reference": "Workflow Builder.dc.html",
-    "sha256": "4ccb7f1080d057131c806eeba4d8c8615a7b713e644f24220c60fde36b69ea46",
-    "elements": 372,
-    "conditions": 55,
-    "loops": 28,
-    "bindings": 236
+    "sha256": "4d9423c8771609c0bc9635e648c64727ffd5e4961d2bcfdaa836a0b65c783630",
+    "elements": 351,
+    "conditions": 52,
+    "loops": 25,
+    "bindings": 219
   },
   {
     "component": "Agent",
     "reference": "AI Agent.dc.html",
-    "sha256": "cffeb10ca1c3cd1900b152c092436fa7b3f1b983ecdc678a527db7c0c261b591",
-    "elements": 266,
+    "sha256": "ee89f8e2dfccf251bb7fd51b75c0ce252ae79204277ae9c7b24d779ce19d2602",
+    "elements": 268,
     "conditions": 29,
     "loops": 27,
-    "bindings": 174
+    "bindings": 175
   }
 ]

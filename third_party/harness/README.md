@@ -18,3 +18,8 @@ The upstream MIT notice is preserved in LICENSE.
 Additional adaptations: fixed-density text estimation from `packages/llm/token-meter/src/estimate.ts`, typed bounded read planning, repeat-call guards, per-tool timeout policy and owner-scoped session querying. These mechanisms use platform authorization and PostgreSQL observations (`agent.ts`, `workspace-tools.ts`, `tool-contracts.ts`, `meter.ts`, migration 108); they do not import coding tools or the full Cordis runtime. The estimator is telemetry and does not establish the hosted model's exact context capacity.
 
 The quality correction also reinspected `packages/core/agent-loop/src/agent.ts` and `tool-calls.ts` for session-derived step requests, ordered tool observation feedback, no-progress termination and cancellation. See `docs/AI_QUALITY_FIXES.md` for the implemented scope and validation; the full upstream runtime is not mounted.
+
+
+## Runtime dependency (21 October 2026)
+
+The AI worker now runs the published harness itself (`@deepseek-ai/dsh`, `@deepseek-ai/dsh-sdk-client`, `@deepseek-ai/dsh-llm-pi-ai`, all MIT, pinned to 0.2.1-rc.2) for editor and assistant agent turns, using the `valasys-agent` profile in `packages/worker/harness`. See [docs/AI_AGENT_HARNESS.md](../../docs/AI_AGENT_HARNESS.md).

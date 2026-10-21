@@ -75,6 +75,9 @@ import { exportRoutes } from '@platform/api/routes/exports.js';
 import { analyticsRoutes } from '@platform/api/routes/analytics.js';
 import { workflowRoutes } from '@platform/api/routes/workflows.js';
 import { toolRoutes } from '@platform/api/routes/tools.js';
+import { consoleDataRoutes } from '@platform/api/routes/console-data.js';
+import { landingRoutes } from '@platform/api/routes/landing.js';
+import { accountAiRoutes } from '@platform/api/routes/account-ai.js';
 import { sendgridCompatRoutes } from '@platform/api/routes/sendgrid-compat.js';
 import { subaccountRoutes } from '@platform/api/routes/subaccounts.js';
 import { dmarcRoutes } from '@platform/api/routes/dmarc.js';
@@ -150,6 +153,7 @@ export async function buildTestApp(): Promise<FastifyInstance> {
   await app.register(adminRoutes, { prefix: '/admin' });
   await app.register(scimRoutes);
   await app.register(accountRoutes, { prefix: '/v1' });
+  await app.register(landingRoutes, { prefix: '/v1' });
   await app.register(teamRoutes, { prefix: '/v1' });
   await app.register(keyRoutes, { prefix: '/v1' });
   await app.register(accountWebhookRoutes, { prefix: '/v1' });
@@ -157,6 +161,8 @@ export async function buildTestApp(): Promise<FastifyInstance> {
   await app.register(auditRoutes, { prefix: '/v1' });
   await app.register(supportRoutes, { prefix: '/v1' });
   await app.register(accountBillingRoutes, { prefix: '/v1' });
+  await app.register(consoleDataRoutes, { prefix: '/v1/account/data' });
+  await app.register(accountAiRoutes, { prefix: '/v1/account/ai' });
 
   await app.register(async (instance) => {
     await instance.register(authPlugin);

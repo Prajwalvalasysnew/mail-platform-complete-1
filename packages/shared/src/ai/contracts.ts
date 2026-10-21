@@ -1,17 +1,22 @@
 import { z } from 'zod';
+
+/** A failure the user can act on; its message is shown instead of the generic retry text. */
+export class AiUserFacingError extends Error{constructor(public userMessage:string,code='ai_user_facing'){super(code);}}
 import {renderEmailLayout} from './email-layout.js';
 import {ReadPlan,READ_PLAN_FORMAT,type ReadCall} from './tool-contracts.js';
 
 const plain = (max: number) => z.string().trim().min(1).max(max).refine(s => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(s), 'Invalid text');
 export const AiInput = z.object({
-  operation: z.enum(['subjects', 'rewrite', 'draft', 'chat', 'compact', 'route', 'assist', 'editor']),
+  operation: z.enum(['subjects', 'rewrite', 'draft', 'chat', 'compact', 'route', 'assist', 'editor', 'workflow']),
   instruction: z.string().trim().max(4000).default(''),
-  content: z.string().max(18000).default(''),
+  // Editor/assist turns carry the canvas HTML (tool state); every other operation stays small.
+  content: z.string().max(90000).default(''),
   subject: z.string().max(998).default(''),
   tone: z.enum(['Friendly', 'Professional', 'Urgent']).default('Friendly'),
 }).strict().superRefine((v, ctx) => {
-  if (['draft','chat','compact','route','assist','editor'].includes(v.operation) ? !v.instruction : !v.content.trim() && !v.subject.trim()) ctx.addIssue({ code: 'custom', message: 'Add content or a writing brief.' });
+  if (['draft','chat','compact','route','assist','editor','workflow'].includes(v.operation) ? !v.instruction : !v.content.trim() && !v.subject.trim()) ctx.addIssue({ code: 'custom', message: 'Add content or a writing brief.' });
   if (v.operation === 'rewrite' && !v.content.trim()) ctx.addIssue({ code: 'custom', message: 'Select text to rewrite.' });
+  if (!['editor','assist','workflow'].includes(v.operation) && v.content.length>18000) ctx.addIssue({ code: 'custom', message: 'Content is too long.' });
 });
 export type AiInput = z.infer<typeof AiInput>;
 const Block = z.object({
@@ -22,7 +27,7 @@ const Subjects = z.object({ subjects: z.array(plain(80).refine(s => !/[\r\n]/.te
 const Rewrite = z.object({ text: plain(12000) }).strict();
 const Design=z.object({theme:z.enum(['indigo','ocean','forest','charcoal','rose']),layout:z.enum(['showcase','editorial','minimal']),eyebrow:z.string().max(80),footer:z.string().max(300)}).strict();
 const Draft = z.object({ subject: plain(80).refine(s => !/[\r\n]/.test(s)), preheader: z.string().max(150), blocks: z.array(Block).min(1).max(12),design:Design.optional() }).strict();
-export type AiOutput = {operation:'route';calls:ReadCall[]} | { operation:'compact';summary:string } | { operation: 'chat'; text: string } | { operation: 'subjects'; subjects: string[] } | { operation: 'rewrite'; text: string } | { operation: 'draft'; subject: string; preheader: string; html: string; text: string; message?:string; design?:z.infer<typeof Design> };
+export type AiOutput = {operation:'workflow';name:string;document:unknown;issues:string[];message:string;changes:string[]} | {operation:'route';calls:ReadCall[]} | { operation:'compact';summary:string } | { operation: 'chat'; text: string } | { operation: 'subjects'; subjects: string[] } | { operation: 'rewrite'; text: string } | { operation: 'draft'; subject: string; preheader: string; html: string; text: string; message?:string; design?:z.infer<typeof Design>; changes?:string[] };
 
 const AI_FORMATS_BASE = {
   route:READ_PLAN_FORMAT,
@@ -37,7 +42,7 @@ const AI_FORMATS_BASE = {
   },required:['subject','preheader','blocks','design'],additionalProperties:false},
 } as const;
 export const CONVERSATION_FORMAT={type:'object',properties:{reply:{type:'string',maxLength:12000},draft:{anyOf:[AI_FORMATS_BASE.draft,{type:'null'}]}},required:['reply','draft'],additionalProperties:false} as const;
-export const AI_FORMATS={...AI_FORMATS_BASE,assist:CONVERSATION_FORMAT,editor:CONVERSATION_FORMAT} as const;
+export const AI_FORMATS={...AI_FORMATS_BASE,assist:CONVERSATION_FORMAT,editor:CONVERSATION_FORMAT,workflow:CONVERSATION_FORMAT} as const;
 
 /** Escape generated text; the model never supplies executable HTML. */
 export function aiEscape(text: string): string {

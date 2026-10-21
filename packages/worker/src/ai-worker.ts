@@ -1,11 +1,14 @@
 // Separate entry point: AI never runs in the mail worker process.
 import { createServer } from 'node:http';
 import { Worker } from 'bullmq';
-import { aiConfig, aiEnabledFor, aiQueue, enqueueAiRun, executeAiRun, maintainAiRuns, aiTenantPage, redisOptions, closeDb, closeQueues, closeRedis, rlsIsEnforced } from '@platform/shared';
+import { aiConfig, aiEnabledFor, aiQueue, enqueueAiRun, executeAiRun, maintainAiRuns, aiTenantPage, redisOptions, closeDb, closeQueues, closeRedis, rlsIsEnforced, setAgentRuntime } from '@platform/shared';
+import { createHarnessRuntime } from './ai-harness.js';
 
 const config=aiConfig();
 if(!config.enabled)throw new Error('Set AI_ENABLED=true and trusted inference settings before starting the AI worker');
 if(process.env.NODE_ENV==='production' && !await rlsIsEnforced())throw new Error('AI worker requires a non-bypass tenant database role and migration 105');
+// Conversational editor/assistant turns run on the DeepSeek Harness agent loop.
+setAgentRuntime(await createHarnessRuntime());
 const shutdown=new AbortController();
 await aiQueue.setGlobalConcurrency(config.concurrency);
 const worker=new Worker(aiQueue.name,job=>executeAiRun(job.data.customer_id,job.data.run_id,shutdown.signal),{

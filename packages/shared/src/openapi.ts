@@ -289,6 +289,12 @@ export const openapiSpec = {
       put: { summary: 'Update a template', operationId: 'updateTemplate', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Updated' }, '404': { description: 'Not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } },
       delete: { summary: 'Delete a template', operationId: 'deleteTemplate', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Deleted' }, '404': { description: 'Not found', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } } } },
     },
+    '/templates/{id}/versions': {
+      get: { summary: 'List saved versions of a template (newest first, up to 100)', operationId: 'listTemplateVersions', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { '200': { description: '{ versions: [{ id, revision, name, subject, created_at }] }' }, '400': { description: 'Invalid template id' }, '404': { description: 'Template not found' } } },
+    },
+    '/templates/{id}/versions/{revision}': {
+      get: { summary: 'Get one saved version of a template', operationId: 'getTemplateVersion', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }, { name: 'revision', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }], responses: { '200': { description: 'The version: name, subject, html_body, text_body, editor_document, created_at' }, '400': { description: 'Invalid template id or revision' }, '404': { description: 'Version not found' } } },
+    },
     '/usage': { get: { summary: 'Usage + deliverability rates', operationId: 'getUsage', responses: { '200': { description: 'OK' } } } },
     '/usage/quota': { get: { summary: 'Current quota usage and remaining, with threshold alerts', operationId: 'getQuotaUsage', responses: { '200': { description: 'Daily/monthly used, limit, remaining, pct, and 80%/100% alert flags' } } } },
     '/stats': {
@@ -364,6 +370,9 @@ export const openapiSpec = {
     },
     '/workflows/{id}/trigger': {
       post: { summary: 'Start a run for a subject (external/API trigger; supports Idempotency-Key)', operationId: 'triggerWorkflow', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, run_id }' }, '409': { description: 'Not started (re-entry policy / already active / capacity)' } } },
+    },
+    '/workflows/events': {
+      post: { summary: 'Send a named business event (order_placed, appointment_booked, trial_started...) for a contact: starts custom-event workflows, resumes waits on it, records goals (supports Idempotency-Key)', operationId: 'sendWorkflowEvent', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['event', 'email'], properties: { event: { type: 'string', pattern: '^[a-z0-9][a-z0-9_.-]{0,63}$' }, email: { type: 'string', format: 'email' }, data: { type: 'object', description: 'Up to 16 KB; available to rules as context.<field> and to emails as {{field}}' } } } } } }, responses: { '202': { description: '{ accepted, event, id }' }, '400': { description: 'Invalid event name or data' } } },
     },
     '/workflows/{id}/trigger/bulk': {
       post: { summary: 'Enroll up to 1000 subjects in one call, with per-subject results', operationId: 'triggerWorkflowBulk', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: '{ started, total, results: [{ email, started, run_id | skipped_reason }] }' } } },

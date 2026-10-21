@@ -1,16 +1,17 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { sql } from 'kysely';
 import { AiInput, AiRunError, aiContextCatalog, ChatTurn,createChatTurn,listAiChats,getAiChat,decideAiDraft,deleteAiChat, aiEnabledFor, createAiRun, getAiRun, cancelAiRun, enqueueAiRun, redis, withTenant } from '@platform/shared';
 import { requireCapability } from '../plugins/session-auth.js';
 
-const Request=z.object({request_id:z.string().uuid(),input:AiInput.refine(input=>!['route','compact','assist','editor'].includes(input.operation))}).strict();
+const Request=z.object({request_id:z.string().uuid(),input:AiInput.refine(input=>!['route','compact','assist','editor','workflow'].includes(input.operation))}).strict();
 const Id=z.string().uuid();
 
 /** Human-session plane only; never exposes inference credentials or raw provider errors. */
 export const accountAiRoutes:FastifyPluginAsync=async app=>{
   app.addHook('preHandler',requireCapability('send'));
   app.get('/context',async req=>aiContextCatalog(req.user!.current_customer_id!));
-  app.get('/capabilities',async req=>({enabled:aiEnabledFor(req.user!.current_customer_id!),operations:['subjects','rewrite','draft','chat']}));
+  app.get('/capabilities',async req=>({enabled:aiEnabledFor(req.user!.current_customer_id!),operations:['subjects','rewrite','draft','chat','assist','editor','workflow']}));
   const chatError=(error:unknown,reply:any)=>{
     if(error instanceof AiRunError)return reply.code(error.status).send({error:error.code,message:error.message});
     app.log.error({code:'ai_chat_failed'},'AI conversation request failed');
@@ -19,7 +20,7 @@ export const accountAiRoutes:FastifyPluginAsync=async app=>{
   app.get('/chats',async req=>listAiChats(req.user!.current_customer_id!,req.user!.user_id));
   app.get('/chats/:id',async(req,reply)=>{const id=Id.safeParse((req.params as any).id);if(!id.success)return reply.code(400).send({error:'invalid_chat_id'});try{return await getAiChat(req.user!.current_customer_id!,req.user!.user_id,id.data,z.coerce.number().int().positive().max(2147483647).parse((req.query as any).before_seq || 2147483647));}catch(error){return chatError(error,reply);}});
   app.delete('/chats/:id',async(req,reply)=>{const id=Id.safeParse((req.params as any).id);if(!id.success)return reply.code(400).send({error:'invalid_chat_id'});try{return await deleteAiChat(req.user!.current_customer_id!,req.user!.user_id,id.data);}catch(error){return chatError(error,reply);}});
-  app.post('/chats/:id/turns',{bodyLimit:16000},async(req,reply)=>{
+  app.post('/chats/:id/turns',{bodyLimit:120000},async(req,reply)=>{
     const id=Id.safeParse((req.params as any).id),body=ChatTurn.safeParse(req.body);
     if(!id.success || !body.success)return reply.code(400).send({error:'invalid_chat_request',message:'Keep your message and workspace instructions within the supported limits.'});
     const u=req.user!,cid=u.current_customer_id!;
@@ -83,8 +84,13 @@ export const accountAiRoutes:FastifyPluginAsync=async app=>{
       if(hold || lock)return reply.code(409).send({error:'retention_hold',message:'Workspace retention policy prevents deleting this record.'});
       const target=await trx.selectFrom('ai_runs').select('chat_id').where('customer_id','=',req.user!.current_customer_id!).where('user_id','=',req.user!.user_id).where('id','=',id.data).executeTakeFirst();
       if(target?.chat_id)return reply.code(409).send({error:'delete_conversation',message:'Delete the conversation to erase its messages and context checkpoints together.'});
-      const result=await trx.deleteFrom('ai_runs').where('customer_id','=',req.user!.current_customer_id!).where('user_id','=',req.user!.user_id).where('id','=',id.data).executeTakeFirst();
-      return Number(result.numDeletedRows)?{deleted:true}:reply.code(404).send({error:'not_found'});
+      // Erase the content now; the row stays as a quota marker until retention maintenance removes it.
+      const cid=req.user!.current_customer_id!,now=new Date();
+      const result=await trx.updateTable('ai_runs').set({status:sql`case when status in ('queued','running') then 'cancelled' else status end`,input:null,result:null,warnings:sql`'[]'::jsonb`,lease_until:null,expires_at:now,updated_at:now})
+        .where('customer_id','=',cid).where('user_id','=',req.user!.user_id).where('id','=',id.data).where('expires_at','>',now).executeTakeFirst();
+      if(!Number(result.numUpdatedRows))return reply.code(404).send({error:'not_found'});
+      await trx.deleteFrom('ai_run_steps').where('customer_id','=',cid).where('run_id','=',id.data).execute();
+      return {deleted:true};
     });
   });
 };

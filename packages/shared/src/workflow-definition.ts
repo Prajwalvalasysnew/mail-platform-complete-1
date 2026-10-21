@@ -22,6 +22,7 @@
 
 import crypto from 'node:crypto';
 import { z } from 'zod';
+import { parseDateValue, resolveRelativeDate } from './workflow-time.js';
 
 // Engagement/delivery events a workflow can react to (trigger, waits, goals).
 // Mirrors WEBHOOK_EVENT_TYPES minus 'failed' (internal-only noise for
@@ -37,6 +38,23 @@ export const WORKFLOW_EVENT_TYPES = [
 ] as const;
 export type WorkflowEventType = (typeof WORKFLOW_EVENT_TYPES)[number];
 
+// Business events the customer's own systems send ("order_placed",
+// "appointment_booked", "trial_started") via POST /v1/workflows/events. Inside
+// the engine they travel as 'custom:<name>' alongside the engagement events,
+// so triggers, waits, goals and auto-exits all work with either kind.
+export const CUSTOM_EVENT_NAME = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
+export const customEventKey = (name: string) => `custom:${name.toLowerCase()}`;
+const EventKeySchema = z.string().refine(
+  (v) => (WORKFLOW_EVENT_TYPES as readonly string[]).includes(v) || (v.startsWith('custom:') && CUSTOM_EVENT_NAME.test(v.slice(7))),
+  'must be an email event (delivered, opened, clicked, ...) or custom:<event_name>'
+);
+const TimeZoneSchema = z.string().max(64).refine((tz) => {
+  if (tz === 'contact') return true;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch { return false; }
+}, 'must be "contact" or an IANA time zone such as America/New_York');
+const ClockSchema = z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/, 'use HH:MM (24-hour)');
+const WeekdaysSchema = z.array(z.number().int().min(0).max(6)).max(7).optional();
+
 const STEP_ID = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/, 'step id must be 1-64 chars of [a-zA-Z0-9_-]');
 
 const MAX_STEPS = 100;
@@ -50,7 +68,12 @@ const MAX_DEFINITION_BYTES = 256 * 1024;
 export const ConditionRuleSchema = z.object({
   // Dot-path into the run's data bag: trigger.*, context.*, subject.email.
   field: z.string().min(1).max(200),
-  op: z.enum(['eq', 'neq', 'contains', 'not_contains', 'exists', 'not_exists', 'gt', 'gte', 'lt', 'lte', 'in']),
+  op: z.enum([
+    'eq', 'neq', 'contains', 'not_contains', 'exists', 'not_exists', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in',
+    'starts_with', 'ends_with', 'is_true', 'is_false',
+    // Dates: value is an ISO date or a relative expression ('now', 'now-7d', 'now+2h').
+    'before', 'after',
+  ]),
   value: z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number()])).max(100)]).optional(),
 });
 export type ConditionRule = z.infer<typeof ConditionRuleSchema>;
@@ -61,9 +84,11 @@ export type ConditionRule = z.infer<typeof ConditionRuleSchema>;
 
 const DeliverWindowSchema = z
   .object({
-    // UTC hours; e.g. {start_hour: 9, end_hour: 17} delivers 09:00-16:59 UTC.
+    // Hours in `timezone` (UTC when omitted); {start_hour: 9, end_hour: 17} delivers 09:00-16:59.
     start_hour: z.number().int().min(0).max(23),
     end_hour: z.number().int().min(1).max(24),
+    timezone: TimeZoneSchema.optional(),
+    days: WeekdaysSchema,
   })
   .refine((w) => w.start_hour < w.end_hour, { message: 'start_hour must be before end_hour' });
 
@@ -90,7 +115,7 @@ const WaitForEventStepSchema = z.object({
   id: STEP_ID,
   type: z.literal('wait_for_event'),
   name: z.string().max(200).optional(),
-  event_types: z.array(z.enum(WORKFLOW_EVENT_TYPES)).min(1).max(WORKFLOW_EVENT_TYPES.length),
+  event_types: z.array(EventKeySchema).min(1).max(20),
   timeout_seconds: z.number().int().min(60).max(MAX_DELAY_SECONDS),
   // 'run': only events on messages this run sent count ("opened THE welcome
   // email"). 'any': any matching subject activity counts.
@@ -107,8 +132,52 @@ const SendEmailStepSchema = z.object({
   from: z.string().email(),
   from_name: z.string().max(100).optional(),
   reply_to: z.string().email().optional(),
+  // Optional subject line for this step; the template's subject otherwise.
+  subject: z.string().min(1).max(998).optional(),
   // Extra template variables merged over the run context at render time.
   variables: z.record(z.unknown()).optional(),
+  next: STEP_ID.nullable(),
+});
+
+// Wait until a moment derived from data ("1 day before context.appointment_at")
+// or until a local clock time ("next 09:00 in the contact's time zone").
+const WaitUntilStepSchema = z.object({
+    id: STEP_ID,
+    type: z.literal('wait_until'),
+    name: z.string().max(200).optional(),
+    mode: z.enum(['field', 'time_of_day']),
+    field: z.string().min(1).max(200).optional(),
+    // Negative = before the date (reminders), positive = after (follow-ups).
+    offset_seconds: z.number().int().min(-365 * 86_400).max(365 * 86_400).default(0),
+    time: ClockSchema.optional(),
+    timezone: TimeZoneSchema.optional(),
+    days: WeekdaysSchema,
+    // When the date is missing, unparseable or already past.
+    if_missed: z.enum(['continue', 'exit']).default('continue'),
+    next: STEP_ID.nullable(),
+});
+
+// CRM-style contact updates: tags, custom attributes, subscription status.
+const UpdateContactStepSchema = z.object({
+  id: STEP_ID,
+  type: z.literal('update_contact'),
+  name: z.string().max(200).optional(),
+  add_tags: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
+  remove_tags: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
+  set_attributes: z.record(z.union([z.string().max(500), z.number(), z.boolean(), z.null()])).default({}),
+  status: z.enum(['Subscribed', 'Unsubscribed']).optional(),
+  next: STEP_ID.nullable(),
+});
+
+// Internal alert to the customer's own team (new lead, failed payment, VIP).
+const NotifyStepSchema = z.object({
+  id: STEP_ID,
+  type: z.literal('notify'),
+  name: z.string().max(200).optional(),
+  to: z.array(z.string().email()).min(1).max(5),
+  from: z.string().email(),
+  subject: z.string().min(1).max(200),
+  body: z.string().min(1).max(5000),
   next: STEP_ID.nullable(),
 });
 
@@ -163,6 +232,9 @@ export const WorkflowStepSchema = z.discriminatedUnion('type', [
   SuppressStepSchema,
   GoalStepSchema,
   ExitStepSchema,
+  WaitUntilStepSchema,
+  UpdateContactStepSchema,
+  NotifyStepSchema,
 ]);
 export type WorkflowStep = z.infer<typeof WorkflowStepSchema>;
 export type WorkflowStepType = WorkflowStep['type'];
@@ -183,12 +255,36 @@ export const WorkflowTriggerSchema = z.discriminatedUnion('type', [
     // arbitrary context (CRM "contact added to segment", app signup, ...).
     type: z.literal('api'),
   }),
+  z.object({
+    // Named business event from the customer's systems (POST /v1/workflows/events):
+    // order_placed, appointment_booked, trial_started, payment_failed, ...
+    type: z.literal('custom_event'),
+    event_name: z.string().regex(CUSTOM_EVENT_NAME, 'lowercase letters, digits, _ . - (max 64)'),
+    filters: z.array(ConditionRuleSchema).max(10).optional(),
+  }),
+  z.object({
+    // A contact is added to a list or segment.
+    type: z.literal('audience'),
+    collection_id: z.string().uuid(),
+  }),
+  z.object({
+    // Daily date-based entry: birthdays, renewals, anniversaries, due dates.
+    type: z.literal('date'),
+    // Contact field holding the date, e.g. contact.attributes.birthday.
+    field: z.string().regex(/^contact\.(attributes\.[a-zA-Z0-9_]{1,64}|created_at)$/, 'use contact.attributes.<name> or contact.created_at'),
+    // Enter this many days before (negative) or after (positive) the date.
+    offset_days: z.number().int().min(-365).max(365).default(0),
+    // yearly: match month+day every year (birthdays, anniversaries); once: the exact date.
+    recurrence: z.enum(['yearly', 'once']).default('yearly'),
+    hour: z.number().int().min(0).max(23).default(9),
+    timezone: TimeZoneSchema.default('UTC'),
+  }),
 ]);
 export type WorkflowTrigger = z.infer<typeof WorkflowTriggerSchema>;
 
 export const WorkflowGoalSchema = z.object({
   name: z.string().max(200).optional(),
-  event_type: z.enum(WORKFLOW_EVENT_TYPES),
+  event_type: EventKeySchema,
   // Stop the journey when the goal is reached (default: record + continue).
   exit_on_goal: z.boolean().default(false),
 });
@@ -200,7 +296,25 @@ export const WorkflowSettingsSchema = z.object({
   // Auto-exit: events that immediately pull an in-flight subject out of the
   // journey. Defaults to the compliance-critical pair — someone who
   // unsubscribes or complains must not keep receiving journey mail.
-  exit_on_events: z.array(z.enum(WORKFLOW_EVENT_TYPES)).max(WORKFLOW_EVENT_TYPES.length).default(['unsubscribed', 'complaint']),
+  exit_on_events: z.array(EventKeySchema).max(20).default(['unsubscribed', 'complaint']),
+  // Who may enter: rules over the trigger bag (contact.*, trigger.*, context.*).
+  entry: z
+    .object({
+      match: z.enum(['all', 'any']).default('all'),
+      rules: z.array(ConditionRuleSchema).max(20).default([]),
+      // Only contacts whose status is Subscribed (and who are not suppressed).
+      require_subscribed: z.boolean().default(false),
+    })
+    .optional(),
+  // Quiet hours: email/notify steps only execute inside this local window.
+  send_window: z
+    .object({ start: ClockSchema, end: ClockSchema, timezone: TimeZoneSchema.default('contact'), days: WeekdaysSchema })
+    .optional(),
+  // Frequency cap across every workflow and campaign: at most `max` marketing
+  // emails per contact in `days`. Excess sends wait until the cap frees up.
+  frequency_cap: z.object({ max: z.number().int().min(1).max(100), days: z.number().int().min(1).max(30) }).optional(),
+  // Fallback time zone for contacts without one ("contact" windows/waits).
+  default_timezone: TimeZoneSchema.optional(),
 });
 
 export const WorkflowDefinitionSchema = z.object({
@@ -292,6 +406,15 @@ export function validateWorkflowDefinition(raw: unknown, opts: { strict?: boolea
     ids.add(step.id);
   }
 
+  for (const step of def.steps) {
+    if (step.type === 'wait_until' && (step.mode === 'field' ? !step.field : !step.time)) {
+      errors.push({ code: 'invalid_wait_until', message: `Step '${step.id}': ${step.mode === 'field' ? 'choose the date field to wait for' : 'set the time of day'}`, step_id: step.id });
+    }
+    if (step.type === 'update_contact' && !step.add_tags.length && !step.remove_tags.length && !Object.keys(step.set_attributes).length && !step.status) {
+      errors.push({ code: 'empty_update', message: `Step '${step.id}': choose at least one contact change`, step_id: step.id });
+    }
+  }
+
   // Every edge must land on a real step.
   for (const step of def.steps) {
     for (const target of outgoingTargets(step)) {
@@ -377,7 +500,14 @@ export function resolveField(bag: Record<string, unknown>, path: string): unknow
   return cur;
 }
 
-export function evaluateRule(bag: Record<string, unknown>, rule: ConditionRule): boolean {
+/** A list value: an array, or a comma-separated string from a form field. */
+function listValue(value: unknown): Array<string | number> {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') return value.split(',').map((v) => v.trim()).filter(Boolean);
+  return value === undefined || value === null ? [] : [String(value)];
+}
+
+export function evaluateRule(bag: Record<string, unknown>, rule: ConditionRule, now = new Date()): boolean {
   const actual = resolveField(bag, rule.field);
   switch (rule.op) {
     case 'exists':
@@ -390,11 +520,11 @@ export function evaluateRule(bag: Record<string, unknown>, rule: ConditionRule):
       return !(actual === rule.value || String(actual) === String(rule.value));
     case 'contains':
       if (typeof actual === 'string') return actual.toLowerCase().includes(String(rule.value ?? '').toLowerCase());
-      if (Array.isArray(actual)) return actual.some((v) => String(v) === String(rule.value));
+      if (Array.isArray(actual)) return actual.some((v) => String(v).toLowerCase() === String(rule.value ?? '').toLowerCase());
       return false;
     case 'not_contains':
       if (typeof actual === 'string') return !actual.toLowerCase().includes(String(rule.value ?? '').toLowerCase());
-      if (Array.isArray(actual)) return !actual.some((v) => String(v) === String(rule.value));
+      if (Array.isArray(actual)) return !actual.some((v) => String(v).toLowerCase() === String(rule.value ?? '').toLowerCase());
       return true;
     case 'gt':
     case 'gte':
@@ -409,7 +539,23 @@ export function evaluateRule(bag: Record<string, unknown>, rule: ConditionRule):
       return a <= b;
     }
     case 'in':
-      return Array.isArray(rule.value) && rule.value.some((v) => String(v) === String(actual));
+      return listValue(rule.value).some((v) => String(v).toLowerCase() === String(actual ?? '').toLowerCase());
+    case 'not_in':
+      return !listValue(rule.value).some((v) => String(v).toLowerCase() === String(actual ?? '').toLowerCase());
+    case 'starts_with':
+      return typeof actual === 'string' && actual.toLowerCase().startsWith(String(rule.value ?? '').toLowerCase());
+    case 'ends_with':
+      return typeof actual === 'string' && actual.toLowerCase().endsWith(String(rule.value ?? '').toLowerCase());
+    case 'is_true':
+      return actual === true || actual === 'true' || actual === 1 || actual === '1' || actual === 'yes';
+    case 'is_false':
+      return !(actual === true || actual === 'true' || actual === 1 || actual === '1' || actual === 'yes');
+    case 'before':
+    case 'after': {
+      const a = parseDateValue(actual), b = resolveRelativeDate(rule.value, now);
+      if (!a || !b) return false;
+      return rule.op === 'before' ? a.getTime() < b.getTime() : a.getTime() > b.getTime();
+    }
     default:
       return false;
   }
@@ -418,10 +564,11 @@ export function evaluateRule(bag: Record<string, unknown>, rule: ConditionRule):
 export function evaluateRules(
   bag: Record<string, unknown>,
   rules: ConditionRule[],
-  match: 'all' | 'any'
+  match: 'all' | 'any',
+  now = new Date()
 ): boolean {
   if (rules.length === 0) return true;
-  return match === 'all' ? rules.every((r) => evaluateRule(bag, r)) : rules.some((r) => evaluateRule(bag, r));
+  return match === 'all' ? rules.every((r) => evaluateRule(bag, r, now)) : rules.some((r) => evaluateRule(bag, r, now));
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +587,9 @@ export interface SimulationInput {
   // For each split step id: force branch 'a' or 'b'. Missing entries use the
   // same deterministic hash the engine uses (keyed on subject email here).
   split_outcomes?: Record<string, 'a' | 'b'>;
+  contact?: Record<string, unknown>;
+  run_opened?: boolean;
+  run_clicked?: boolean;
 }
 
 export interface SimulationStepTrace {
@@ -463,6 +613,8 @@ export function simulateWorkflow(def: WorkflowDefinition, input: SimulationInput
     subject: { email: input.subject_email ?? 'test@example.com' },
     context: input.context ?? {},
     trigger: input.trigger_payload ?? {},
+    contact: input.contact ?? { email: input.subject_email ?? 'test@example.com', tags: [], attributes: {} },
+    run: { opened: input.run_opened ?? false, clicked: input.run_clicked ?? false },
   };
 
   const path: SimulationStepTrace[] = [];
@@ -535,6 +687,25 @@ export function simulateWorkflow(def: WorkflowDefinition, input: SimulationInput
       case 'exit':
         outcome = 'exited';
         next = null;
+        break;
+      case 'wait_until':
+        outcome = step.mode === 'field' ? `wait until ${step.field}${step.offset_seconds ? ` ${step.offset_seconds > 0 ? '+' : ''}${step.offset_seconds}s` : ''}` : `wait until ${step.time} (${step.timezone ?? 'contact'})`;
+        next = step.next;
+        break;
+      case 'update_contact':
+        outcome = `would update contact${step.add_tags.length ? ` +tags ${step.add_tags.join(',')}` : ''}${step.remove_tags.length ? ` -tags ${step.remove_tags.join(',')}` : ''}${Object.keys(step.set_attributes).length ? ` set ${Object.keys(step.set_attributes).join(',')}` : ''}${step.status ? ` status ${step.status}` : ''}`;
+        next = step.next;
+        // Later conditions in the simulation see the update.
+        {
+          const contact = ((bag.contact as any) ??= { tags: [], attributes: {} });
+          contact.tags = [...new Set([...(contact.tags ?? []), ...step.add_tags])].filter((t: string) => !step.remove_tags.includes(t));
+          contact.attributes = { ...(contact.attributes ?? {}), ...step.set_attributes };
+          if (step.status) contact.status = step.status;
+        }
+        break;
+      case 'notify':
+        outcome = `would notify ${step.to.join(', ')}`;
+        next = step.next;
         break;
     }
 

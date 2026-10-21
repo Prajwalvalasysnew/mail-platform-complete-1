@@ -5,13 +5,19 @@ import {addSuppression,recordAuditSafe,type TenantExecutor} from '@platform/shar
 import {requireScope} from '../plugins/scope.js';
 import {tenantScoped} from '../lib/tenant.js';
 
-const Contact=z.object({email:z.string().trim().email().max(320).transform(value=>value.toLowerCase()),name:z.string().trim().min(1).max(200),company:z.string().trim().max(200).default(''),location:z.string().trim().max(200).default(''),status:z.enum(['Pending','Subscribed','Unsubscribed']).default('Pending'),consent_confirmed:z.boolean().default(false)}).strict().refine(value=>value.status!=='Subscribed' || value.consent_confirmed,{message:'Documented consent must be confirmed before subscribing a contact.'});
+// Workflow data: tags, custom attributes (plan, birthday, renewal_date...) and time zone.
+const ContactProfile=z.object({
+  tags:z.array(z.string().trim().toLowerCase().min(1).max(64)).max(100).optional(),
+  attributes:z.record(z.string().regex(/^[a-zA-Z0-9_]{1,64}$/),z.union([z.string().max(500),z.number(),z.boolean(),z.null()])).refine(v=>Object.keys(v).length<=100,'At most 100 attributes').optional(),
+  timezone:z.string().max(64).refine(tz=>{try{new Intl.DateTimeFormat('en-US',{timeZone:tz});return true;}catch{return false;}},'Use an IANA time zone such as Europe/London').nullable().optional(),
+});
+const Contact=z.object({email:z.string().trim().email().max(320).transform(value=>value.toLowerCase()),name:z.string().trim().min(1).max(200),company:z.string().trim().max(200).default(''),location:z.string().trim().max(200).default(''),status:z.enum(['Pending','Subscribed','Unsubscribed']).default('Pending'),consent_confirmed:z.boolean().default(false),...ContactProfile.shape}).strict().refine(value=>value.status!=='Subscribed' || value.consent_confirmed,{message:'Documented consent must be confirmed before subscribing a contact.'});
 const idsSchema=z.array(z.string().uuid()).min(1).max(200).refine(ids=>new Set(ids).size===ids.length);
 const effectiveStatus=sql<string>`CASE WHEN s.reason IN ('hard_bounce','complaint','invalid') THEN 'Bounced' WHEN s.email IS NOT NULL THEN 'Unsubscribed' ELSE c.status END`;
 async function insertContact(trx:TenantExecutor,customerId:string,input:z.infer<typeof Contact>,source:string){
   const suppression=await trx.selectFrom('suppressions').select('reason').where('customer_id','=',customerId).where('email','=',input.email).executeTakeFirst();
   if(suppression && input.status==='Subscribed')throw Object.assign(new Error('This address is suppressed. Creating a contact cannot bypass its suppression.'),{code:'suppressed_contact'});
-  const row=await trx.insertInto('audience_contacts').values({customer_id:customerId,email:input.email,name:input.name,company:input.company,location:input.location,status:input.status,consent_confirmed_at:input.consent_confirmed?new Date():null,source}).returningAll().executeTakeFirstOrThrow();
+  const row=await trx.insertInto('audience_contacts').values({customer_id:customerId,email:input.email,name:input.name,company:input.company,location:input.location,status:input.status,consent_confirmed_at:input.consent_confirmed?new Date():null,source,...(input.tags?{tags:[...new Set(input.tags)]}:{}),...(input.attributes?{attributes:input.attributes as any}:{}),...(input.timezone!==undefined?{timezone:input.timezone}:{})}).returningAll().executeTakeFirstOrThrow();
   if(input.status==='Unsubscribed')await addSuppression(customerId,input.email,'unsubscribe','Unsubscribed in customer contacts',trx,{source:'customer_console'});
   return row;
 }
@@ -35,6 +41,19 @@ export const customerContactRoutes:FastifyPluginAsync=async app=>{
       recordAuditSafe({customerId:req.auth!.customer_id,actorType:'user',actorId:req.user?.user_id,action:'contact.created',resource:contact.id});
       return reply.code(201).send({contact});
     }catch(error:any){if(error.code==='23505')return reply.code(409).send({error:'contact_exists',message:'A contact with this email already exists.'});if(error.code==='suppressed_contact')return reply.code(409).send({error:error.code,message:error.message});throw error;}
+  });
+  app.patch('/contacts/:id/profile',{preHandler:scope},async(req,reply)=>{
+    const id=z.string().uuid().safeParse((req.params as any).id),parsed=ContactProfile.strict().safeParse(req.body);
+    if(!id.success || !parsed.success)return reply.code(400).send({error:'validation_failed',message:parsed.success?undefined:parsed.error.issues[0]?.message});
+    const cid=req.auth!.customer_id;
+    const contact=await tenantScoped(req,async trx=>{
+      const current=await trx.selectFrom('audience_contacts').select(['attributes']).where('customer_id','=',cid).where('id','=',id.data).forUpdate().executeTakeFirst();if(!current)return null;
+      const attributes={...(current.attributes as Record<string,unknown>)};for(const [k,v] of Object.entries(parsed.data.attributes ?? {})){if(v===null)delete attributes[k];else attributes[k]=v;}
+      return trx.updateTable('audience_contacts').set({...(parsed.data.tags?{tags:[...new Set(parsed.data.tags)]}:{}),...(parsed.data.attributes?{attributes:attributes as any}:{}),...(parsed.data.timezone!==undefined?{timezone:parsed.data.timezone}:{}),updated_at:new Date(),revision:sql`revision+1` as any}).where('customer_id','=',cid).where('id','=',id.data).returningAll().executeTakeFirstOrThrow();
+    });
+    if(!contact)return reply.code(404).send({error:'not_found'});
+    recordAuditSafe({customerId:cid,actorType:'user',actorId:req.user?.user_id,action:'contact.profile_updated',resource:id.data});
+    return {contact};
   });
   app.post('/contacts/import',{preHandler:scope,bodyLimit:1500000},async(req,reply)=>{
     const parsed=z.object({contacts:z.array(Contact).min(1).max(200)}).strict().safeParse(req.body);

@@ -80,7 +80,7 @@ export function installCustomerData(c:Controller){
     if(c.state.view!=='analytics')return values;
     const rates=[summary?.delivery_rate,summary?.open_rate,summary?.click_rate,summary?.opened?summary.clicked/summary.opened:0,summary?.delivered?summary.unsubscribed/summary.delivered:0,null];
     values.anKpis=values.anKpis.map((row:any,index:number)=>({...row,label:index===1?'Recorded opens':row.label,tip:'Recorded workspace events. Repeat events may be counted; no estimated benchmark is applied.',value:!loaded || rates[index]===null?'—':percent(rates[index]),hasDelta:false,line:'',area:'',barStyle:'width:0;',benchStyle:'display:none;',vs:'',benchTxt:'No comparison data'}));
-    values.anInsights=[];values.anPrev='';values.anArea='';values.anBenchY='-100';values.anGrid=[];values.anYLabels=[];values.anXLabels=[];
+    values.anHasBench=false;values.anInsights=[];values.anPrev='';values.anArea='';values.anBenchY='-100';values.anGrid=[];values.anYLabels=[];values.anXLabels=[];
     const key:Record<string,string>={delivered:'delivered',open:'opened',click:'clicked'};
     values.anLine=line(series.map(p=>p[key[c.state.anMetric || 'open']] || 0),800,200);
     values.anTrendSub=telemetryError || 'Live message events · no estimated benchmarks';

@@ -11,10 +11,15 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
   c.state={...c.state,aiMessages:[],aiChatId:crypto.randomUUID()};
   c.props.overlay=EditorAiConversation;
   c.stopAiWriting=()=>void active?.cancel().catch((error:unknown)=>c.toast(errorMessage(error)));
-  const addMessage=(role:string,text:string)=>c.setState((state:any)=>({aiMessages:[...state.aiMessages,{id:crypto.randomUUID(),role,text}]}));
+  // Assistant bubbles list the concrete edits the agent's tools made, so replies can be checked against the canvas.
+  const assistantText=(m:any)=>{const r=m.result,changes=r?.operation==='draft' && Array.isArray(r.changes)?r.changes:[];
+    return [r?.message || m.text || m.error || (['queued','running'].includes(m.status)?'Working on your request...':'Unable to finish this request.'),...changes.map((x:string)=>`• ${x}`)].join('\n');};
+  /** Body HTML of the canvas with editor CSS inlined: the document the AI agent edits. */
+  const canvasHtml=()=>{const doc=new DOMParser().parseFromString(c.exportEmail().html,'text/html'),first=doc.body.firstElementChild;if(first && /display:\s*none/.test(first.getAttribute('style') || ''))first.remove();return doc.body.innerHTML.trim();};
+  const addMessage=(role:string,text:string,failed=false)=>c.setState((state:any)=>({aiMessages:[...state.aiMessages,{id:crypto.randomUUID(),role,text,failed}]}));
   async function refreshHistory(){
     const data=await getResource(`/account/ai/chats/${c.state.aiChatId}`,true);if(disposed || owner!==aiIdentity())return;
-    c.setState({aiMessages:data.messages.map((m:any)=>({id:m.id,role:m.role,text:m.role==='user'?m.text:m.result?.message || m.text || m.error || (['queued','running'].includes(m.status)?'Working on your request...':'Unable to finish this request.')}))});
+    c.setState({aiMessages:data.messages.map((m:any)=>({id:m.id,role:m.role,text:m.role==='user'?m.text:assistantText(m),failed:m.role!=='user' && ['failed','timed_out','cancelled'].includes(m.status)}))});
     return data;
   }
   c.restoreAiWriting=async(id?:string,design?:unknown)=>{
@@ -44,13 +49,14 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
     const before=fingerprint(),owner=aiIdentity(),section=c.state.aiMode==='section';
     if(operation==='subjects')c.setState({subjMenu:true,subjBusy:true,subjOpts:[]});
     else c.setState(operation==='draft'?{busy:true}:{rwBusy:mode});
-    const conversational=operation==='draft';
-    if(conversational && text.length>6000){c.setState({busy:false});return c.toast('This email is too long for the conversational editor. Select a section to rewrite.');}
+    const conversational=operation==='draft',html=conversational?canvasHtml():'';
+    if(conversational && html.length>60000){c.setState({busy:false});return c.toast('This email is too large for the AI assistant. Remove unused sections or select a block to rewrite.');}
     const currentLinks=conversational?[...new Set(Array.from(new DOMParser().parseFromString(c.ed.getHtml(),'text/html').querySelectorAll('a[href]')).map(a=>a.getAttribute('href') || '').filter(value=>{try{const url=new URL(value);return ['http:','https:'].includes(url.protocol) && !url.username && !url.password;}catch{return false;}}))]:[];
     if(currentLinks.length>20){c.setState({busy:false});return c.toast('This email has too many links for conversational generation. Select a text block to rewrite.');}
     const brief=section && conversational?`Write a short additional email section, without a footer or sign-off. ${instruction}`:instruction;
-    if(conversational){addMessage('user',instruction);const url=new URL(location.href);url.searchParams.set('ai_chat',c.state.aiChatId);history.replaceState({},'',url);}
-    const request=requestAi({operation:conversational?'editor':operation,instruction:brief,content:text,subject:c.state.subject,tone:c.state.tone || 'Friendly'},undefined,conversational?{chatId:c.state.aiChatId,settings:{editor:{links:currentLinks,key:new URLSearchParams(location.search).get('id') || c.state.aiChatId,content:text,subject:c.state.subject,tone:c.state.tone || 'Friendly',section,...(c.state.aiDesign?{design:c.state.aiDesign}:{})},timezone:Intl.DateTimeFormat().resolvedOptions().timeZone}}:{});
+    if(conversational){addMessage('user',instruction);c.setState({prompt:''});const url=new URL(location.href);url.searchParams.set('ai_chat',c.state.aiChatId);history.replaceState({},'',url);}
+    c.setState({aiSteps:[]});
+    const request=requestAi({operation:conversational?'editor':operation,instruction:brief,content:text,subject:c.state.subject,tone:c.state.tone || 'Friendly'},conversational?(_status,live)=>{if(!disposed)c.setState({aiSteps:live?.steps || []});}:undefined,conversational?{chatId:c.state.aiChatId,settings:{editor:{links:currentLinks,key:new URLSearchParams(location.search).get('id') || c.state.aiChatId,content:text.slice(0,6000),html,subject:c.state.subject,preheader:c.state.preheader || '',tone:c.state.tone || 'Friendly',section},timezone:Intl.DateTimeFormat().resolvedOptions().timeZone}}:{});
     active=request;
     try{
       const row=await request.promise;
@@ -62,23 +68,26 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
       if(operation==='rewrite'){
         if(!selected || !c.ed.getWrapper().contains(selected))return c.toast('The original block is no longer available.');
         selected.components(c.esc(row.result.text).replace(/\n/g,'<br>'));c.syncSel?.();
-      }else if(section){
-        const doc=new DOMParser().parseFromString(row.result.html,'text/html');
-        const html=doc.querySelector('.email')?.innerHTML;
-        if(!html)throw new Error('AI returned an empty section.');
-        const root=c.ed.getWrapper().find('.email')[0] || c.ed.getWrapper();root.append(html);
-      }else{c.ed.setComponents(row.result.html);c.setState({subject:row.result.subject,preheader:row.result.preheader});}
-      if(conversational)c.setState({aiDesign:row.result.design,prompt:''});
+      }else{
+        // The agent edits the whole canvas document in place (targeted tool edits), so apply it as one undoable step.
+        c.ed.setComponents(row.result.html);c.setState({subject:row.result.subject || c.state.subject,preheader:row.result.preheader ?? c.state.preheader});
+      }
+      if(conversational)c.setState({prompt:''});
       undoFingerprint=fingerprint();onChanged();c.runReview?.();
       c.toast(row.warnings?.length?'AI draft added. Review the content and delivery checks before saving.':'AI suggestion added. Review before saving or sending.',true);
-    }catch(error){if(!disposed && owner===aiIdentity()){if(conversational)addMessage('assistant',errorMessage(error));c.toast(errorMessage(error));}}
+    }catch(error){if(!disposed && owner===aiIdentity()){if(conversational)addMessage('assistant',errorMessage(error),true);c.toast(errorMessage(error));}}
     finally{if(active===request){active=undefined;if(!disposed)c.setState({busy:false,rwBusy:null,subjBusy:false});}}
   }
   c.applyAiDraft=()=>{
     if(!c.state.pendingAiDraft || !valid() || active)return;
-    const result=c.state.pendingAiDraft;remember();c.ed.setComponents(result.html);c.setState({subject:result.subject,preheader:result.preheader,aiDesign:result.design,pendingAiDraft:null});undoFingerprint=fingerprint();onChanged();c.runReview?.();c.toast('Draft applied. Review before saving.',true);
+    const result=c.state.pendingAiDraft;remember();c.ed.setComponents(result.html);c.setState({subject:result.subject || c.state.subject,preheader:result.preheader ?? c.state.preheader,pendingAiDraft:null});undoFingerprint=fingerprint();onChanged();c.runReview?.();c.toast('Draft applied. Review before saving.',true);
   };
   c.generate=()=>void run('draft',c.state.prompt || '');
+  c.newAiChat=()=>{
+    if(active)return;
+    c.setState({aiMessages:[],aiChatId:crypto.randomUUID(),pendingAiDraft:null,prompt:''});
+    const url=new URL(location.href);url.searchParams.delete('ai_chat');history.replaceState({},'',url);onChanged();
+  };
   c.suggestSubjects=()=>void run('subjects');
   c.rewrite=(mode:string)=>{
     const how:Record<string,string>={shorter:'Make it about half as long.',friendlier:'Make it warmer and friendlier.',punchier:'Make it direct and concise.',urgent:'Use a direct tone without inventing deadlines or scarcity.',grammar:'Fix grammar and spelling only.',personal:'Preserve existing merge tags. Do not add personal data or merge tags.',custom:c.state.instr || ''};
@@ -86,10 +95,8 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
     void run('rewrite',how[mode] || 'Improve clarity.',mode);
   };
   c.bindAiValues=(values:any)=>{
-    values.promptLabel=c.state.aiMessages?.length?'Continue the conversation':'What would you like to create?';
-    values.promptPh='Ask a question, describe an email, or request a change...';
-    values.genLabel=c.state.busy?'Working...':c.state.aiMessages?.length?'Send message':'Generate email';
-    values.genNote='Discuss the draft, then refine it here. Generated changes can be undone.';
+    // The panel is a plain chat (EditorAiConversation); selecting text just opens it.
+    values.aiOnSel=()=>c.setState({aiOpen:true});
     const previousUndo=values.undo;
     values.undo=()=>{
       if(undo && fingerprint()===undoFingerprint){const saved=undo;undo=null;c.ed.loadProjectData(saved.project);c.setState({subject:saved.subject,preheader:saved.preheader,aiDesign:saved.design,toast:null});onChanged();}

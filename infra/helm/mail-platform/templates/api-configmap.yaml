@@ -14,6 +14,9 @@ data:
   AI_ALLOW_CLOUD: {{ .Values.ai.allowCloud | quote }}
   AI_CONCURRENCY: {{ .Values.ai.concurrency | quote }}
   AI_RETENTION_HOURS: {{ .Values.ai.retentionHours | quote }}
+  AI_CONTEXT_TOKENS: {{ .Values.ai.contextTokens | quote }}
+  AI_MAX_OUTPUT_TOKENS: {{ .Values.ai.maxOutputTokens | quote }}
+  AI_AGENT_TIMEOUT_MS: {{ .Values.ai.agentTimeoutMs | quote }}
   {{- if .Values.customerUi.enabled }}
   {{- if not (hasKey .Values.api.env "APP_BASE_URL") }}
   APP_BASE_URL: {{ printf "https://%s" .Values.customerUi.ingress.host | quote }}

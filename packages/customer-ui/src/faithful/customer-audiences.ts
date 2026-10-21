@@ -17,6 +17,9 @@ export function installCustomerAudiences(c:Controller){
   values.sgAddRule=()=>c.setState({sgRules:[...c.state.sgRules,{field:'Created',op:'in last',val:'7 days'}]});
   const subset=rows.filter(row=>row.kind===(view==='segments'?'segment':'list'));
   values.slCards=values.slCards.map((card:any,index:number)=>({...card,trend:view==='segments'?'Live count':'Static list',onDelete:()=>{if(window.confirm(`Delete ${subset[index].name}? Contacts and consent are retained.`))void write(async()=>{await performAction(`/account/data/audiences/${subset[index].id}`,undefined,'DELETE');await refresh();});},onSend:()=>{if(!writable())return c.toast('Your role cannot create campaigns.');c.go('campaigns');c.setState({newCampOpen:true,nc:{name:'',type:'Regular',audience:subset[index].id}});}}));
+  const segments=view==='segments';
+  values.slEmpty=!subset.length;values.slEmptyTitle=segments?'No segments yet':'No lists yet';
+  values.slEmptySub=segments?'Segments update automatically as contacts match their rules. Create one to target engaged or recent contacts.':'Lists are fixed groups you add contacts to by hand, by import or from a workflow.';
   return values;
  };
  c.openListAssignment=()=>void(async()=>{if(!writable())return;c.setState({productionListAssignment:null});try{const result=await getResource('/account/data/audiences',true),lists=result.collections.filter((row:any)=>row.kind==='list');if(!lists.length)return c.toast('Create a list before assigning contacts.');if(!disposed)c.setState({productionListAssignment:{lists,id:lists[0].id,ids:Object.keys(c.state.ctSel).filter(id=>c.state.ctSel[id]),error:'',busy:false}});}catch(error){if(!disposed)c.toast(errorMessage(error));}})();

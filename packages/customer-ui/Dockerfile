@@ -16,6 +16,8 @@ COPY packages/tracker/package.json packages/tracker/package.json
 COPY packages/worker/package.json packages/worker/package.json
 RUN --mount=type=cache,target=/root/.npm npm ci --workspace=@platform/customer-ui --include-workspace-root=false
 COPY packages/customer-ui packages/customer-ui
+# The builder codec is shared with the AI tools; it is a single dependency-free file.
+COPY packages/shared/src/workflow-builder.ts packages/shared/src/workflow-builder.ts
 RUN npm run build --workspace=@platform/customer-ui
 
 FROM nginx:stable-alpine

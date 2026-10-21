@@ -17,7 +17,8 @@ const Email = lazy(async()=>{
   const [module,grapes] = await Promise.all([import('./generated/Email'),import('grapesjs')]);
   // The reference does not display Font Awesome glyphs. Do not let the newer
   // runtime inject an external icon-font stylesheet and change its layout.
-  (window as unknown as { grapesjs: unknown }).grapesjs = {...grapes.default,init:(config:any)=>grapes.default.init({...config,cssIcons:''})};
+  // No third-party telemetry from customer browsers (privacy, CSP).
+  (window as unknown as { grapesjs: unknown }).grapesjs = {...grapes.default,init:(config:any)=>grapes.default.init({...config,cssIcons:'',telemetry:false})};
   await import('./grapes-reference.css');
   return { default:()=> <DesignPage module={module} prepare={location.pathname.startsWith('/__design/')?undefined:prepareEmail} /> };
 });

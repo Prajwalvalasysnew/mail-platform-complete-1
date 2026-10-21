@@ -1512,7 +1512,7 @@ a:hover{color:oklch(0.42 0.18 25);text-decoration:underline;}
 
         <sc-if value="{{ isAnalytics }}" hint-placeholder-val="">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
-            <div style="position:relative;">
+            <sc-if value="{{ anHasBench }}" hint-placeholder-val=""><div style="position:relative;">
               <button onClick="{{ anIndToggle }}" style="display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border-radius:10px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;font-size:13px;color:oklch(0.24 0.015 260);">
                 <span style="color:oklch(0.52 0.012 260);">Benchmark</span><span style="font-weight:600;">{{ anIndLabel }}</span>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:oklch(0.55 0.012 260);"><path d="m7 10 5 5 5-5"></path></svg>
@@ -1529,7 +1529,7 @@ a:hover{color:oklch(0.42 0.18 25);text-decoration:underline;}
                   </sc-for>
                 </div>
               </sc-if>
-            </div>
+            </div></sc-if>
             <div style="display:flex;gap:3px;padding:3px;border-radius:10px;background:oklch(0.955 0.003 250);">
               <sc-for list="{{ anChans }}" as="r" hint-placeholder-count="3"><button onClick="{{ r.onClick }}" style="{{ r.style }}">{{ r.label }}</button></sc-for>
             </div>
@@ -1587,7 +1587,7 @@ a:hover{color:oklch(0.42 0.18 25);text-decoration:underline;}
               <div style="display:flex;align-items:center;gap:14px;font-size:12px;color:oklch(0.48 0.012 260);">
                 <span style="display:flex;align-items:center;gap:6px;"><span style="width:14px;height:2.5px;border-radius:2px;background:oklch(0.56 0.20 25);"></span>This period</span>
                 <sc-if value="{{ anCmp }}" hint-placeholder-val=""><span style="display:flex;align-items:center;gap:6px;"><span style="width:14px;height:0;border-top:2px dashed oklch(0.70 0.008 260);"></span>Previous</span></sc-if>
-                <span style="display:flex;align-items:center;gap:6px;"><span style="width:14px;height:0;border-top:1.5px dotted oklch(0.55 0.13 250);"></span>Industry</span>
+                <sc-if value="{{ anHasBench }}" hint-placeholder-val=""><span style="display:flex;align-items:center;gap:6px;"><span style="width:14px;height:0;border-top:1.5px dotted oklch(0.55 0.13 250);"></span>Industry</span></sc-if>
               </div>
             </div>
             <div style="position:relative;">
@@ -1595,7 +1595,7 @@ a:hover{color:oklch(0.42 0.18 25);text-decoration:underline;}
                 <sc-for list="{{ anGrid }}" as="g" hint-placeholder-count="4">
                   <line x1="0" x2="800" y1="{{ g.y }}" y2="{{ g.y }}" stroke="oklch(0.94 0.003 250)" stroke-width="1" vector-effect="non-scaling-stroke"></line>
                 </sc-for>
-                <line x1="0" x2="800" y1="{{ anBenchY }}" y2="{{ anBenchY }}" stroke="oklch(0.55 0.13 250)" stroke-width="1.4" stroke-dasharray="2 4" vector-effect="non-scaling-stroke"></line>
+                <sc-if value="{{ anHasBench }}" hint-placeholder-val=""><line x1="0" x2="800" y1="{{ anBenchY }}" y2="{{ anBenchY }}" stroke="oklch(0.55 0.13 250)" stroke-width="1.4" stroke-dasharray="2 4" vector-effect="non-scaling-stroke"></line></sc-if>
                 <path d="{{ anArea }}" fill="oklch(0.56 0.20 25 / 0.08)" stroke="none"></path>
                 <sc-if value="{{ anCmp }}" hint-placeholder-val=""><path d="{{ anPrev }}" fill="none" stroke="oklch(0.72 0.008 260)" stroke-width="1.8" stroke-dasharray="5 5" vector-effect="non-scaling-stroke"></path></sc-if>
                 <path d="{{ anLine }}" fill="none" stroke="oklch(0.56 0.20 25)" stroke-width="2.4" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"></path>
@@ -1926,6 +1926,8 @@ a:hover{color:oklch(0.42 0.18 25);text-decoration:underline;}
             <div style="flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:16px;">
               <div style="border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 1px 2px oklch(0.2 0.02 260 / 0.04);padding:16px 20px;">
                 <p style="margin:0;font-size:15px;font-weight:600;">Usage · last 24 hours</p>
+                <sc-if value="{{ kNoUsage }}" hint-placeholder-val=""><p style="margin:8px 0 0;font-size:12.5px;line-height:1.5;color:oklch(0.52 0.012 260);">{{ kNoUsage }}</p></sc-if>
+                <sc-if value="{{ kHasUsage }}" hint-placeholder-val="">
                 <div style="display:flex;align-items:flex-end;gap:3px;height:56px;margin:14px 0 6px;">
                   <sc-for list="{{ kBars }}" as="b" hint-placeholder-count="24"><span title="{{ b.title }}" style="{{ b.style }}"></span></sc-for>
                 </div>
@@ -1943,6 +1945,7 @@ a:hover{color:oklch(0.42 0.18 25);text-decoration:underline;}
                   <div style="display:flex;justify-content:space-between;font-size:12px;color:oklch(0.48 0.012 260);"><span>Rate limit · 600 requests / minute</span><span style="font-weight:600;color:oklch(0.30 0.015 260);">Peak 212 / min</span></div>
                   <div style="height:6px;margin-top:7px;border-radius:3px;background:oklch(0.94 0.003 250);overflow:hidden;"><div style="height:100%;width:35%;border-radius:3px;background:oklch(0.58 0.14 155);"></div></div>
                 </div>
+              </sc-if>
               </div>
               <div style="border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 1px 2px oklch(0.2 0.02 260 / 0.04);padding:16px 20px;">
                 <p style="margin:0 0 12px;font-size:15px;font-weight:600;">SMTP relay</p>
@@ -2047,6 +2050,7 @@ a:hover{color:oklch(0.42 0.18 25);text-decoration:underline;}
                 <p style="margin:0;font-size:15px;font-weight:600;">Endpoints</p>
                 <p style="margin:3px 0 0;font-size:12.5px;color:oklch(0.52 0.012 260);">Signed, retried for 24 hours, delivered at least once.</p>
               </div>
+              <sc-if value="{{ whNoEp }}" hint-placeholder-val=""><div style="padding:28px 20px;text-align:center;font-size:13px;color:oklch(0.52 0.012 260);">No endpoints yet. Add one to receive delivery and engagement events.</div></sc-if>
               <sc-for list="{{ whRows }}" as="w" hint-placeholder-count="4">
                 <button onClick="{{ w.onSelect }}" style="{{ w.style }}">
                   <div style="display:flex;align-items:center;gap:10px;">
@@ -2062,7 +2066,7 @@ a:hover{color:oklch(0.42 0.18 25);text-decoration:underline;}
               </sc-for>
             </div>
 
-            <div style="flex:2 1 520px;min-width:0;border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 1px 2px oklch(0.2 0.02 260 / 0.04);overflow:hidden;">
+            <sc-if value="{{ whHasEp }}" hint-placeholder-val=""><div style="flex:2 1 520px;min-width:0;border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 1px 2px oklch(0.2 0.02 260 / 0.04);overflow:hidden;">
               <div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;padding:16px 20px 0;">
                 <div style="flex:1 1 260px;min-width:0;">
                   <div style="display:flex;align-items:center;gap:8px;"><span style="{{ whS.pillStyle }}">{{ whS.status }}</span><span style="font-size:12px;color:oklch(0.52 0.012 260);">{{ whS.desc }}</span></div>
@@ -2207,7 +2211,7 @@ a:hover{color:oklch(0.42 0.18 25);text-decoration:underline;}
                   </div>
                 </div>
               </sc-if>
-            </div>
+            </div></sc-if>
           </div>
         </sc-if>
 
@@ -2469,10 +2473,41 @@ a:hover{color:oklch(0.42 0.18 25);text-decoration:underline;}
               </div>
             </sc-for>
           </div>
+          <sc-if value="{{ slEmpty }}" hint-placeholder-val=""><div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:48px 24px;border-radius:14px;border:1px dashed oklch(0.88 0.005 250);background:oklch(0.985 0.002 250);text-align:center;"><p style="margin:0;font-size:15px;font-weight:600;">{{ slEmptyTitle }}</p><p style="margin:0;max-width:440px;font-size:13px;line-height:1.5;color:oklch(0.52 0.012 260);">{{ slEmptySub }}</p></div></sc-if>
         </sc-if>
 
 
 
+        <sc-if value="{{ isHelp }}" hint-placeholder-val="">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+            <div style="flex:1 1 320px;display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border-radius:10px;border:1px solid oklch(0.91 0.004 250);background:#fff;color:oklch(0.55 0.012 260);">
+              {{ icSearch }}
+              <input value="{{ hpQ }}" onChange="{{ onHpQ }}" placeholder="Search guides" aria-label="Search guides" style="flex:1;min-width:0;border:0;outline:0;background:transparent;font-size:13.5px;color:oklch(0.21 0.015 260);"></input>
+            </div>
+            <button onClick="{{ hpAskAi }}" style="height:40px;padding:0 14px;border-radius:10px;border:1px solid oklch(0.55 0.15 290 / 0.35);background:oklch(0.55 0.15 290 / 0.06);cursor:pointer;font-size:13px;font-weight:600;color:oklch(0.45 0.15 290);">Ask AI</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-bottom:22px;">
+            <sc-for list="{{ hpGuides }}" as="g" hint-placeholder-count="8">
+              <button onClick="{{ g.onClick }}" style="display:flex;align-items:flex-start;gap:12px;padding:16px;border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 1px 2px oklch(0.2 0.02 260 / 0.04);cursor:pointer;text-align:left;font-family:inherit;" style-hover="border-color:oklch(0.84 0.006 250);">
+                <span style="{{ g.iconStyle }}">{{ g.icon }}</span>
+                <span style="flex:1;min-width:0;">
+                  <span style="display:block;font-size:14px;font-weight:600;color:oklch(0.22 0.015 260);">{{ g.title }}</span>
+                  <span style="display:block;margin-top:3px;font-size:12.5px;line-height:1.45;color:oklch(0.52 0.012 260);">{{ g.sub }}</span>
+                  <span style="display:block;margin-top:8px;font-size:11.5px;color:oklch(0.60 0.010 260);">{{ g.meta }}</span>
+                </span>
+              </button>
+            </sc-for>
+          </div>
+          <sc-if value="{{ hpEmpty }}" hint-placeholder-val=""><div style="padding:28px 16px;text-align:center;font-size:13px;color:oklch(0.52 0.012 260);">No guides match. Try Ask AI instead.</div></sc-if>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;">
+            <sc-for list="{{ hpContacts }}" as="c" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;">
+                <div style="flex:1;min-width:0;"><p style="margin:0;font-size:13.5px;font-weight:600;">{{ c.title }}</p><p style="margin:2px 0 0;font-size:12px;color:oklch(0.52 0.012 260);">{{ c.sub }}</p></div>
+                <button onClick="{{ c.onClick }}" style="height:32px;padding:0 12px;border-radius:8px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:12.5px;font-weight:500;color:oklch(0.28 0.015 260);">{{ c.cta }}</button>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
         <sc-if value="{{ showPlaceholder }}" hint-placeholder-val="">
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:420px;padding:40px 24px;border-radius:14px;border:1px dashed oklch(0.88 0.005 250);background:oklch(0.985 0.002 250);text-align:center;">
           <span style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:#fff;border:1px solid oklch(0.91 0.004 250);color:oklch(0.45 0.012 260);">{{ pageIcon }}</span>
@@ -4016,7 +4051,7 @@ class Component extends DCLogic {
     const h = rules.reduce((a,r)=>a + (r.field+r.op+r.val).split('').reduce((x,c)=>x+c.charCodeAt(0),0), 7);
     const est = Math.max(120, Math.round(48210 * Math.pow(0.42 + (h%30)/100, Math.max(1,rules.length))));
     const ok = !!st.sgName.trim() && (!isSeg || rules.length>0);
-    return { isSegLists: v==='segments' || v==='lists', slCards,
+    return { isSegLists: v==='segments' || v==='lists', slCards, slEmpty:false,
       sgModal: st.sgModal, sgClose:()=>this.setState({sgModal:false}), sgIsSeg:isSeg,
       sgTitle: isSeg?'Create segment':'Create list', sgSub: isSeg?'Segments update automatically as contacts match the rules.':'Static lists only change when you add or remove contacts.',
       sgName: st.sgName, onSgName:(e)=>this.setState({sgName:e.target.value}), sgRules,
@@ -4416,7 +4451,7 @@ class Component extends DCLogic {
       whAlertBody: fe ? `${feInf.queued} events are queued and will keep retrying for up to 24 hours. Last response: 503 Service Unavailable. If it keeps failing for 3 days we’ll disable the endpoint and email your admins.` : '',
       whAlertView:()=>fe && this.setState({whSel:fe.id, whTab:'del', whF:'fail', whOpen:null}), whAlertFixLabel:'Fixed — retry queued events',
       whAlertFix:()=>{ if(!fe) return; retryEp(fe.id); this.toast(`Retried ${feInf.queued} events — all delivered`); },
-      whStats, whRows,
+      whStats, whRows, whHasEp:eps.length>0, whNoEp:!eps.length,
       whS: sel ? {status:sP[0], pillStyle:pillSt(sP), desc:(sel.desc||'')+(sel.batch?' · batched':''), url:sel.url} : {},
       whTestLabel:'Send test event', whToggleLabel: sel && sel.on ? 'Disable' : 'Enable',
       whTest:()=>{ if(!sel) return; if(!sel.on) return this.toast('Enable the endpoint to send a test'); const fail = !!sel.failSince, t = Date.now();
@@ -4567,7 +4602,7 @@ class Component extends DCLogic {
       kRevToggle:()=>this.setState({kShowRev:!st.kShowRev}), kRevBox:`display:block;width:15px;height:15px;box-sizing:border-box;border-radius:4px;${st.kShowRev?'background:oklch(0.56 0.20 25);box-shadow:inset 0 0 0 3px oklch(0.56 0.20 25), inset 0 0 0 5px #fff;':'border:1.5px solid oklch(0.80 0.005 250);'}`,
       kLangs:[['curl','cURL'],['node','Node.js'],['python','Python'],['php','PHP'],['go','Go']].map(l=>({label:l[1], style:segS(LANG===l[0]), onClick:()=>this.setState({kLang:l[0]})})),
       kCode:CODE[LANG], kCopyCode:()=>this.copy(CODE[LANG], 'Code'),
-      kBars:barsFor(req, 14), kEndpoints:EPS.map(e=>({m:e[0], mStyle:mSt(e[0]), path:e[1], n:Math.round(req*e[2]).toLocaleString('en-US'), err:(e[3]*100).toFixed(2)+'% err', errColor: e[3]>0.002?'oklch(0.50 0.19 25)':'oklch(0.58 0.010 260)'})),
+      kHasUsage:true, kBars:barsFor(req, 14), kEndpoints:EPS.map(e=>({m:e[0], mStyle:mSt(e[0]), path:e[1], n:Math.round(req*e[2]).toLocaleString('en-US'), err:(e[3]*100).toFixed(2)+'% err', errColor: e[3]>0.002?'oklch(0.50 0.19 25)':'oklch(0.58 0.010 260)'})),
       kSmtp:[['Host','smtp.valasys.io'],['Port','587 STARTTLS · 465 TLS'],['Username','apikey'],['Password','Any key with send access']].map(x=>({k:x[0],v:x[1]})),
       kNewSecret:st.kNewSecret, kNewTitle: st.kNewMode==='rotate' ? 'Key rotated — copy the new secret' : 'Copy your new key now',
       kNewNote: st.kNewMode==='rotate' ? 'The old key keeps working for 24 hours so you can deploy the new one without downtime. After that it stops.' : 'For your security we only show it once. Store it in a secrets manager or an environment variable such as VALASYS_API_KEY.',
@@ -4792,7 +4827,7 @@ class Component extends DCLogic {
     const hasH = hov!=null && v._pts[hov];
     const tip = hasH ? v._pts[hov] : null;
     return { ...v, _pts:undefined,
-      anIndLabel:I.label, anIndOpen:!!st.anIndOpen, anIndToggle:()=>this.setState(s=>({anIndOpen:!s.anIndOpen})),
+      anHasBench:true, anIndLabel:I.label, anIndOpen:!!st.anIndOpen, anIndToggle:()=>this.setState(s=>({anIndOpen:!s.anIndOpen})),
       anInds:Object.entries(this.INDS).map(([k,x])=>({label:x.label, sub:x.sub, onClick:()=>this.setState({anInd:k, anIndOpen:false, anHover:null}),
         style:`display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;border-radius:8px;cursor:pointer;text-align:left;background:${k===indK?'oklch(0.56 0.20 25 / 0.07)':'transparent'};`,
         check:`font-size:13px;font-weight:700;color:oklch(0.52 0.19 25);visibility:${k===indK?'visible':'hidden'};`})),

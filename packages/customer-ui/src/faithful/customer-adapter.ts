@@ -20,17 +20,34 @@ const scopeMap: Record<string,string | undefined> = { mail:'send', messages:'mes
 function navigate(path: string) { history.pushState({},'',path); window.dispatchEvent(new PopStateEvent('popstate')); }
 function date(value?: string) { return value ? new Date(value).getTime() : null; }
 
+function sendSamples(endpoint:string){
+  const body={from:'hello@mail.your-domain.com',from_name:'Your company',to:'customer@example.com',template_id:'YOUR_TEMPLATE_ID',variables:{first_name:'Sam',order_id:'1042'}};
+  const json=JSON.stringify(body,null,2);
+  return {
+    curl:`curl ${endpoint} \\\n  -H "Authorization: Bearer $VALASYS_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -H "Idempotency-Key: order-1042-receipt" \\\n  -d '${json.replace(/\n/g,'\n  ')}'`,
+    node:`const response = await fetch('${endpoint}', {\n  method: 'POST',\n  headers: {\n    Authorization: \`Bearer \${process.env.VALASYS_API_KEY}\`,\n    'Content-Type': 'application/json',\n    'Idempotency-Key': 'order-1042-receipt',\n  },\n  body: JSON.stringify(${json.replace(/\n/g,'\n  ')}),\n});\nif (!response.ok) throw new Error(await response.text());`,
+    python:`import os, requests\n\nresponse = requests.post(\n    "${endpoint}",\n    headers={\n        "Authorization": f"Bearer {os.environ['VALASYS_API_KEY']}",\n        "Idempotency-Key": "order-1042-receipt",\n    },\n    json=${json.replace(/\n/g,'\n    ')},\n    timeout=30,\n)\nresponse.raise_for_status()`,
+    php:`<?php\n$ch = curl_init('${endpoint}');\ncurl_setopt_array($ch, [\n    CURLOPT_POST => true,\n    CURLOPT_RETURNTRANSFER => true,\n    CURLOPT_HTTPHEADER => [\n        'Authorization: Bearer ' . getenv('VALASYS_API_KEY'),\n        'Content-Type: application/json',\n        'Idempotency-Key: order-1042-receipt',\n    ],\n    CURLOPT_POSTFIELDS => json_encode(${json.replace(/"([^"]+)":/g,"'$1' =>").replace(/[{]/g,'[').replace(/[}]/g,']').replace(/"/g,"'").replace(/\n/g,'\n    ')}),\n]);\n$response = curl_exec($ch);`,
+    go:`payload := []byte(\`${JSON.stringify(body)}\`)\nreq, _ := http.NewRequest("POST", "${endpoint}", bytes.NewReader(payload))\nreq.Header.Set("Authorization", "Bearer "+os.Getenv("VALASYS_API_KEY"))\nreq.Header.Set("Content-Type", "application/json")\nreq.Header.Set("Idempotency-Key", "order-1042-receipt")\nresp, err := http.DefaultClient.Do(req)`,
+  } as Record<string,string>;
+}
+
 // Production adapters replace fixture data and simulated writes while leaving
 // the reference view tree, style values and event contracts intact.
 export function prepareCustomer(base: DesignState, registration = false) {
   const c = base as Controller;
   const identity=store.getState().session.identity;
   const displayName=identity?.user.name || identity?.user.email || 'Account';
+  // The automations header shows the trailing 30 days and the 30 days before them.
+  const day=(offset:number,year=false)=>new Date(Date.now()-offset*864e5).toLocaleDateString('en-US',{month:'short',day:'numeric',...(year?{year:'numeric'}:{})});
   c.props.textOverrides={
     'Acme Inc':identity?.memberships.find(m=>m.customer_id===identity.current_customer_id)?.org_name || 'Workspace',
     'Pro workspace':'Workspace','Sarah Chen':displayName,'Workspace owner':identity?.current_role || 'Member',
     'sarah@acme.com':identity?.user.email || '', 'SC':displayName.split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase(), '94':'—','Healthy':'Not measured','+3 this week':'No score available',
     'content comes in a later step':'is not connected yet',
+    'Usage · last 24 hours':'Usage',
+    'Sep 13 – Oct 12, 2026':`${day(29)} – ${day(0,true)}`,'Aug 14 – Sep 12':`${day(59)} – ${day(30)}`,
+    'Signed, retried for 24 hours, delivered at least once.':'Signed, retried with backoff for about 16 hours, delivered at least once.',
     'The shell, onboarding and Home dashboard are built. The remaining pages follow one at a time.':'This feature is still being integrated. No sample customer data or simulated actions are available here.',
     'We use this to set sensible defaults — IP pools, tracking and unsubscribe handling. You can change any of it later.':'Your company name is saved as your workspace name. The remaining preferences are not applied to sending policies yet.',
     'Mail from a verified domain lands in the inbox, not spam. We recommend a subdomain like':'Verify ownership and authenticate your mail. Verification does not guarantee inbox placement. We recommend a subdomain like',
@@ -73,6 +90,7 @@ export function prepareCustomer(base: DesignState, registration = false) {
   };
   c.go = (view:string)=>{
     if (view === 'agent') return navigate('/ai-agent');
+    if (view === 'help') { c.setState({view:'help'}); history.pushState({},'','/help'); return; }
     originalGo(view);
     const path = view==='home'?'/':view==='apikeys'?'/api-keys':view==='logs'?'/event-logs':`/${view}`;
     history.pushState({},'',path);
@@ -169,6 +187,8 @@ export function prepareCustomer(base: DesignState, registration = false) {
     const values=originalVals();
     values.showAiInsight=false;
     values.showChecklist=false;
+    // Help is an in-app page here, so drop the external-link arrow.
+    if(Array.isArray(values.foot))values.foot=values.foot.map((item:any)=>({...item,label:String(item.label).replace(/\s*↗$/,'')}));
     values.nav=values.nav.map((section:any)=>({...section,items:section.items.map((item:any)=>({...item,badge:'',hasBadge:false,dot:false}))}));
     if(c.state.view==='home')values.pageTitle=`Good morning, ${displayName.split(' ')[0]}`;
     values.workspaces=identity?.memberships.map(m=>({
@@ -238,6 +258,39 @@ export function prepareCustomer(base: DesignState, registration = false) {
       onRotate:(event:Event)=>{event.stopPropagation();if(key)rotateKey(key.id);},onRevoke:(event:Event)=>{event.stopPropagation();if(key)revokeKey(key.id);}};});
     if(values.kD){values.kD.onRotate=()=>rotateKey(c.state.kOpen);values.kD.onRevoke=()=>revokeKey(c.state.kOpen);}
     const webhook=c.state.whEps.find((e:any)=>e.id===c.state.whSel) || c.state.whEps[0];
+    if(c.state.view==='apikeys'){
+      const keys=c.state.keys2,active=keys.filter((k:any)=>!k.revoked),soon=active.filter((k:any)=>k.exp && k.exp-Date.now()<30*864e5).length;
+      const lastUsed=Math.max(0,...active.map((k:any)=>k.last || 0));
+      const stat=(label:string,value:string,sub:string)=>({label,value,sub,subStyle:'display:block;margin-top:3px;font-size:12px;color:oklch(0.52 0.012 260);'});
+      // Request volume, latency and error rates are not recorded per key, so none are shown.
+      values.kStats=[stat('Active keys',String(active.length),`${active.filter((k:any)=>k.env==='live').length} live · ${active.filter((k:any)=>k.env==='test').length} test`),
+        stat('Last used',lastUsed?new Date(lastUsed).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'Never','Most recent request with any key'),
+        stat('Expiring in 30 days',String(soon),soon?'Rotate before they stop working':'No keys expiring soon'),
+        stat('Revoked',String(keys.length-active.length),'Revoked keys stop working immediately')];
+      c.props.textOverrides['No keys match.']=keys.length?'No keys match.':'No API keys yet. Create one to send through the REST API or SMTP.';
+      values.kHasUsage=false;values.kBars=[];values.kEndpoints=[];
+      values.kNoUsage='Per-key request volume, errors and latency are not recorded yet. Use Messages and Event logs to see what each send did.';
+      const samples=sendSamples(`${location.origin}/api/send`),lang=c.state.kLang || 'curl';
+      values.kCode=samples[lang] || samples.curl;values.kCopyCode=()=>c.copy(values.kCode,'Code');
+      values.kSmtp=[['Host',`Your platform's SMTP host`],['Port','587 · STARTTLS'],['Username','apikey'],['Password','A key with Send or SMTP access']].map(([k,v])=>({k,v}));
+      if(values.kD){values.kD.bars=[];values.kD.reqs=[];values.kD.noReqs=true;values.kD.reqSummary='Per-key request history is not recorded yet.';}
+    }
+    if(c.state.view==='webhooks'){
+      const eps=c.state.whEps,muted='display:block;margin-top:3px;font-size:12px;color:oklch(0.52 0.012 260);';
+      values.whHasEp=eps.length>0;values.whNoEp=!eps.length;
+      // Delivery history is not exposed to this console yet, so no rates are invented.
+      values.whStats=[{label:'Endpoints',value:String(eps.filter((e:any)=>e.on).length),sub:`${eps.filter((e:any)=>!e.on).length} disabled`,subStyle:muted},
+        {label:'Event types',value:String(new Set(eps.flatMap((e:any)=>e.events)).size),sub:'Subscribed across endpoints',subStyle:muted},
+        {label:'Signing',value:eps.length?'HMAC':'—',sub:'Every request is signed',subStyle:muted},
+        {label:'Retries',value:'Up to 12',sub:'Exponential backoff, about 16 hours',subStyle:muted}];
+    }
+    if(c.state.view==='help'){
+      values.pageActions=values.pageActions.map((action:any)=>action.label==='Contact support'?{...action,onClick:()=>c.copy('support@valasys.io','Support email')}:action);
+      values.hpContacts=[['Email support','Reach your account team by email','Copy email',()=>c.copy('support@valasys.io','Support email')],['Ask AI','Answers from your workspace data','Open',()=>c.setState({aiOpen:true})]].map(([title,sub,cta,onClick])=>({title,sub,cta,onClick}));
+      // Guides open the matching page in the app; label where they go instead of a reading time.
+      const opens:Record<string,string>={'Send your first email':'Opens onboarding','API reference':'Opens API keys','Import contacts':'Opens Contacts','Build an automation':'Opens Automations','Verify webhook signatures':'Opens Webhooks'};
+      values.hpGuides=values.hpGuides.map((g:any)=>({...g,meta:opens[g.title] || 'Opens Deliverability',...(g.title==='API reference'?{sub:'Sending, templates, workflows and webhooks endpoints.',onClick:()=>c.go('apikeys')}:{})}));
+    }
     values.whToggle=()=>webhook && void run(()=>performAction(`/account/webhooks/${encodeURIComponent(webhook.id)}`,{enabled:!webhook.on},'PATCH'),()=>void run(refreshWebhooks));
     values.whDelete=()=>{if(!webhook)return;if(c.state.whDelC!==webhook.id)return c.setState({whDelC:webhook.id});void run(()=>performAction(`/account/webhooks/${encodeURIComponent(webhook.id)}`,undefined,'DELETE'),()=>{c.setState({whSel:null,whDelC:null});void run(refreshWebhooks);});};
     values.whCreate=()=>{

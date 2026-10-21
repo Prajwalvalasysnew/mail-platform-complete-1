@@ -8,6 +8,7 @@ import {
   advanceWorkflowRun,
   handleWorkflowWake,
   handleWorkflowTimeout,
+  emitWorkflowCustomEvent,
   type WorkflowJobData,
 } from '@platform/shared';
 
@@ -31,6 +32,9 @@ export function startWorkflowWorker(logger: Logger) {
           break;
         case 'timeout':
           await handleWorkflowTimeout(run_id, step_id);
+          break;
+        case 'custom_event':
+          await emitWorkflowCustomEvent({ customerId: job.data.customer_id, name: job.data.event_name!, subjectEmail: job.data.subject_email!, data: job.data.data });
           break;
         default:
           log.warn('unknown workflow job kind — dropping');

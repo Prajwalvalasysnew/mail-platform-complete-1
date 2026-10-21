@@ -1,3 +1,5 @@
+> **Superseded for the editor and AI chat (21 October 2026):** conversational turns now run on the DeepSeek Harness agent runtime with HTML editing tools. See [AI_AGENT_HARNESS.md](AI_AGENT_HARNESS.md).
+
 # Valasys AI: two-day delivery plan
 
 > Current implementation update: Durable server-side chat history, resumable runs, checkpoint compaction and idempotent draft approvals have been added without changing the design. See [session implementation review](AI_CHAT_SESSION_RELIABILITY_REVIEW.md) for current scope and remaining differences from the supplied harness.
