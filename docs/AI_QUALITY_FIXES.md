@@ -1,3 +1,5 @@
+> **Superseded for the editor and AI chat (21 October 2026):** conversational turns now run on the DeepSeek Harness agent runtime with HTML editing tools. See [AI_AGENT_HARNESS.md](AI_AGENT_HARNESS.md).
+
 # AI quality corrections ? 21 October 2026
 
 The user's connected-domain question exposed a real routing defect. Prior HTTP-completion smoke checks did not establish product quality. This update adds answer-level checks and conversational template editing while retaining the existing customer layout. The user explicitly approved a compact conversation history inside the existing AI assistant panel.

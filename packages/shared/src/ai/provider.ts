@@ -2,6 +2,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {estimateAiEnvelope} from './meter.js';
 import {READ_TOOL_GUIDANCE} from './tool-contracts.js';
 import { aiConfig } from './config.js';
+import {chatWithTools,type AgentMessage} from './llm.js';
 import { AI_FORMATS, validateAiOutput, type AiInput } from './contracts.js';
 
 export class AiOutputValidationError extends Error {constructor(public code:string){super('Inference output failed validation');}}
@@ -46,6 +47,16 @@ export async function generateAi(input: AiInput, signal: AbortSignal, fetcher: t
   // Cloud routes may ignore format enforcement. Include the schema in model context,
   // validate locally, and permit only one correction within the same total deadline.
   let transportRetries=0,repairs=0;
+  if(c.provider==='openai'){
+    // OpenAI-compatible hosts: JSON mode through the shared transport, same validation and one repair.
+    for(;;){
+      const reply=await chatWithTools(messages as AgentMessage[],[],combined,fetcher,input.operation==='subjects'?Math.min(700,c.maxOutputTokens):c.maxOutputTokens);
+      promptTokens=promptTokens===null || reply.promptTokens===null?null:promptTokens+reply.promptTokens;
+      outputTokens=outputTokens===null || reply.outputTokens===null?null:outputTokens+reply.outputTokens;
+      try{return {result:validateAiOutput(input,JSON.parse(reply.content.replace(/^```(?:json)?\s*|\s*```$/g,''))),promptTokens,outputTokens,estimatedPromptTokens:estimateAiEnvelope(messages,AI_FORMATS[input.operation])};}
+      catch(error){if(repairs++>=1)throw new AiOutputValidationError(validationCode(error));messages.push({role:'assistant',content:reply.content},{role:'user',content:'Validation failed: '+(error instanceof Error?error.message.slice(0,1200):'invalid output')+'. Return only a corrected JSON object matching the schema.'});}
+    }
+  }
   for(let attempt=0;attempt<3;attempt++){
     let response:Response;
     try{response = await fetcher(`${c.baseUrl}/api/chat`, {

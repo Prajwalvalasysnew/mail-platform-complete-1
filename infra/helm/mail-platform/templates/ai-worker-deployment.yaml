@@ -42,6 +42,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.existingSecret }}
                   key: {{ .Values.secrets.databaseKeys.api }}
+          # Each agent turn boots the DeepSeek Harness in a throwaway home under /tmp.
+          volumeMounts:
+            - name: agent-tmp
+              mountPath: /tmp
           resources:
             {{- toYaml .Values.ai.resources | nindent 12 }}
           livenessProbe:
@@ -54,4 +58,8 @@ spec:
               path: /health
               port: 9103
             initialDelaySeconds: 5
+      volumes:
+        - name: agent-tmp
+          emptyDir:
+            sizeLimit: 512Mi
 {{- end }}

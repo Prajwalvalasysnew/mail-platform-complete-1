@@ -112,3 +112,8 @@ export * from './ai/tool-contracts.js';
 export * from './ai/workspace-tools.js';
 export * from './ai/agent.js';
 export * from './ai/meter.js';
+export * from './ai/email-html.js';
+export * from './ai/email-tools.js';
+export * from './ai/email-agent.js';
+export * from './ai/mcp-server.js';
+export * from './ai/llm.js';

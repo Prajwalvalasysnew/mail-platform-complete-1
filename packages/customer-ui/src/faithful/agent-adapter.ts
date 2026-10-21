@@ -19,7 +19,7 @@ export function prepareAgent(base:DesignState){
  function message(m:any,steps:any[]=[]){
   if(m.role==='user')return {id:m.id,role:'user',text:m.text,ctx:[]};
   const pending=['queued','running'].includes(m.status),draft=m.result?.operation==='draft'?m.result:null;
-  const text=draft?[...(draft.message?[draft.message]:[]),`Subject: ${draft.subject}`,draft.text]:[m.text || m.error || (m.status==='cancelled'?'Generation stopped.':'AI could not finish this response.')];
+  const text=draft?[...(draft.message?[draft.message]:[]),...(Array.isArray(draft.changes)?draft.changes.map((x:string)=>`• ${x}`):[]),`Subject: ${draft.subject}`,...(draft.changes?.length?[]:[draft.text])]:[m.text || m.error || (m.status==='cancelled'?'Generation stopped.':'AI could not finish this response.')];
   return {id:m.id,run_id:m.run_id,role:'agent',status:pending?'working':'done',outcome:m.status,t0:new Date(m.created_at).getTime(),ms:m.run_created_at && m.run_updated_at?Math.max(0,new Date(m.run_updated_at).getTime()-new Date(m.run_created_at).getTime()):0,
    text:pending?[]:text,steps:steps.length?steps.map(step):[{label:pending?'Request queued':'Response saved',meta:''}],
    plan:draft?{title:'Save email draft',items:[{id:m.id,kind:'Write email draft',title:draft.subject,detail:'Save as a template, then review in the editor.',status:m.decision || 'pending',link:m.template_id?`/email-builder?id=${encodeURIComponent(m.template_id)}`:undefined}]}:null};

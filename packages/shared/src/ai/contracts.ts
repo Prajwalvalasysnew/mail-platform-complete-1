@@ -6,12 +6,14 @@ const plain = (max: number) => z.string().trim().min(1).max(max).refine(s => !/[
 export const AiInput = z.object({
   operation: z.enum(['subjects', 'rewrite', 'draft', 'chat', 'compact', 'route', 'assist', 'editor']),
   instruction: z.string().trim().max(4000).default(''),
-  content: z.string().max(18000).default(''),
+  // Editor/assist turns carry the canvas HTML (tool state); every other operation stays small.
+  content: z.string().max(90000).default(''),
   subject: z.string().max(998).default(''),
   tone: z.enum(['Friendly', 'Professional', 'Urgent']).default('Friendly'),
 }).strict().superRefine((v, ctx) => {
   if (['draft','chat','compact','route','assist','editor'].includes(v.operation) ? !v.instruction : !v.content.trim() && !v.subject.trim()) ctx.addIssue({ code: 'custom', message: 'Add content or a writing brief.' });
   if (v.operation === 'rewrite' && !v.content.trim()) ctx.addIssue({ code: 'custom', message: 'Select text to rewrite.' });
+  if (!['editor','assist'].includes(v.operation) && v.content.length>18000) ctx.addIssue({ code: 'custom', message: 'Content is too long.' });
 });
 export type AiInput = z.infer<typeof AiInput>;
 const Block = z.object({
@@ -22,7 +24,7 @@ const Subjects = z.object({ subjects: z.array(plain(80).refine(s => !/[\r\n]/.te
 const Rewrite = z.object({ text: plain(12000) }).strict();
 const Design=z.object({theme:z.enum(['indigo','ocean','forest','charcoal','rose']),layout:z.enum(['showcase','editorial','minimal']),eyebrow:z.string().max(80),footer:z.string().max(300)}).strict();
 const Draft = z.object({ subject: plain(80).refine(s => !/[\r\n]/.test(s)), preheader: z.string().max(150), blocks: z.array(Block).min(1).max(12),design:Design.optional() }).strict();
-export type AiOutput = {operation:'route';calls:ReadCall[]} | { operation:'compact';summary:string } | { operation: 'chat'; text: string } | { operation: 'subjects'; subjects: string[] } | { operation: 'rewrite'; text: string } | { operation: 'draft'; subject: string; preheader: string; html: string; text: string; message?:string; design?:z.infer<typeof Design> };
+export type AiOutput = {operation:'route';calls:ReadCall[]} | { operation:'compact';summary:string } | { operation: 'chat'; text: string } | { operation: 'subjects'; subjects: string[] } | { operation: 'rewrite'; text: string } | { operation: 'draft'; subject: string; preheader: string; html: string; text: string; message?:string; design?:z.infer<typeof Design>; changes?:string[] };
 
 const AI_FORMATS_BASE = {
   route:READ_PLAN_FORMAT,

@@ -11,6 +11,7 @@ import { AiInput, type AiOutput } from './contracts.js';
 import { generateAi,AiContextOverflowError,AiProviderUnavailableError,AiOutputValidationError } from './provider.js';
 import {groundAiRequest,needsWorkspace,attachWorkspaceEvidence} from './agent.js';
 import { prepareChatContext } from './chat-context.js';
+import {runEmailAgent,detachEditorHtml,AgentRuntimeUnavailableError} from './email-agent.js';
 
 export class AiRunError extends Error {
   constructor(public code: string, public status: number, message: string) { super(message); }
@@ -41,7 +42,7 @@ export async function aiActorAllowed(trx: TenantExecutor, row: Pick<Run, 'custom
 /** Commit durable dispatch intent. Database serialization enforces per-user limits. */
 export async function createAiRun(customerId:string,userId:string,sessionId:string,requestId:string,input:AiInput,chat?:{trx:TenantExecutor;id:string;seq:number}) {
   const c=aiConfig(),hash=createHash('sha256').update(JSON.stringify(input)).digest('hex');
-  if(Buffer.byteLength(JSON.stringify(input),'utf8')>aiInputByteLimit(input.operation,c))throw new AiRunError('ai_context_limit',400,'This text is too long for the configured AI context. Use a shorter selection or writing brief.');
+  if(Buffer.byteLength(JSON.stringify(detachEditorHtml(input).input),'utf8')>aiInputByteLimit(input.operation,c))throw new AiRunError('ai_context_limit',400,'This text is too long for the configured AI context. Use a shorter selection or writing brief.');
   const admit=async(trx:TenantExecutor)=>{
     await sql`select pg_advisory_xact_lock(hashtextextended(${customerId+':'+userId+':ai'},0))`.execute(trx);
     if(!await aiActorAllowed(trx,{customer_id:customerId,user_id:userId,session_id:sessionId}))throw new AiRunError('ai_unavailable',403,'Valasys AI is not enabled for this workspace or role.');
@@ -55,7 +56,7 @@ export async function createAiRun(customerId:string,userId:string,sessionId:stri
     if(recent.length>=c.dailyLimit)throw new AiRunError('ai_limit',429,'Your daily AI writing limit has been reached.');
     if(recent.some(r=>['queued','running'].includes(r.status) && r.deadline>new Date()))throw new AiRunError('ai_busy',409,'Finish or stop your current AI request first.');
     const row=await trx.insertInto('ai_runs').values({id:randomUUID(),customer_id:customerId,user_id:userId,session_id:sessionId,request_id:requestId,request_hash:hash,input,
-      deadline:new Date(Date.now()+c.timeoutMs+30000),expires_at:new Date(Date.now()+c.retentionHours*3600000),model:c.model,...(chat?{chat_id:chat.id,chat_seq:chat.seq}:{})}).returningAll().executeTakeFirstOrThrow();
+      deadline:new Date(Date.now()+(['editor','assist'].includes(input.operation)?c.agentTimeoutMs:c.timeoutMs)+30000),expires_at:new Date(Date.now()+c.retentionHours*3600000),model:c.model,...(chat?{chat_id:chat.id,chat_seq:chat.seq}:{})}).returningAll().executeTakeFirstOrThrow();
     return publicAiRun(row);
   };
   return chat?admit(chat.trx):withTenant(customerId,admit);
@@ -108,20 +109,30 @@ export async function executeAiRun(customerId:string,id:string,shutdown:AbortSig
     const input=AiInput.parse(row.input);
     // Persisted model selection is authoritative for this run; a deployment switch must not silently change it.
     if(row.model!==c.model)throw new Error('Model configuration changed');
-    let context=row.chat_id?await prepareChatContext(row,input,signal,async trx=>await aiActorAllowed(trx,row)):null;
-    const grounding=row.chat_id && !context?.manual && needsWorkspace(context?.input || input)?await groundAiRequest(row,context?.input || input,signal,async trx=>await aiActorAllowed(trx,row)):null;
-    let generated;
-    try{generated=context?.manual?{result:{operation:'chat' as const,text:context.changed?'Earlier context has been compacted. Your full chat history is preserved.':'There is no older context to compact yet.'},promptTokens:0 as number|null,outputTokens:0 as number|null}:await generateAi(grounding?.input || context?.input || input,signal,fetch,{grounded:grounding?.grounded});}
-    catch(error){
-      if(!(error instanceof AiContextOverflowError) || !row.chat_id)throw error;
-      const recovery=await prepareChatContext(row,input,signal,async trx=>await aiActorAllowed(trx,row),true);
-      if(!recovery.changed)throw error;
-      recovery.promptTokens=context?.promptTokens===null || recovery.promptTokens===null?null:(context?.promptTokens || 0)+recovery.promptTokens;
-      recovery.outputTokens=context?.outputTokens===null || recovery.outputTokens===null?null:(context?.outputTokens || 0)+recovery.outputTokens;
-      context=recovery;const recovered=attachWorkspaceEvidence(recovery.input,grounding?.observations || []);generated=await generateAi(recovered.input,signal,fetch,{grounded:recovered.grounded});
+    const allowed=async(trx:TenantExecutor)=>await aiActorAllowed(trx,row);
+    // The canvas HTML is agent tool state, not conversation history; keep it out of compaction budgets.
+    const detached=detachEditorHtml(input);
+    let context=row.chat_id?await prepareChatContext(row,detached.input,signal,allowed):null;
+    let generated:{result:AiOutput;promptTokens:number|null;outputTokens:number|null};
+    if(['editor','assist'].includes(input.operation) && context && !context.manual){
+      const history=JSON.parse(context.input.content || '{}');
+      generated=await runEmailAgent(row,input,{checkpoint:history.checkpoint,conversation:history.conversation,settings:history.settings},detached,signal,allowed);
+      generated.promptTokens=context.promptTokens===null || generated.promptTokens===null?null:context.promptTokens+generated.promptTokens;
+      generated.outputTokens=context.outputTokens===null || generated.outputTokens===null?null:context.outputTokens+generated.outputTokens;
+    }else{
+      const grounding=row.chat_id && !context?.manual && needsWorkspace(context?.input || input)?await groundAiRequest(row,context?.input || input,signal,async trx=>await aiActorAllowed(trx,row)):null;
+      try{generated=context?.manual?{result:{operation:'chat' as const,text:context.changed?'Earlier context has been compacted. Your full chat history is preserved.':'There is no older context to compact yet.'},promptTokens:0 as number|null,outputTokens:0 as number|null}:await generateAi(grounding?.input || context?.input || input,signal,fetch,{grounded:grounding?.grounded});}
+      catch(error){
+        if(!(error instanceof AiContextOverflowError) || !row.chat_id)throw error;
+        const recovery=await prepareChatContext(row,input,signal,async trx=>await aiActorAllowed(trx,row),true);
+        if(!recovery.changed)throw error;
+        recovery.promptTokens=context?.promptTokens===null || recovery.promptTokens===null?null:(context?.promptTokens || 0)+recovery.promptTokens;
+        recovery.outputTokens=context?.outputTokens===null || recovery.outputTokens===null?null:(context?.outputTokens || 0)+recovery.outputTokens;
+        context=recovery;const recovered=attachWorkspaceEvidence(recovery.input,grounding?.observations || []);generated=await generateAi(recovered.input,signal,fetch,{grounded:recovered.grounded});
+      }
+      if(grounding){generated.promptTokens=grounding.promptTokens===null || generated.promptTokens===null?null:grounding.promptTokens+generated.promptTokens;generated.outputTokens=grounding.outputTokens===null || generated.outputTokens===null?null:grounding.outputTokens+generated.outputTokens;}
+      if(context){generated.promptTokens=context.promptTokens===null || generated.promptTokens===null?null:context.promptTokens+generated.promptTokens;generated.outputTokens=context.outputTokens===null || generated.outputTokens===null?null:context.outputTokens+generated.outputTokens;}
     }
-    if(grounding){generated.promptTokens=grounding.promptTokens===null || generated.promptTokens===null?null:grounding.promptTokens+generated.promptTokens;generated.outputTokens=grounding.outputTokens===null || generated.outputTokens===null?null:grounding.outputTokens+generated.outputTokens;}
-    if(context){generated.promptTokens=context.promptTokens===null || generated.promptTokens===null?null:context.promptTokens+generated.promptTokens;generated.outputTokens=context.outputTokens===null || generated.outputTokens===null?null:context.outputTokens+generated.outputTokens;}
     signal.throwIfAborted();
     const output:AiOutput=generated.result;
     const subject=output.operation==='draft'?output.subject:output.operation==='subjects'?output.subjects.join('\n'):input.subject;
@@ -139,8 +150,8 @@ export async function executeAiRun(customerId:string,id:string,shutdown:AbortSig
     });
   } catch(error) {
     const restarting=shutdown.aborted && row.attempt<2 && row.deadline>new Date();
-    if(!restarting)console.warn('[valasys-ai] run failed',{run_id:row.id,kind:error instanceof AiProviderUnavailableError?'provider_unavailable':error instanceof AiContextOverflowError?'context_overflow':error instanceof AiOutputValidationError?error.code:signal.aborted?'cancelled_or_deadline':'execution_error'});
-    await withTenant(customerId,trx=>trx.updateTable('ai_runs').set({status:restarting?'queued':new Date()>=row.deadline?'timed_out':'failed',input:restarting?row.input:null,result:null,lease_until:null,error:restarting?null:error instanceof AiProviderUnavailableError?'Valasys AI is temporarily unavailable. Your conversation is saved; please try again.':'Valasys AI could not finish this request. Please try again.',updated_at:new Date()})
+    if(!restarting)console.warn('[valasys-ai] run failed',{run_id:row.id,kind:error instanceof AgentRuntimeUnavailableError?'agent_runtime_unavailable':error instanceof AiProviderUnavailableError?'provider_unavailable':error instanceof AiContextOverflowError?'context_overflow':error instanceof AiOutputValidationError?error.code:signal.aborted?'cancelled_or_deadline':'execution_error'});
+    await withTenant(customerId,trx=>trx.updateTable('ai_runs').set({status:restarting?'queued':new Date()>=row.deadline?'timed_out':'failed',input:restarting?row.input:null,result:null,lease_until:null,error:restarting?null:error instanceof AiProviderUnavailableError || error instanceof AgentRuntimeUnavailableError?'Valasys AI is temporarily unavailable. Your conversation is saved; please try again.':'Valasys AI could not finish this request. Please try again.',updated_at:new Date()})
       .where('customer_id','=',customerId).where('id','=',id).where('attempt','=',row.attempt).where('status','=','running').execute());
   } finally {clearInterval(timer);}
 }

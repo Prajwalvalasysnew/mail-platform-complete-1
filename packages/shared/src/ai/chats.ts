@@ -6,15 +6,16 @@ import {validateTemplate} from '../templates.js';
 import {aiConfig,aiInputByteLimit} from './config.js';
 import {AiInput} from './contracts.js';
 import {createAiRun,AiRunError} from './runs.js';
+import {detachEditorHtml,EDITOR_HTML_LIMIT} from './email-agent.js';
 const ContextRef=z.object({kind:z.enum(['campaign','template','workflow','audience']),id:z.string().uuid(),label:z.string().max(100)}).strict();
 export const ChatSettings=z.object({
  mem:z.object({ind:z.string().max(40).default(''),about:z.string().max(1500).default(''),voice:z.string().max(1000).default(''),audience:z.string().max(1000).default(''),rules:z.string().max(1500).default(''),learned:z.array(z.tuple([z.string().max(300),z.number().finite()])).max(20).default([])}).strict().optional(),
  skills:z.array(z.object({id:z.string().max(80),name:z.string().trim().min(1).max(100),body:z.string().max(1500),on:z.boolean(),uses:z.number().int().nonnegative().default(0)}).strict()).max(10).default([]),
- editor:z.object({key:z.string().max(100),links:z.array(z.string().url().max(2048).refine(value=>{const url=new URL(value);return ['http:','https:'].includes(url.protocol) && !url.username && !url.password;})).max(20).default([]),content:z.string().max(6000),subject:z.string().max(998),tone:z.enum(['Friendly','Professional','Urgent']),section:z.boolean().default(false),design:z.object({theme:z.enum(['indigo','ocean','forest','charcoal','rose']),layout:z.enum(['showcase','editorial','minimal']),eyebrow:z.string().max(80),footer:z.string().max(300)}).strict().optional()}).strict().optional(),
+ editor:z.object({key:z.string().max(100),links:z.array(z.string().url().max(2048).refine(value=>{const url=new URL(value);return ['http:','https:'].includes(url.protocol) && !url.username && !url.password;})).max(20).default([]),content:z.string().max(6000),subject:z.string().max(998),preheader:z.string().max(300).default(''),html:z.string().max(EDITOR_HTML_LIMIT).optional(),tone:z.enum(['Friendly','Professional','Urgent']),section:z.boolean().default(false),design:z.unknown().optional()}).strict().optional(),
  mode:z.enum(['ask','auto']).default('ask'),context:z.array(ContextRef).max(3).default([]),
  timezone:z.string().max(100).refine(value=>{try{new Intl.DateTimeFormat('en',{timeZone:value});return true;}catch{return false;}}).default('UTC'),
 }).strict();
-export const ChatTurn=z.object({request_id:z.string().uuid(),operation:z.enum(['chat','draft','assist','editor']),instruction:z.string().trim().min(1).max(4000),settings:ChatSettings.default({})}).strict().refine(v=>Buffer.byteLength(JSON.stringify(v.settings),'utf8')<=(v.settings.editor?10000:3000),'Settings too long');
+export const ChatTurn=z.object({request_id:z.string().uuid(),operation:z.enum(['chat','draft','assist','editor']),instruction:z.string().trim().min(1).max(4000),settings:ChatSettings.default({})}).strict().refine(v=>Buffer.byteLength(JSON.stringify({...v.settings,editor:v.settings.editor?{...v.settings.editor,html:undefined}:undefined}),'utf8')<=(v.settings.editor?10000:3000),'Settings too long');
 const missing=()=>new AiRunError('not_found',404,'This conversation is unavailable or has expired.');
 export async function ownedChat(trx:TenantExecutor,cid:string,uid:string,id:string){
  return trx.selectFrom('ai_chats').selectAll().where('customer_id','=',cid).where('user_id','=',uid).where('id','=',id).where('expires_at','>',new Date()).executeTakeFirst();
@@ -23,20 +24,21 @@ export async function createChatTurn(cid:string,uid:string,sid:string,id:string,
  return withTenant(cid,async trx=>{
   await sql`select pg_advisory_xact_lock(hashtextextended(${cid+':'+uid+':ai'},0))`.execute(trx);
   const input=AiInput.parse({operation:body.operation,instruction:body.instruction,content:JSON.stringify(body.settings),subject:'',tone:body.settings.editor?.tone || 'Professional'});
-  if(Buffer.byteLength(JSON.stringify(input),'utf8')+1200>aiInputByteLimit(input.operation))throw new AiRunError('ai_context_limit',400,'Shorten your message or workspace instructions to leave room for conversation context.');
+  const stored={...body.settings,editor:body.settings.editor?{...body.settings.editor,html:undefined}:undefined};
+  if(Buffer.byteLength(JSON.stringify(detachEditorHtml(input).input),'utf8')+1200>aiInputByteLimit(input.operation))throw new AiRunError('ai_context_limit',400,'Shorten your message or workspace instructions to leave room for conversation context.');
   const prior=await trx.selectFrom('ai_runs').select(['chat_id','chat_seq']).where('customer_id','=',cid).where('user_id','=',uid).where('request_id','=',body.request_id).executeTakeFirst();
   let chat=await ownedChat(trx,cid,uid,id);
   if(prior){if(prior.chat_id!==id || !chat)throw missing();return createAiRun(cid,uid,sid,body.request_id,input,{trx,id,seq:prior.chat_seq!});}
   if(!chat){
    const collision=await trx.selectFrom('ai_chats').select('id').where('id','=',id).executeTakeFirst();if(collision)throw missing();
-   chat=await trx.insertInto('ai_chats').values({id,customer_id:cid,user_id:uid,title:body.instruction.slice(0,80),settings:body.settings,expires_at:new Date(Date.now()+aiConfig().retentionHours*3600000)}).returningAll().executeTakeFirstOrThrow();
+   chat=await trx.insertInto('ai_chats').values({id,customer_id:cid,user_id:uid,title:body.instruction.slice(0,80),settings:stored,expires_at:new Date(Date.now()+aiConfig().retentionHours*3600000)}).returningAll().executeTakeFirstOrThrow();
   }
   const seq=chat.next_seq,run=await createAiRun(cid,uid,sid,body.request_id,input,{trx,id,seq});
   await trx.insertInto('ai_chat_messages').values([
-   {id:randomUUID(),customer_id:cid,chat_id:id,run_id:run.id,seq,role:'user' as const,text:body.instruction,status:'completed',result:{context_settings:body.settings},error:null,template_id:null,decision:null},
+   {id:randomUUID(),customer_id:cid,chat_id:id,run_id:run.id,seq,role:'user' as const,text:body.instruction,status:'completed',result:{context_settings:stored},error:null,template_id:null,decision:null},
    {id:randomUUID(),customer_id:cid,chat_id:id,run_id:run.id,seq:seq+1,role:'assistant' as const,text:'',status:'queued',result:null,error:null,template_id:null,decision:null},
   ]).execute();
-  await trx.updateTable('ai_chats').set({next_seq:seq+2,settings:body.settings,updated_at:new Date()}).where('customer_id','=',cid).where('id','=',id).execute();
+  await trx.updateTable('ai_chats').set({next_seq:seq+2,settings:stored,updated_at:new Date()}).where('customer_id','=',cid).where('id','=',id).execute();
   return run;
  });
 }

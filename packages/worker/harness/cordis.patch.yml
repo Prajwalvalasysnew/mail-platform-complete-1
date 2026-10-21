@@ -1,0 +1,62 @@
+# Valasys agent profile, layered on the published DeepSeek Harness `sdk-minimal` bundle.
+# The model gets ONLY the Valasys MCP tools: shell, terminals, sandbox/subprocess,
+# file and working-directory tools and the DeepSeek-only adapter are disabled.
+# The process receives no database, Redis or tenant credentials; every tool call
+# goes back to the AI worker over a loopback MCP endpoint with a per-run token.
+- id: llm-deepseek
+  disabled: true
+- id: persistent-bash
+  disabled: true
+- id: terminal-bash
+  disabled: true
+- id: terminal-pwsh
+  disabled: true
+- id: pty
+  disabled: true
+- id: subprocess
+  disabled: true
+- id: sandbox
+  disabled: true
+- id: sandbox-policy
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-working-directory
+  disabled: true
+- id: attachment-local
+  disabled: true
+- id: image-offload
+  disabled: true
+- id: jobs
+  disabled: true
+- id: system-prompt
+  config:
+    includeHarnessIdentity: false
+    includeRuntimeContext: false
+    personaPrefix: !!js process.env.VALASYS_SYSTEM_PROMPT
+- insert:
+    - id: llm-valasys
+      name: '@deepseek-ai/dsh-llm-pi-ai'
+      config:
+        providers:
+          valasys:
+            apiKeyEnv: VALASYS_LLM_KEY
+            api: openai-completions
+            baseURL: !!js process.env.VALASYS_LLM_BASE_URL
+            models:
+              - id: !!js process.env.VALASYS_LLM_MODEL
+                name: Valasys AI
+                contextWindow: !!js Number(process.env.VALASYS_LLM_CONTEXT)
+                maxTokens: !!js Number(process.env.VALASYS_LLM_MAX_TOKENS)
+    - id: mcp-valasys
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: valasys
+        transport: streamable-http
+        url: !!js process.env.VALASYS_MCP_URL
+        headers:
+          Authorization: !!js '`Bearer ${process.env.VALASYS_MCP_TOKEN}`'
+        toolCallTimeoutMs: 30000
+        failOnStartupError: true
+        reconnect:
+          enabled: false

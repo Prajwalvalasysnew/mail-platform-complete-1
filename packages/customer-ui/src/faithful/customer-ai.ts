@@ -17,7 +17,7 @@ export function installCustomerAi(base:DesignState){
  function message(m:any,rows:any[]=[]){
   const draft=m.result?.operation==='draft'?m.result:null;
   return {id:m.id,role:m.role==='user'?'user':'ai',status:['queued','running'].includes(m.status)?'working':'done',
-   text:draft?[draft.message,`Subject: ${draft.subject}`,draft.text].filter(Boolean).join('\n\n'):m.text || m.error || (m.status==='cancelled'?'Generation stopped.':''),
+   text:draft?[draft.message,...(Array.isArray(draft.changes)?draft.changes.map((x:string)=>`• ${x}`):[]),`Subject: ${draft.subject}`,draft.changes?.length?'':draft.text].filter(Boolean).join('\n\n'):m.text || m.error || (m.status==='cancelled'?'Generation stopped.':''),
    steps:steps(rows.filter(s=>s.run_id===m.run_id)),acts:draft?[{k:0,type:'go',state:'open',label:'Review email draft',desc:'Open this conversation to approve and save the draft.',btn:'Review',run:()=>location.assign(`/ai-agent?chat=${cid}`)}]:[],
    ms:m.run_created_at && m.run_updated_at?Math.max(0,new Date(m.run_updated_at).getTime()-new Date(m.run_created_at).getTime()):0};
  }

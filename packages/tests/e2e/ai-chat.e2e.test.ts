@@ -11,7 +11,9 @@ async function turn(a:any,id:string,instruction:string,extra={}){const r=await a
 async function chat(a:any,id:string){const r=await app.inject({method:'GET',url:`/ai/chats/${id}`,headers:headers(a)});expect(r.statusCode,r.body).toBe(200);return r.json();}
 const reply=(output:unknown)=>new Response(JSON.stringify({done:true,done_reason:'stop',message:{content:JSON.stringify(output)},prompt_eval_count:100,eval_count:50}));
 function model(text='Acknowledged.'){return vi.fn(async(_url:unknown,options:any)=>{const input=JSON.parse(JSON.parse(options.body).messages[1].content);return reply(input.operation==='route'?{calls:[]}:input.operation==='compact'?{summary:'The project codename is ORCHID-731. Preserve the requested plain tone.'}:input.operation==='draft'?{subject:'Project update',preheader:'Progress overview',blocks:[{type:'paragraph',text:'The dashboard is available.',url:''}]}:{text});});}
-beforeAll(async()=>{vi.stubEnv('AI_ENABLED','true');vi.stubEnv('AI_ENABLED_TENANTS','*');vi.stubEnv('AI_BASE_URL','https://fixture.test');vi.stubEnv('AI_MODEL','fixture-model');await app.register(accountAiRoutes,{prefix:'/ai'});await app.ready();});
+beforeAll(async()=>{vi.stubEnv('AI_ENABLED','true');vi.stubEnv('AI_ENABLED_TENANTS','*');vi.stubEnv('AI_BASE_URL','https://fixture.test');vi.stubEnv('AI_MODEL','fixture-model');
+ // Compaction fixtures are sized for an 8k-token route.
+ vi.stubEnv('AI_CONTEXT_TOKENS','8192');vi.stubEnv('AI_MAX_OUTPUT_TOKENS','3000');await app.register(accountAiRoutes,{prefix:'/ai'});await app.ready();});
 afterEach(()=>vi.unstubAllGlobals());
 afterAll(async()=>{vi.unstubAllEnvs();await app.close();for(const a of actors){await db.deleteFrom('customers').where('id','=',a.cid).execute();await db.deleteFrom('users').where('id','=',a.uid).execute();}});
 describe('durable AI chat and harness-style checkpoints',()=>{
@@ -153,17 +155,6 @@ describe('durable AI chat and harness-style checkpoints',()=>{
     expect(found[0].data.connected).toBe(23);expect(found[0].data.domains).toHaveLength(20);expect(found[0].data.truncated).toBe(true);
     return reply({text:`You have ${found[0].data.connected} connected domains; ${found[0].data.verified} are verified.`});});vi.stubGlobal('fetch',fetcher);
   for(const prompt of ["how many domain's I have connected?",'and how many are verified?']){const r=await turn(a,id,prompt);await executeAiRun(a.cid,r.id,new AbortController().signal);expect((await chat(a,id)).messages.at(-1).text).toContain('23 connected domains; 0 are verified');}
- });
- it('supports editor questions and follow-up draft revisions with durable canonical context and current canvas',async()=>{
-  const a=await actor(),id=randomUUID();let step=0;
-  vi.stubGlobal('fetch',async(_url:unknown,o:any)=>{const input=JSON.parse(JSON.parse(o.body).messages[1].content),ctx=JSON.parse(input.content);if(input.operation==='route')return reply({calls:[]});
-    expect(input.operation).toBe('editor');expect(ctx.settings.editor.content).toContain('User-edited canvas');
-    if(step++===0)return reply({reply:'Who is the demo intended for?',draft:null});
-    expect(ctx.conversation.map((x:any)=>x.content).join(' ')).toContain('Who is the demo intended for?');
-    return reply({reply:'Prepared a concise product demo email.',draft:{subject:'Explore the demo',preheader:'A closer look',design:{theme:'ocean',layout:'showcase',eyebrow:'PRODUCT DEMO',footer:''},blocks:[{type:'heading',text:'Take a closer look',url:''},{type:'paragraph',text:'Explore the product demo at your own pace.',url:''}]}});
-  });
-  for(const instruction of ['Can you help me plan a product-demo email?','For our existing customers, please create it.']){const r=await turn(a,id,instruction,{operation:'editor',settings:{editor:{key:id,content:'User-edited canvas',subject:'',tone:'Professional'}}});await executeAiRun(a.cid,r.id,new AbortController().signal);expect((await chat(a,id)).messages.at(-1).status).toBe('completed');}
-  const saved=await chat(a,id);expect(saved.messages).toHaveLength(4);expect(saved.messages.at(-1).result.html).toContain('role="presentation"');expect(saved.messages.at(-1).result.message).toContain('Prepared');
  });
  it('deletes conversations and their runs and expires retained chat content',async()=>{
   const a=await actor(),id=randomUUID(),r=await turn(a,id,'Remember this');

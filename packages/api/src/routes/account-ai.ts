@@ -19,7 +19,7 @@ export const accountAiRoutes:FastifyPluginAsync=async app=>{
   app.get('/chats',async req=>listAiChats(req.user!.current_customer_id!,req.user!.user_id));
   app.get('/chats/:id',async(req,reply)=>{const id=Id.safeParse((req.params as any).id);if(!id.success)return reply.code(400).send({error:'invalid_chat_id'});try{return await getAiChat(req.user!.current_customer_id!,req.user!.user_id,id.data,z.coerce.number().int().positive().max(2147483647).parse((req.query as any).before_seq || 2147483647));}catch(error){return chatError(error,reply);}});
   app.delete('/chats/:id',async(req,reply)=>{const id=Id.safeParse((req.params as any).id);if(!id.success)return reply.code(400).send({error:'invalid_chat_id'});try{return await deleteAiChat(req.user!.current_customer_id!,req.user!.user_id,id.data);}catch(error){return chatError(error,reply);}});
-  app.post('/chats/:id/turns',{bodyLimit:16000},async(req,reply)=>{
+  app.post('/chats/:id/turns',{bodyLimit:120000},async(req,reply)=>{
     const id=Id.safeParse((req.params as any).id),body=ChatTurn.safeParse(req.body);
     if(!id.success || !body.success)return reply.code(400).send({error:'invalid_chat_request',message:'Keep your message and workspace instructions within the supported limits.'});
     const u=req.user!,cid=u.current_customer_id!;

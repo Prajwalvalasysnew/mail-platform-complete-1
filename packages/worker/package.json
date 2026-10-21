@@ -10,7 +10,8 @@
     "./event-worker.js": "./dist/event-worker.js",
     "./webhook-worker.js": "./dist/webhook-worker.js",
     "./workflow-worker.js": "./dist/workflow-worker.js",
-    "./scheduler.js": "./dist/scheduler.js"
+    "./scheduler.js": "./dist/scheduler.js",
+    "./ai-harness.js": "./dist/ai-harness.js"
   },
   "scripts": {
     "build": "tsc",
@@ -20,6 +21,8 @@
     "dev:ai": "tsx watch src/ai-worker.ts"
   },
   "dependencies": {
+    "@deepseek-ai/dsh-llm-pi-ai": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-sdk-client": "0.2.1-rc.2",
     "@platform/shared": "*",
     "bullmq": "^5.4.0",
     "cheerio": "^1.0.0",
