@@ -65,8 +65,8 @@ try{
  await page.goto('http://127.0.0.1:3101/workflow-builder');
  await page.getByText('Saved to workspace').or(page.getByText('New unsaved draft')).first().waitFor({timeout:45000});
  await page.getByRole('button',{name:'✦ AI',exact:true}).click();
- await page.locator('textarea[placeholder^="e.g. Remind"]').fill('Set up a win-back journey for people who click our emails');
- await page.getByRole('button',{name:/Draft workflow/}).click();
+ await page.getByLabel('Message the AI assistant').fill('Set up a win-back journey for people who click our emails');
+ await page.getByRole('button',{name:'Send message',exact:true}).click();
  await page.locator('[data-editor-ai-conversation]').getByText('I built a win-back workflow').waitFor({timeout:90000});
  await page.getByText('Win-back journey').first().waitFor();
  await page.getByText('Saved to workspace').waitFor({timeout:20000});

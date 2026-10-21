@@ -76,8 +76,8 @@ try{
  const frame=page.frameLocator('.gjs-frame');
  await page.getByRole('button',{name:'✦ AI',exact:true}).click();
  const say=async(message,expectText)=>{
-  await page.locator('textarea.ref-email-10').fill(message);
-  await page.getByRole('button',{name:/Generate email|Send message/}).click();
+  await page.getByLabel('Message the AI assistant').fill(message);
+  await page.getByLabel('Message the AI assistant').press('Enter');
   await page.locator('[data-editor-ai-conversation]').getByText(expectText).first().waitFor({timeout:90000});
   await page.locator('[data-editor-ai-conversation] [role=status]').waitFor({state:'hidden',timeout:90000});
   console.log(`Browser: "${message}" -> ${expectText}`);

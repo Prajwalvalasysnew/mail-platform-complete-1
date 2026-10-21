@@ -1,32 +1,36 @@
-import {useLayoutEffect,useState,useRef} from 'react';
+import {useLayoutEffect,useRef,useState,type KeyboardEvent} from 'react';
 import {createPortal} from 'react-dom';
 import type {DesignState} from './runtime';
+import './ai-chat.css';
 
-/** Where a builder's AI panel lives and which controller actions it uses. Defaults: the email editor. */
-export type AiPanelConfig={textarea:string;visible:(state:any)=>boolean;applyLabel:string};
-const EMAIL_PANEL:AiPanelConfig={textarea:'textarea.ref-email-10',visible:state=>state.aiOpen && state.aiTab==='write',applyLabel:'Apply saved AI draft to email'};
-export const WORKFLOW_PANEL:AiPanelConfig={textarea:'textarea[placeholder^="e.g. Remind"]',visible:state=>state.aiOpen && state.aiTab==='build',applyLabel:'Apply saved AI draft to workflow'};
+/** Where a builder's AI chat mounts and which controller state and action drive it. Defaults: the email editor. */
+export type AiPanelConfig={host:string;field:string;busy:string;send:string;placeholder:string;empty:string;applyLabel:string};
+const EMAIL_PANEL:AiPanelConfig={host:'vb-ai-chat',field:'prompt',busy:'busy',send:'generate',placeholder:'Ask a question or describe a change…',empty:'Ask me to write this email, change its design, or answer a question about it.',applyLabel:'Apply saved AI draft to email'};
+export const WORKFLOW_PANEL:AiPanelConfig={host:'wf-ai-chat',field:'aiPrompt',busy:'aiBusy',send:'aiBuild',placeholder:'Describe a workflow or ask for a change…',empty:'Describe the journey you want, or ask me to change this workflow.',applyLabel:'Apply saved AI draft to workflow'};
 
-/** Conversation added inside the existing panel; its navigation and editor layout stay intact. */
-export function EditorAiConversation({controller:c,panel=EMAIL_PANEL}:{controller:DesignState;panel?:AiPanelConfig}){
+/** A plain chat: the conversation and one message box. Mounted into the builder's AI panel. */
+export function EditorAiConversation({controller,panel=EMAIL_PANEL}:{controller:DesignState;panel?:AiPanelConfig}){
+ const c=controller as DesignState & Record<string,any>;
  const [host,setHost]=useState<HTMLElement|null>(null);
- const log=useRef<HTMLDivElement>(null),messages=c.state.aiMessages || [];
- useLayoutEffect(()=>{if(log.current)log.current.scrollTop=log.current.scrollHeight;},[host,messages.length,(c.state.busy || c.state.aiBusy)]);
- const visible=panel.visible(c.state);
- useLayoutEffect(()=>{
-  if(!visible)return;
-  const textarea=document.querySelector(panel.textarea);if(!textarea?.parentElement)return;
-  const mount=document.createElement('div');mount.dataset.editorAiConversation='true';
-  textarea.parentElement.insertBefore(mount,textarea.previousElementSibling || textarea);setHost(mount);
-  return ()=>{mount.remove();setHost(null);};
- },[visible,panel.textarea]);
- if(!host || !visible)return null;
- return createPortal(<section aria-label="AI conversation" style={{marginBottom:16,fontSize:13,lineHeight:1.55}}>
-   {messages.length>0 && <div ref={log} role="log" aria-live="polite" style={{maxHeight:260,overflowY:'auto',display:'flex',flexDirection:'column',gap:8,paddingBottom:8}}>
-    {messages.map((m:any)=><div key={m.id} style={{alignSelf:m.role==='user'?'flex-end':'stretch',maxWidth:'100%',padding:'9px 11px',borderRadius:9,background:m.role==='user'?'#f0edfb':'#f7f8f9',color:'#2a2f3a',whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}><strong style={{display:'block',fontSize:11,color:'#7b8497',marginBottom:3}}>{m.role==='user'?'You':'AI assistant'}</strong><span>{m.text}</span></div>)}
-   </div>}
-   {(c.state.busy || c.state.aiBusy) && <div role="status" style={{color:'#7b8497',display:'flex',justifyContent:'space-between'}}>Working on your request...<button type="button" onClick={()=>(c as any).stopAiWriting()} style={{border:'1px solid #e3e5e9',borderRadius:7,background:'#fff',padding:'3px 10px',font:'inherit',cursor:'pointer'}}>Stop</button></div>}
-   {c.state.pendingAiDraft && !(c.state.busy || c.state.aiBusy) && <button type="button" onClick={()=>(c as any).applyAiDraft()} style={{border:'1px solid #5a45b8',borderRadius:8,background:'#6e56cf',color:'#fff',padding:'8px 12px',font:'inherit',cursor:'pointer'}}>{panel.applyLabel}</button>}
-
+ const log=useRef<HTMLDivElement>(null),input=useRef<HTMLTextAreaElement>(null);
+ const messages=c.state.aiMessages || [],busy=!!c.state[panel.busy],value=String(c.state[panel.field] || ''),open=!!c.state.aiOpen;
+ useLayoutEffect(()=>{const next=open?document.getElementById(panel.host):null;if(next!==host)setHost(next);});
+ useLayoutEffect(()=>{if(log.current)log.current.scrollTop=log.current.scrollHeight;},[host,messages.length,busy]);
+ useLayoutEffect(()=>{const el=input.current;if(!el)return;el.style.height='auto';el.style.height=`${Math.min(el.scrollHeight,160)}px`;},[host,value]);
+ if(!host)return null;
+ const send=()=>{if(!value.trim() || busy)return;c[panel.send]();};
+ const key=(event:KeyboardEvent<HTMLTextAreaElement>)=>{if(event.key==='Enter' && !event.shiftKey && !event.nativeEvent.isComposing){event.preventDefault();send();}};
+ return createPortal(<section data-editor-ai-conversation="true" aria-label="AI conversation" className="ai-chat">
+   <div ref={log} role="log" aria-live="polite" className="ai-chat-log">
+    {!messages.length && <p className="ai-chat-empty">{panel.empty}</p>}
+    {messages.map((m:any)=><div key={m.id} className={m.role==='user'?'ai-chat-msg ai-chat-user':'ai-chat-msg ai-chat-ai'}>{m.text}</div>)}
+    {busy && <div role="status" className="ai-chat-status"><span>Thinking…</span><button type="button" onClick={()=>c.stopAiWriting()}>Stop</button></div>}
+    {c.state.pendingAiDraft && !busy && <button type="button" className="ai-chat-apply" onClick={()=>c.applyAiDraft()}>{panel.applyLabel}</button>}
+   </div>
+   <div className="ai-chat-composer">
+    <textarea ref={input} rows={1} value={value} placeholder={panel.placeholder} aria-label="Message the AI assistant" maxLength={4000}
+     onChange={event=>c.setState({[panel.field]:event.target.value})} onKeyDown={key}/>
+    <button type="button" aria-label="Send message" title="Send (Enter)" disabled={busy || !value.trim()} onClick={send}>↑</button>
+   </div>
  </section>,host);
 }

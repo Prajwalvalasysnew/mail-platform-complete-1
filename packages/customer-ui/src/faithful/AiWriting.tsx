@@ -54,7 +54,7 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
     const currentLinks=conversational?[...new Set(Array.from(new DOMParser().parseFromString(c.ed.getHtml(),'text/html').querySelectorAll('a[href]')).map(a=>a.getAttribute('href') || '').filter(value=>{try{const url=new URL(value);return ['http:','https:'].includes(url.protocol) && !url.username && !url.password;}catch{return false;}}))]:[];
     if(currentLinks.length>20){c.setState({busy:false});return c.toast('This email has too many links for conversational generation. Select a text block to rewrite.');}
     const brief=section && conversational?`Write a short additional email section, without a footer or sign-off. ${instruction}`:instruction;
-    if(conversational){addMessage('user',instruction);const url=new URL(location.href);url.searchParams.set('ai_chat',c.state.aiChatId);history.replaceState({},'',url);}
+    if(conversational){addMessage('user',instruction);c.setState({prompt:''});const url=new URL(location.href);url.searchParams.set('ai_chat',c.state.aiChatId);history.replaceState({},'',url);}
     const request=requestAi({operation:conversational?'editor':operation,instruction:brief,content:text,subject:c.state.subject,tone:c.state.tone || 'Friendly'},undefined,conversational?{chatId:c.state.aiChatId,settings:{editor:{links:currentLinks,key:new URLSearchParams(location.search).get('id') || c.state.aiChatId,content:text.slice(0,6000),html,subject:c.state.subject,preheader:c.state.preheader || '',tone:c.state.tone || 'Friendly',section},timezone:Intl.DateTimeFormat().resolvedOptions().timeZone}}:{});
     active=request;
     try{
@@ -89,10 +89,8 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
     void run('rewrite',how[mode] || 'Improve clarity.',mode);
   };
   c.bindAiValues=(values:any)=>{
-    values.promptLabel=c.state.aiMessages?.length?'Continue the conversation':'What would you like to create?';
-    values.promptPh='Ask a question, describe an email, or request a change...';
-    values.genLabel=c.state.busy?'Working...':c.state.aiMessages?.length?'Send message':'Generate email';
-    values.genNote='Ask for anything: create an email, add a CTA, change colours or links. Changes apply to the canvas and can be undone.';
+    // The panel is a plain chat (EditorAiConversation); selecting text just opens it.
+    values.aiOnSel=()=>c.setState({aiOpen:true});
     const previousUndo=values.undo;
     values.undo=()=>{
       if(undo && fingerprint()===undoFingerprint){const saved=undo;undo=null;c.ed.loadProjectData(saved.project);c.setState({subject:saved.subject,preheader:saved.preheader,aiDesign:saved.design,toast:null});onChanged();}
