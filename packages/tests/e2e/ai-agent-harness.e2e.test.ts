@@ -40,6 +40,18 @@ beforeAll(async()=>{
 afterAll(async()=>{setAgentRuntime(undefined);vi.unstubAllEnvs();await app.close();await llm.close();for(const a of actors){await db.deleteFrom('customers').where('id','=',a.cid).execute();await db.deleteFrom('users').where('id','=',a.uid).execute();}});
 
 describe('email agent on the DeepSeek Harness runtime',()=>{
+ it('ends a repeated invalid workflow-tool loop with a clear saved answer',async()=>{
+  const a=await actor(),id=randomUUID();let attempt=0;
+  script=()=>({calls:[{name:'add_steps',arguments:{after:'trigger',steps:[{t:'sms',attempt:++attempt}]}}]});
+  const accepted=await app.inject({method:'POST',url:`/ai/chats/${id}/turns`,headers:{authorization:`Bearer ${a.token}`},payload:{request_id:randomUUID(),operation:'workflow',instruction:'Build an unsupported message flow',settings:{workflow:{}}}});
+  expect(accepted.statusCode,accepted.body).toBe(202);
+  await executeAiRun(a.cid,accepted.json().id,new AbortController().signal);
+  const run=await withTenant(a.cid,trx=>trx.selectFrom('ai_runs').selectAll().where('id','=',accepted.json().id).executeTakeFirstOrThrow());
+  expect(run.status,String(run.error)).toBe('completed');expect((run.result as any).operation).toBe('chat');
+  expect((run.result as any).text).toMatch(/could not finish.*repeatedly rejected/);
+  const calls=await withTenant(a.cid,trx=>trx.selectFrom('ai_run_steps').select('status').where('run_id','=',run.id).where('name','=','add_steps').execute());
+  expect(calls).toHaveLength(4);expect(calls.every(c=>c.status==='failed')).toBe(true);
+ },60000);
  it('creates a designed template, then adds a CTA and orange background without rebuilding it, then links the CTA',async()=>{
   const a=await actor(),chat=randomUUID();
   script=({messages,text})=>{

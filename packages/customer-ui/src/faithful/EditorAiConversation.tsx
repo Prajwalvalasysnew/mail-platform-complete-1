@@ -9,7 +9,7 @@ const EMAIL_PANEL:AiPanelConfig={host:'vb-ai-chat',field:'prompt',busy:'busy',se
 export const WORKFLOW_PANEL:AiPanelConfig={host:'wf-ai-chat',field:'aiPrompt',busy:'aiBusy',send:'aiBuild',placeholder:'Describe a workflow or ask for a change…',empty:'Describe the journey you want, or ask me to change this workflow.',applyLabel:'Apply saved AI draft to workflow'};
 
 /** Friendly progress for the agent's latest tool step. */
-const STEP_LABELS:Record<string,string>={view_email:'Reading the email',read_element:'Reading the email',update_element:'Editing the email',insert_html:'Editing the email',replace_element:'Editing the email',remove_element:'Editing the email',write_email:'Writing the email',set_subject:'Writing the subject line',read_workspace:'Checking your workspace',view_workflow:'Reading the workflow',build_workflow:'Building the workflow',add_steps:'Adding steps',update_step:'Updating a step',remove_step:'Removing a step',set_trigger:'Setting the trigger',update_workflow_settings:'Updating settings'};
+const STEP_LABELS:Record<string,string>={reconnecting:'Reconnecting to your saved request',view_email:'Reading the email',read_element:'Reading the email',update_element:'Editing the email',insert_html:'Editing the email',replace_element:'Editing the email',remove_element:'Editing the email',write_email:'Writing the email',set_subject:'Writing the subject line',read_workspace:'Checking your workspace',view_workflow:'Reading the workflow',build_workflow:'Building the workflow',add_steps:'Adding steps',update_step:'Updating a step',remove_step:'Removing a step',set_trigger:'Setting the trigger',update_workflow_settings:'Updating settings'};
 export const stepLabel=(steps:{name:string}[]|undefined)=>{const last=steps?.at(-1)?.name;return last?`${STEP_LABELS[last] || 'Working'}…`:'Thinking…';};
 
 /** A plain chat: the conversation and one message box. Mounted into the builder's AI panel. */
@@ -24,7 +24,7 @@ export function EditorAiConversation({controller,panel=EMAIL_PANEL}:{controller:
  useLayoutEffect(()=>{if(log.current)log.current.scrollTop=log.current.scrollHeight;},[host,messages.length,busy]);
  useLayoutEffect(()=>{const el=input.current;if(!el)return;el.style.height='auto';el.style.height=`${Math.min(el.scrollHeight,160)}px`;},[host,value]);
  if(!host)return null;
- const send=()=>{if(!value.trim() || busy)return;c[panel.send]();};
+ const send=()=>{if(!value.trim() || busy || c.state.aiReady===false)return;c[panel.send]();};
  const key=(event:KeyboardEvent<HTMLTextAreaElement>)=>{if(event.key==='Enter' && !event.shiftKey && !event.nativeEvent.isComposing){event.preventDefault();send();}};
  return createPortal(<section data-editor-ai-conversation="true" aria-label="AI conversation" className="ai-chat">
    <div ref={log} role="log" aria-live="polite" className="ai-chat-log">
@@ -43,7 +43,7 @@ export function EditorAiConversation({controller,panel=EMAIL_PANEL}:{controller:
    <div className="ai-chat-composer">
     <textarea ref={input} rows={1} value={value} placeholder={panel.placeholder} aria-label="Message the AI assistant" maxLength={4000}
      onChange={event=>c.setState({[panel.field]:event.target.value})} onKeyDown={key}/>
-    <button type="button" aria-label="Send message" title="Send (Enter)" disabled={busy || !value.trim()} onClick={send}>↑</button>
+    <button type="button" aria-label="Send message" title="Send (Enter)" disabled={busy || !value.trim() || c.state.aiReady===false} onClick={send}>↑</button>
    </div>
  </section>,host);
 }

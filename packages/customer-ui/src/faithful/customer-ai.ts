@@ -10,6 +10,7 @@ export function installCustomerAi(base:DesignState){
  const key=`valasys.ai.drawer:${identity?.user.id}:${identity?.current_customer_id}`;
  const originalVals=c.aiVals.bind(c),setState=c.setState.bind(c);
  let disposed=false,active:ReturnType<typeof requestAi>|undefined,cid:string|undefined,epoch=0,restored=false;
+ let restoring:Promise<void>|undefined;
  const alive=()=>!disposed && aiIdentity()===owner;
  const remember=(id?:string)=>{try{if(id)sessionStorage.setItem(key,id);else sessionStorage.removeItem(key);}catch{/* Storage may be disabled. */}};
  const saved=()=>{try{return sessionStorage.getItem(key);}catch{return null;}};
@@ -42,8 +43,9 @@ export function installCustomerAi(base:DesignState){
    if(pending)void follow(id,requestAi({},undefined,{runId:pending.run_id}),n);
   }catch(error){if(alive() && n===epoch){remember();c.setState({aiBusy:false});c.toast(errorMessage(error));}}
  }
- c.setState=(update:any,callback?:()=>void)=>{const open=c.state.aiOpen;setState(update,callback);if(!open && c.state.aiOpen)void restore();};
- c.aiAsk=(raw:string)=>{
+ c.setState=(update:any,callback?:()=>void)=>{const open=c.state.aiOpen;setState(update,callback);if(!open && c.state.aiOpen){const pending=restore();restoring=pending;void pending.finally(()=>{if(restoring===pending)restoring=undefined;});}};
+ c.aiAsk=async(raw:string)=>{
+  if(restoring && !active){const n=epoch;await restoring;if(n!==epoch)return;}
   const q=raw?.trim();if(!alive() || !q || c.state.aiBusy || active)return;
   if(q.length>4000)return c.toast('Keep your message under 4,000 characters.');
   const id=cid || crypto.randomUUID(),n=++epoch,mid=crypto.randomUUID();cid=id;restored=true;

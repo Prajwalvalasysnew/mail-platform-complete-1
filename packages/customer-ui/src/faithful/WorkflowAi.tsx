@@ -18,7 +18,7 @@ export function installWorkflowAi(c:Controller,context:()=>{id:string|null;ready
  const chatKey=(workflowId:string|null|undefined)=>workflowId && workflowId!=='draft'?`valasys.ai.workflow:${identity?.user.id}:${identity?.current_customer_id}:${workflowId}`:null;
  const storage={get:(key:string|null)=>{try{return key?localStorage.getItem(key):null;}catch{return null;}},set:(key:string|null,value:string|null)=>{try{if(key){if(value)localStorage.setItem(key,value);else localStorage.removeItem(key);}}catch{/* Storage may be disabled. */}}};
  const restoreId=new URLSearchParams(location.search).get('ai_chat') || storage.get(chatKey(new URLSearchParams(location.search).get('id')));
- c.state={...c.state,aiMessages:[],aiChatId:restoreId || crypto.randomUUID(),pendingAiDraft:null};
+ c.state={...c.state,aiMessages:[],aiChatId:restoreId || crypto.randomUUID(),pendingAiDraft:null,aiReady:false};
  const assistantText=(m:any)=>{
   const r=m.result,flow=r?.operation==='workflow'?r:null;
   const lines=[flow?.message || m.text || m.error || (['queued','running'].includes(m.status)?'Working on your request...':'Unable to finish this request.')];
@@ -27,7 +27,7 @@ export function installWorkflowAi(c:Controller,context:()=>{id:string|null;ready
  };
  async function refreshHistory(){
   const data=await getResource(`/account/ai/chats/${c.state.aiChatId}`,true);if(disposed || owner!==aiIdentity())return null;
-  c.setState({aiMessages:data.messages.map((m:any)=>({id:m.id,role:m.role,text:m.role==='user'?m.text:assistantText(m),failed:m.role!=='user' && ['failed','timed_out','cancelled'].includes(m.status)}))});
+  c.setState({aiMessages:data.messages.filter((m:any)=>m.role==='user' || !['queued','running'].includes(m.status)).map((m:any)=>({id:m.id,role:m.role,text:m.role==='user'?m.text:assistantText(m),failed:m.role!=='user' && ['failed','timed_out','cancelled'].includes(m.status)}))});
   return data;
  }
  // Only the persisted builder fields; transient layout keys (prefixed "_") stay in the browser.
@@ -38,14 +38,14 @@ export function installWorkflowAi(c:Controller,context:()=>{id:string|null;ready
   c.change((w:any)=>({...w,name:d.name,tkey:d.tkey,tcfg:d.tcfg || {},trigger:c.tLabel(d.tkey),settings:{...w.settings,...d.settings},graph:c.tidy({graph:structuredClone(d.graph)}).graph}));
   c.setState({sel:null,selEdge:null,pendingAiDraft:null});setTimeout(()=>c.fit?.(),30);
  }
- async function follow(request:ReturnType<typeof requestAi>,before:string,accepted:()=>boolean=()=>true){
+ async function follow(request:ReturnType<typeof requestAi>,before:string|null,accepted:()=>boolean=()=>true){
   active=request;c.setState({aiBusy:true,aiSteps:[]});
   try{
    const row=await request.promise;if(disposed || owner!==aiIdentity())return;
    storage.set(chatKey(context().id),c.state.aiChatId);
    await refreshHistory();
    if(row.result?.operation!=='workflow')return;
-   if(snapshot()!==before){c.setState({pendingAiDraft:row.result});return c.toast('The workflow changed while AI was working. Apply the saved draft to replace it, or ask again.');}
+   if(before===null || snapshot()!==before){c.setState({pendingAiDraft:row.result});return c.toast('The saved AI draft is ready. Review and apply it to replace the current workflow.');}
    apply(row.result);
    c.toast(row.result.issues?.length?'Workflow updated. Review the remaining issues before publishing.':'Workflow updated. Review it, run a test and publish when ready.',true);
   }catch(error){if(!disposed && owner===aiIdentity()){
@@ -57,7 +57,7 @@ export function installWorkflowAi(c:Controller,context:()=>{id:string|null;ready
  }
  c.aiBuild=()=>{
   const prompt=String(c.state.aiPrompt || '').trim();
-  if(!prompt || active)return;
+  if(!prompt || active || c.state.aiBusy)return;
   if(!context().ready || !c.cur())return c.toast('Wait for the workflow to finish loading.');
   if(prompt.length>4000)return c.toast('Keep your message under 4,000 characters.');
   const id=context().id,before=snapshot();
@@ -74,12 +74,12 @@ export function installWorkflowAi(c:Controller,context:()=>{id:string|null;ready
   storage.set(chatKey(context().id),null);
   const url=new URL(location.href);url.searchParams.delete('ai_chat');history.replaceState({},'',url);
  };
- c.applyAiDraft=()=>{if(c.state.pendingAiDraft && !active)apply(c.state.pendingAiDraft);};
+ c.applyAiDraft=()=>{if(!context().ready)return c.toast('Wait for the workflow to finish loading.');if(c.state.pendingAiDraft && !active)apply(c.state.pendingAiDraft);};
  c.stopAiWriting=()=>void active?.cancel().catch((error:unknown)=>c.toast(errorMessage(error)));
  c.aiSubject=()=>c.toast('Workflow emails use the saved template subject. Ask Valasys AI to change the email, or edit the template.');
  if(restoreId)void (async()=>{
   try{const data=await refreshHistory();const pending=data?.messages.find((m:any)=>m.role==='assistant' && ['queued','running'].includes(m.status));
-   if(pending && !active){const wait=()=>context().ready?void follow(requestAi({},(_status,live)=>{if(!disposed)c.setState({aiSteps:live?.steps || []});},{runId:pending.run_id}),snapshot()):setTimeout(wait,200);wait();}}
+   if(pending && !active)void follow(requestAi({},(_status,live)=>{if(!disposed)c.setState({aiSteps:live?.steps || []});},{runId:pending.run_id}),null);}
   catch(error){if(disposed)return;if((error as any)?.status===404){storage.set(chatKey(new URLSearchParams(location.search).get('id')),null);c.setState({aiChatId:crypto.randomUUID(),aiMessages:[]});}else c.toast(errorMessage(error));}
  })();
  const unsubscribe=store.subscribe(()=>{if(aiIdentity()!==owner){void active?.cancel().catch(()=>{});active=undefined;if(!disposed)c.setState({aiBusy:false,aiMessages:[],aiChatId:crypto.randomUUID(),pendingAiDraft:null});}});

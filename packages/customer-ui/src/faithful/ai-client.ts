@@ -11,10 +11,13 @@ export function requestAi(input:Record<string,unknown>,onStatus?:(status:string,
    try{return await fn();}catch(error){if(attempt>=2 || !retryable(error))throw error;await new Promise(r=>setTimeout(r,1000*(attempt+1)));}
   }
  }
- const submitted=options.runId?Promise.resolve({id:options.runId}):reconnect(()=>options.chatId?
+ const submitted=options.runId?Promise.resolve({id:options.runId}):reconnect(async()=>{const row=await (options.chatId?
   performAction(`/account/ai/chats/${options.chatId}/turns`,{request_id,operation:input.operation,instruction:input.instruction,settings:options.settings || {}}):
-  performAction('/account/ai/generations',{request_id,input}),true);
- const cancel=()=>cancellation ||= (async()=>{stopped=true;const row=await submitted;id=row.id;if(owner===aiIdentity())return performAction(`/account/ai/runs/${id}/cancel`,{});})();
+  performAction('/account/ai/generations',{request_id,input}));
+  if(!row || typeof row.id!=='string')throw {status:'PARSING_ERROR'};return row;
+ },true);
+ // A failed cancellation must leave polling alive; the server may still be working.
+ const cancel=()=>cancellation ||= (async()=>{const row=await submitted;id=row.id;if(owner!==aiIdentity())throw new Error('Generation stopped.');const result=await performAction(`/account/ai/runs/${id}/cancel`,{});if(result?.status==='cancelled')stopped=true;return result;})().catch(error=>{cancellation=undefined;throw error;});
  const promise=(async()=>{
   const row=await submitted;id=row.id;
   if(stopped){await cancel();throw new Error('Generation stopped.');}
@@ -24,7 +27,18 @@ export function requestAi(input:Record<string,unknown>,onStatus?:(status:string,
   const deadline=Date.now()+330000;
   while(Date.now()<deadline){
    if(stopped || detached || owner!==aiIdentity())throw new Error('Generation stopped.');
-   const run=await reconnect(()=>getResource(`/account/ai/runs/${encodeURIComponent(id!)}`,true));
+   let run:any;
+   try{run=await reconnect(async()=>{
+    const value=await getResource(`/account/ai/runs/${encodeURIComponent(id!)}`,true);
+    if(!value || value.id!==id || !['queued','running','completed','failed','timed_out','cancelled'].includes(value.status))throw {status:'PARSING_ERROR',data:{message:'AI status could not be read. Reconnecting to your saved request.'}};
+    return value;
+   });}catch(error){
+    if((retryable(error) || (error as any)?.status===429) && !detached && !stopped && owner===aiIdentity()){
+     onStatus?.('reconnecting',{steps:[{name:'reconnecting',status:'running'}]});
+     await new Promise(r=>setTimeout(r,1000));continue;
+    }
+    throw error;
+   }
    if(stopped || detached || owner!==aiIdentity())throw new Error('Generation stopped.');
    onStatus?.(run.status,run);
    if(run.status==='completed')return run;

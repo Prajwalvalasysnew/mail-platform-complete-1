@@ -22,6 +22,7 @@ export type AgentWorkspace={
  artifact:'email'|'workflow'|null;
  /** Ends the agent session when the model keeps calling tools past the budget; the turn then finishes with what was done. */
  stop?:()=>void;stopped?:boolean;
+ lastToolError?:string;
 };
 export type ToolOutcome={text:string;isError:boolean};
 type Tool={name:string;scope:'email'|'workflow'|'workspace';description:string;inputSchema:Record<string,unknown>;mutates:boolean;run:(ws:AgentWorkspace,args:any)=>Promise<string>|string};
@@ -117,7 +118,7 @@ function workflowTools():Tool[]{return [
   run:(ws,a)=>{const before=ws.workflow.doc.graph.nodes.length;ws.workflow.insert(String(a.after),a.port,a.steps);const added=ws.workflow.doc.graph.nodes.slice(before).map(n=>ws.workflow.label(n));return confirmation(ws,`Added ${added.join(', then ')}`)+issuesNote(ws);}},
  {name:'update_step',scope:'workflow',mutates:true,description:'Change fields of one step, e.g. {"amount":3,"unit":"days"} on a wait or {"template":"<id>"} on an email.',
   inputSchema:{type:'object',properties:{id:{type:'string'},fields:{type:'object'}},required:['id','fields'],additionalProperties:false},
-  run:(ws,a)=>confirmation(ws,`Changed ${a.id} to ${ws.workflow.update(String(a.id),a.fields || {})}`)+issuesNote(ws)},
+  run:(ws,a)=>confirmation(ws,`Updated workflow step: ${ws.workflow.update(String(a.id),a.fields || {})}`)+issuesNote(ws)},
  {name:'remove_step',scope:'workflow',mutates:true,description:'Remove one step; its single incoming and outgoing connections are joined.',
   inputSchema:{type:'object',properties:{id:{type:'string'}},required:['id'],additionalProperties:false},
   run:(ws,a)=>confirmation(ws,`Removed ${ws.workflow.remove(String(a.id))}`)+issuesNote(ws)},
@@ -170,6 +171,9 @@ export async function runAgentTool(ws:AgentWorkspace,name:string,args:unknown):P
   if(error instanceof Error && error.message==='Stale tool call')throw error;
   const message=error instanceof DocumentToolError?error.message:error instanceof z.ZodError?`Invalid arguments: ${error.issues.map(i=>`${i.path.join('.')}: ${i.message}`).join('; ')}`:'The tool failed. Try a different approach.';
   await record(ws,name,args,{error:message},'failed');
+  ws.lastToolError=message;
+  const failureKey='\u0000failure:'+name+':'+message,count=(ws.seen.get(failureKey) || 0)+1;ws.seen.set(failureKey,count);
+  if(count>=4){ws.stopped=true;ws.stop?.();}
   return {text:message,isError:true};
  }
 }
