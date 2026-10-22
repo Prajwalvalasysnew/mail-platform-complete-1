@@ -51,12 +51,20 @@ export async function createChatTurn(cid:string,uid:string,sid:string,id:string,
   return run;
  });
 }
-export async function listAiChats(cid:string,uid:string){return withTenant(cid,async trx=>({chats:await trx.selectFrom('ai_chats').select(['id','title','created_at','updated_at','expires_at']).where('customer_id','=',cid).where('user_id','=',uid).where('expires_at','>',new Date()).orderBy('updated_at','desc').limit(100).execute()}));}
+export async function listAiChats(cid:string,uid:string,mainOnly=false){return withTenant(cid,async trx=>{
+ let query=trx.selectFrom('ai_chats').select(['id','title','created_at','updated_at','expires_at']).where('customer_id','=',cid).where('user_id','=',uid).where('expires_at','>',new Date());
+ // Infer origin from the original turn, since current chat settings are mutable.
+ if(mainOnly)query=query.where(sql<boolean>`not coalesce((select (m.result->'context_settings' ? 'workflow' or m.result->'context_settings' ? 'editor') from ai_chat_messages m where m.customer_id=ai_chats.customer_id and m.chat_id=ai_chats.id and m.role='user' order by m.seq asc limit 1),false)`);
+ return {chats:await query.orderBy('updated_at','desc').limit(100).execute()};
+});}
 export async function getAiChat(cid:string,uid:string,id:string,before=2147483647){return withTenant(cid,async trx=>{
  const chat=await ownedChat(trx,cid,uid,id);if(!chat)throw missing();
+ const origin=await trx.selectFrom('ai_chat_messages').select('result').where('customer_id','=',cid).where('chat_id','=',id).where('role','=','user').orderBy('seq').executeTakeFirst();
+ const originSettings=(origin?.result as any)?.context_settings;
+ const surface=originSettings?.workflow?'workflow':originSettings?.editor?'editor':'agent';
  const messages=await trx.selectFrom('ai_chat_messages as m').leftJoin('ai_runs as r','r.id','m.run_id').select(['m.id','m.seq','m.role','m.text','m.result','m.error','m.status','m.run_id','m.template_id','m.workflow_id','m.decision','m.created_at','r.status as run_status','r.error as run_error','r.created_at as run_created_at','r.updated_at as run_updated_at',sql<boolean>`r.session_id is not null`.as('run_has_session')]).where('m.customer_id','=',cid).where('m.chat_id','=',id).where('m.seq','<',before).orderBy('m.seq','desc').limit(201).execute();
  const steps=await trx.selectFrom('ai_run_steps as s').innerJoin('ai_runs as r','r.id','s.run_id').select(['s.run_id','s.name','s.status','s.created_at']).where('s.customer_id','=',cid).where('r.customer_id','=',cid).where('r.chat_id','=',id).whereRef('s.attempt','=','r.attempt').orderBy('s.created_at','desc').limit(500).execute().then(rows=>rows.reverse());
- return {chat,steps,has_more:messages.length>200,before_seq:messages.slice(0,200).at(-1)?.seq,messages:messages.slice(0,200).reverse().map(m=>({...m,status:m.role==='assistant'?(!m.run_has_session && ['queued','running'].includes(m.run_status || m.status)?'failed':m.run_status || m.status):m.status,error:m.run_error || m.error || (!m.run_has_session && m.role==='assistant' && ['queued','running'].includes(m.status)?'The original login session ended. Send a new message to continue.':null)})),checkpoints:await trx.selectFrom('ai_chat_checkpoints').select(['through_seq','created_at']).where('customer_id','=',cid).where('chat_id','=',id).orderBy('through_seq','desc').execute()};
+ return {chat:{...chat,surface},steps,has_more:messages.length>200,before_seq:messages.slice(0,200).at(-1)?.seq,messages:messages.slice(0,200).reverse().map(m=>({...m,status:m.role==='assistant'?(!m.run_has_session && ['queued','running'].includes(m.run_status || m.status)?'failed':m.run_status || m.status):m.status,error:m.run_error || m.error || (!m.run_has_session && m.role==='assistant' && ['queued','running'].includes(m.status)?'The original login session ended. Send a new message to continue.':null)})),checkpoints:await trx.selectFrom('ai_chat_checkpoints').select(['through_seq','created_at']).where('customer_id','=',cid).where('chat_id','=',id).orderBy('through_seq','desc').execute()};
  });}
 export async function decideAiDraft(cid:string,uid:string,chatId:string,messageId:string,decision:'applied'|'skipped'){
  return withTenant(cid,async trx=>{

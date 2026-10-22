@@ -92,6 +92,7 @@ export const SCHEDULER_JOB_NAMES = [
   'volume_baseline_update',
   'stale_send_recovery',
   'workflow_run_sweep',
+  'workflow_date_triggers',
   'workflow_run_retention',
   'review_queue_timeout',
 ] as const;

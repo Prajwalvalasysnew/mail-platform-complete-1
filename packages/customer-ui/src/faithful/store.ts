@@ -58,6 +58,8 @@ export const customerApi = createApi({
   tagTypes: ['Workspace'],
   endpoints: (builder) => ({
     resource: builder.query<any, string>({ query: path => path, providesTags: ['Workspace'] }),
+    // Autosaves invalidate Workspace queries. A live AI poll must survive those writes.
+    aiResource: builder.query<any, string>({ query: path => path, keepUnusedDataFor: 5 }),
     action: builder.mutation<any, { path: string; method?: string; body?: unknown }>({
       query: ({ path, method = 'POST', body }) => ({ url: path, method, body }), invalidatesTags: ['Workspace'],
     }),
@@ -86,7 +88,8 @@ store.subscribe(() => {
 export type RootState = ReturnType<typeof store.getState>;
 
 export async function getResource(path: string, force = false) {
-  const request = store.dispatch(customerApi.endpoints.resource.initiate(path, { subscribe: false, forceRefetch: force }));
+  const endpoint=path.startsWith('/account/ai/')?customerApi.endpoints.aiResource:customerApi.endpoints.resource;
+  const request = store.dispatch(endpoint.initiate(path, { subscribe: path.startsWith('/account/ai/'), forceRefetch: force }));
   try { return await request.unwrap(); } finally { request.unsubscribe(); }
 }
 export async function performAction(path: string, body?: unknown, method = 'POST') {

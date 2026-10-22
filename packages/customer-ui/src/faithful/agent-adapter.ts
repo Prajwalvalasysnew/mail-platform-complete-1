@@ -26,6 +26,12 @@ export function prepareAgent(base:DesignState){
  }
  async function loadChat(id:string,select=true,before?:number){
   const n=select?++loading:loading,data=await getResource(`/account/ai/chats/${id}${before?`?before_seq=${before}`:''}`,true);if(!alive() || (select && n!==loading))return;
+  if(data.chat.surface==='workflow' || data.chat.surface==='editor'){
+   const kind=data.chat.surface,settings=[...data.messages].reverse().find((m:any)=>m.role==='user' && m.result?.context_settings?.[kind])?.result.context_settings[kind] || data.chat.settings?.[kind];
+   const bound=kind==='workflow'?settings?.id:settings?.key;
+   const params=new URLSearchParams({ai_chat:id});if(bound && bound!==id)params.set('id',bound);
+   location.replace(`/${kind==='workflow'?'workflow-builder':'email-builder'}?${params}`);return;
+  }
   const chat={id:data.chat.id,title:data.chat.title,at:new Date(data.chat.updated_at).getTime(),msgs:before?[...data.messages.map((m:any)=>message(m,(data.steps || []).filter((s:any)=>s.run_id===m.run_id))),...(c.state.chats.find((x:any)=>x.id===id)?.msgs || [])]:data.messages.map((m:any)=>message(m,(data.steps || []).filter((s:any)=>s.run_id===m.run_id))),hasMore:data.has_more,beforeSeq:data.before_seq};
   c.setState((s:any)=>({chats:s.chats.some((x:any)=>x.id===id)?s.chats.map((x:any)=>x.id===id?chat:x):[chat,...s.chats],...(select?{chatId:id,section:'chat',mem:(data.chat.settings as any)?.mem || emptyMem(),skills:(data.chat.settings as any)?.skills || [],mode:(data.chat.settings as any)?.mode || 'ask'}:{})}));
   if(select){url(id);const pending=data.messages.find((m:any)=>m.role==='assistant' && ['queued','running'].includes(m.status));if(pending && !active)void follow(id,requestAi({},undefined,{runId:pending.run_id}),false);}
@@ -38,10 +44,10 @@ export function prepareAgent(base:DesignState){
   finally{if(active===request && !stopping){active=undefined;target=undefined;if(alive())c.setState({busy:false});}}
  }
  c.componentDidMount=()=>void(async()=>{
-  try{const [data,catalog]=await Promise.all([getResource('/account/ai/chats',true),getResource('/account/ai/context',true).catch(()=>({groups:[]}))]);if(alive())c.setState({contextGroups:catalog.groups});if(!alive())return;
+  try{const [data,catalog]=await Promise.all([getResource('/account/ai/chats?scope=agent',true),getResource('/account/ai/context',true).catch(()=>({groups:[]}))]);if(alive())c.setState({contextGroups:catalog.groups});if(!alive())return;
    c.setState((s:any)=>({chats:[...s.chats,...data.chats.filter((x:any)=>!s.chats.some((old:any)=>old.id===x.id)).map((x:any)=>({id:x.id,title:x.title,at:new Date(x.updated_at).getTime(),msgs:[]}))]}));
    if(active || c.state.chatId)return;
-   const params=new URLSearchParams(location.search),q=params.get('q'),id=params.get('chat') || data.chats[0]?.id;
+   const params=new URLSearchParams(location.search),q=params.get('q'),id=params.get('chat');
    if(q){c.setState({chatId:null});void c.ask(q);}else if(id)await loadChat(id);
   }catch(error){if(alive())c.toast(errorMessage(error));}
  })();

@@ -51,7 +51,7 @@ export function prepareWorkflow(base:DesignState){
     workspace.lists=(audiences.collections || []).filter((row:any)=>row.kind==='list').map((row:any)=>({id:row.id,name:row.name}));
     from=workspace.domains[0]?`hello@${workspace.domains[0]}`:'';workspace.from=from;
     if(id){const row=await getResource(`/account/data/workflows/${encodeURIComponent(id)}/builder`,true);if(disposed)return;revision=row.builder_revision;const workflow=c.norm({...blank(),...(row.builder_document || {}),id:row.id,name:row.name,status:row.status==='active'?'Active':row.status==='paused'?'Paused':'Draft'});c.setState({wfs:[workflow],curId:row.id,savedAt:row.builder_document?new Date(row.updated_at):null});}
-    ready=true;c.setState({});c.fit();
+    ready=true;c.setState({aiReady:true});c.fit();
    }catch(error){if(!disposed)c.setState({builderError:errorMessage(error)});}})();
  };
  async function publish(){await c.saveBuilder();if(!id || dirty || conflicted)throw new Error(c.state.builderError || 'Save the latest draft before publishing.');const definition=compileWorkflow(c.cur(),compileContext());const result=await performAction(`/account/data/workflows/${id}/builder/publish`,{expected_revision:revision,definition});revision=result.builder_revision;if(!disposed){c.setState({wfs:[{...c.cur(),status:'Active'}],modal:null});c.toast(`Published version ${result.version}. Waiting for real trigger events.`);}}

@@ -17,7 +17,7 @@ export const accountAiRoutes:FastifyPluginAsync=async app=>{
     app.log.error({code:'ai_chat_failed'},'AI conversation request failed');
     return reply.code(503).send({error:'ai_temporarily_unavailable',message:'Your conversation could not be updated. Retry the same request.'});
   };
-  app.get('/chats',async req=>listAiChats(req.user!.current_customer_id!,req.user!.user_id));
+  app.get('/chats',async(req,reply)=>{const scope=z.enum(['all','agent']).safeParse((req.query as any).scope || 'all');if(!scope.success)return reply.code(400).send({error:'invalid_chat_scope'});return listAiChats(req.user!.current_customer_id!,req.user!.user_id,scope.data==='agent');});
   app.get('/chats/:id',async(req,reply)=>{const id=Id.safeParse((req.params as any).id);if(!id.success)return reply.code(400).send({error:'invalid_chat_id'});try{return await getAiChat(req.user!.current_customer_id!,req.user!.user_id,id.data,z.coerce.number().int().positive().max(2147483647).parse((req.query as any).before_seq || 2147483647));}catch(error){return chatError(error,reply);}});
   app.delete('/chats/:id',async(req,reply)=>{const id=Id.safeParse((req.params as any).id);if(!id.success)return reply.code(400).send({error:'invalid_chat_id'});try{return await deleteAiChat(req.user!.current_customer_id!,req.user!.user_id,id.data);}catch(error){return chatError(error,reply);}});
   app.post('/chats/:id/turns',{bodyLimit:120000},async(req,reply)=>{

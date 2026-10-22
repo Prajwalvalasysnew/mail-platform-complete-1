@@ -68,10 +68,12 @@ Your valasys tools act on real workspace data. The request says which tools appl
 - Settings: who can enter (everyone, subscribed only, or rules), re-entry, goal (exit on a business event), quiet hours and frequency cap.
 - Not supported yet: SMS. If asked, say so plainly and use email instead.
 - Put a wait between emails. Prefer targeted edits (add_steps, update_step, remove_step) over rebuilding. When an email step needs a template that does not exist yet, leave template empty and tell the user which template to create.
+- Building a draft does not require an audience, verified domain or completed email template. Build and connect the requested steps now, leaving missing template/from fields empty; explain these as publish blockers afterward. Do not stop at changing the trigger when the user asked for a complete workflow. For example: add_steps {after:"trigger",steps:[{t:"email",template:""},{t:"wait",mode:"duration",amount:2,unit:"days"}]}.
+- Use a saved email template only if it fits the purpose of that workflow step. Do not choose an unrelated template just because it is available; leave template empty and describe the email needed instead.
 - Tool results list remaining publish issues; fix what you can. You never publish or activate a workflow; the user reviews and publishes it.
 
 ## Reply
-After working, reply in 1-3 short sentences saying exactly what you changed (or answering the question). Only describe changes your tool calls actually made. Never paste HTML into the reply.`;
+After working, reply in 1-3 short sentences saying exactly what you changed (or answering the question). Only describe changes your tool calls actually made. Use human-readable names for steps and templates in replies; keep internal IDs in tool calls. Never paste HTML into the reply.`;
 
 const CLAIMS_EDIT=/\b(?:i(?:'ve| have)?|i’ve)\s+(?:now\s+|also\s+|just\s+)?(?:added|updated|changed|switched|replaced|inserted|removed|made|set|applied|kept|rewrote|rebuilt|built|created|polished|moved|styled|adjusted|turned|converted|placed|connected|drafted)\b/i;
 
@@ -171,13 +173,13 @@ export async function runEmailAgent(row:Run,input:AiInput,history:{checkpoint?:s
   signal.throwIfAborted();
   const changes=ws.changes.slice(0,30);
   // Never show an empty reply: fall back to what the tools actually did.
-  const message=reply.replace(/<[^>]+>/g,'').trim().slice(0,4000) || (changes.length?`Done. ${changes.length===1?'I made this change':'I made these changes'}:`:'');
+  const message=reply.replace(/<[^>]+>/g,'').trim().slice(0,4000) || (ws.stopped && ws.lastToolError?`I could not finish because a tool repeatedly rejected the request: ${ws.lastToolError.slice(0,500)}${changes.length?' Review the partial changes below.':''}`:changes.length?`Done. ${changes.length===1?'I made this change':'I made these changes'}:`:'');
   if(flowChanged()){
    const document=structuredClone(workflow.doc);
    if(Buffer.byteLength(JSON.stringify(document))>200000)throw new Error('Workflow draft too large');
    return {result:{operation:'workflow',name:document.name,document,issues:workflow.issues(),message,changes},promptTokens,outputTokens};
   }
-  if(!emailChanged())return {result:{operation:'chat',text:reply || 'I could not complete that request. Please rephrase it and try again.'},promptTokens,outputTokens};
+  if(!emailChanged())return {result:{operation:'chat',text:message || 'I could not complete that request. Please rephrase it and try again.'},promptTokens,outputTokens};
   const html=doc.html(),problems=policyProblems(html,ws.policy);
   if(problems.length)throw new AiUserFacingError('The draft used a link or merge tag you did not provide, so nothing was applied. Paste the exact link you want in your message, or ask me to leave the link as # for now.','agent_output_policy');
   if(html.length>EDITOR_HTML_LIMIT*1.5)throw new AiUserFacingError('The email became too large for the editor. Ask for a shorter version or remove some sections.','agent_output_too_large');

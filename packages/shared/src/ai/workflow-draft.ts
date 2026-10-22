@@ -32,9 +32,16 @@ function rulesFrom(spec:StepSpec):Rule[]{
 }
 
 /** Convert an AI step spec into a builder node (defaults filled; detailed checks come from the codec). */
-function normalizeStep(spec:StepSpec,ws:WorkflowWorkspace):Node{
- const t=String(spec.t || '');
- if(!(WORKFLOW_STEP_TYPES as readonly string[]).includes(t))throw new DocumentToolError(`Step type "${t}" is not supported. Use one of: ${WORKFLOW_STEP_TYPES.join(', ')} (SMS is not available).`);
+function normalizeStep(raw:StepSpec,ws:WorkflowWorkspace):Node{
+ if(!raw || typeof raw!=='object' || Array.isArray(raw))throw new DocumentToolError('Each step must be an object, e.g. {t:"wait",amount:2,unit:"days"}.');
+ // Providers sometimes use equivalent field names despite the advertised schema.
+ // Normalize the known spellings, then apply the same capability and destination checks.
+ const fields=raw.fields && typeof raw.fields==='object' && !Array.isArray(raw.fields)?raw.fields as Record<string,unknown>:{};
+ const t=String(raw.t || raw.type || raw.step || raw.step_type || fields.t || fields.type || '');
+ const duration=(raw.duration || fields.duration) as {amount?:unknown;unit?:unknown}|undefined;
+ const spec={...fields,...raw,t,template:raw.template ?? raw.template_id ?? fields.template ?? fields.template_id,
+  ...(t==='wait' && duration && typeof duration==='object'?{amount:duration.amount ?? raw.amount ?? fields.amount,unit:duration.unit ?? raw.unit ?? fields.unit}:{})} as StepSpec;
+ if(!(WORKFLOW_STEP_TYPES as readonly string[]).includes(t))throw new DocumentToolError(`Step type "${t}" is not supported. Use one of: ${WORKFLOW_STEP_TYPES.join(', ')}. Example: steps:[{t:"wait",mode:"duration",amount:2,unit:"days"}]. SMS is not available.`);
  const id=uid();
  switch(t){
   case 'email':{
@@ -111,7 +118,7 @@ export class WorkflowDocument{
   const from=this.ws.domains[0]?`hello@${this.ws.domains[0]}`:'';
   return compileWorkflowDetailed(this.doc,{from,domains:this.ws.domains,templates:this.ws.templates.map(t=>t.id),workspaceTz:this.ws.timezone}).issues;
  }
- issues(){return this.issueList().filter(i=>i.level==='error').map(i=>i.id==='trigger'?i.text:`${i.id}: ${i.text}`);}
+ issues(){return this.issueList().filter(i=>i.level==='error').map(i=>{const node=this.doc.graph.nodes.find(n=>n.id===i.id);return i.id==='trigger' || !node?i.text:`${this.label(node)}: ${i.text}`;});}
  view(){
   const d=this.doc,s=d.settings,trig=triggerOf(d.tkey),lines=[`Workflow “${d.name}”`];
   const cfg=d.tcfg as any;
@@ -157,6 +164,7 @@ export class WorkflowDocument{
   }catch(error){this.doc=JSON.parse(backup);throw error;}
  }
  insert(after:string,port:string|undefined,steps:StepSpec[]){
+  if(!Array.isArray(steps) || !steps.length || steps.length>25)throw new DocumentToolError('Provide steps as an array of 1-25 objects, e.g. [{t:"wait",amount:2,unit:"days"}].');
   const n=this.node(after),p=port || 'out';
   if(!this.ports(n).includes(p))throw new DocumentToolError(`${after} has ports: ${this.ports(n).join(', ')}.`);
   const backup=this.snapshot();

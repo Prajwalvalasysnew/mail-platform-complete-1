@@ -17,6 +17,19 @@ beforeAll(async()=>{vi.stubEnv('AI_ENABLED','true');vi.stubEnv('AI_ENABLED_TENAN
 afterEach(()=>vi.unstubAllGlobals());
 afterAll(async()=>{vi.unstubAllEnvs();await app.close();for(const a of actors){await db.deleteFrom('customers').where('id','=',a.cid).execute();await db.deleteFrom('users').where('id','=',a.uid).execute();}});
 describe('durable AI chat and harness-style checkpoints',()=>{
+ it('keeps builder chats out of the main chat list even after later settings change',async()=>{
+  const a=await actor(),flow=randomUUID(),editor=randomUUID(),main=randomUUID();
+  const submit=async(id:string,extra:any)=>{const run=await turn(a,id,'Scoped conversation',extra);expect((await app.inject({method:'POST',url:`/ai/runs/${run.id}/cancel`,headers:headers(a)})).statusCode).toBe(200);};
+  await submit(flow,{operation:'workflow',settings:{workflow:{id:randomUUID()}}});
+  await submit(editor,{operation:'editor',settings:{editor:{key:randomUUID(),content:'',subject:'',tone:'Professional'}}});
+  await submit(main,{});
+  await submit(flow,{operation:'chat',settings:{}});
+  const scoped=await app.inject({method:'GET',url:'/ai/chats?scope=agent',headers:headers(a)});
+  expect(scoped.statusCode).toBe(200);expect(scoped.json().chats.map((c:any)=>c.id)).toEqual([main]);
+  const all=await app.inject({method:'GET',url:'/ai/chats',headers:headers(a)});expect(all.json().chats).toHaveLength(3);
+  expect((await chat(a,flow)).chat.surface).toBe('workflow');expect((await chat(a,editor)).chat.surface).toBe('editor');
+  const b=await actor();expect((await app.inject({method:'GET',url:'/ai/chats?scope=agent',headers:headers(b)})).json().chats).toEqual([]);
+ });
  it('restores history across authenticated sessions, deduplicates turns, and isolates owners',async()=>{
   const a=await actor(),b=await actor(),id=randomUUID(),request_id=randomUUID(),fetcher=model();vi.stubGlobal('fetch',fetcher);
   const first=await turn(a,id,'Remember ORCHID-731',{request_id});await executeAiRun(a.cid,first.id,new AbortController().signal);

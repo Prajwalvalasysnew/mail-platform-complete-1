@@ -4,6 +4,27 @@ import {WorkflowDocument} from '@platform/shared';
 const T={id:'11111111-1111-4111-8111-111111111111',name:'Welcome',subject:'Hi'};
 const ws={templates:[T],domains:['acme.test'],lists:[{id:'22222222-2222-4222-8222-222222222222',name:'Newsletter'}],timezone:'UTC'};
 describe('AI workflow draft document',()=>{
+ it.each([
+  {type:'wait',fields:{duration:{unit:'days',amount:2}}},
+  {step:'wait',duration:{unit:'days',amount:2}},
+  {step_type:'wait',duration:{unit:'days',amount:2}},
+ ])('accepts the observed provider step spelling %j without losing its duration',raw=>{
+  const w=new WorkflowDocument(null,ws);w.insert('trigger','out',[raw as any]);
+  expect(w.doc.graph.nodes[1]).toMatchObject({t:'wait',amount:2,unit:'days'});
+  expect(w.doc.graph.edges[0]).toMatchObject({from:'trigger',to:w.doc.graph.nodes[1]!.id});
+ });
+ it('builds a connected draft without an audience, template or verified domain',()=>{
+  const w=new WorkflowDocument(null,{templates:[],domains:[],lists:[],timezone:'UTC'});
+  w.build({trigger:'event',trigger_config:{event_name:'contact_inactive'},steps:[{t:'email'},{t:'wait',amount:2,unit:'days'},{t:'email'}]});
+  expect(w.doc.graph.nodes).toHaveLength(4);expect(w.doc.graph.edges).toHaveLength(3);
+  expect(w.issues().join(' ')).toMatch(/Choose an email template/);
+  const before=w.snapshot();expect(()=>w.insert('trigger','out',[{type:'sms'} as any])).toThrow(/not supported/);expect(w.snapshot()).toBe(before);
+ });
+ it('keeps destination restrictions when normalizing provider field aliases',()=>{
+  const w=new WorkflowDocument(null,ws);w.restrictDestinations(new Set());
+  expect(()=>w.insert('trigger','out',[{type:'notify',fields:{to:'attacker@example.test'}} as any])).toThrow(/not provided by the user/);
+  expect(w.doc.graph.nodes).toHaveLength(1);
+ });
  it('builds industry workflows with nested branches and reports publish issues from the shared codec',()=>{
   const w=new WorkflowDocument(null,ws);
   w.build({trigger:'appt',trigger_config:{event_name:'appointment_booked'},steps:[

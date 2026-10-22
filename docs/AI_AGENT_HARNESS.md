@@ -1,6 +1,8 @@
 # Valasys AI agent on the DeepSeek Harness
 
-Updated 21 October 2026. This replaces the structured-draft approach for the template editor, the workflow builder, the assistant drawer on every workspace page and the main AI chat. Earlier documents (`AI_QUALITY_FIXES.md`, `AI_CHAT_SESSION_RELIABILITY_REVIEW.md`) describe the previous design.
+Updated 22 October 2026. This replaces the structured-draft approach for the template editor, the workflow builder, the assistant drawer on every workspace page and the main AI chat. Earlier documents (`AI_QUALITY_FIXES.md`, `AI_CHAT_SESSION_RELIABILITY_REVIEW.md`) describe the previous design.
+
+The workflow step-format, polling and conversation-isolation corrections and their live-model verification are documented in [AI_WORKFLOW_CHAT_RELIABILITY.md](AI_WORKFLOW_CHAT_RELIABILITY.md).
 
 ## Why the approach changed
 

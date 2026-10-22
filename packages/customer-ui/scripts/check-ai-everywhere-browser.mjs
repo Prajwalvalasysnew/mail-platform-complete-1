@@ -22,6 +22,7 @@ const results=messages=>{const r=[];for(let i=messages.length-1;i>=0 && messages
 function model(messages){
  const q=ask(messages),done=results(messages),all=messages.map(text).join('\n'),template=all.match(/^([0-9a-f-]{36}): Win-back offer/m)?.[1];
  if(/win-back/i.test(q))return done.length?{content:'I built a win-back workflow: when someone clicks, wait 2 days, send “Win-back offer”, then wait for an open.'}:{calls:[['build_workflow',{name:'Win-back journey',trigger:'clicked',steps:[{t:'wait',mode:'duration',amount:2,unit:'days'},{t:'email',template},{t:'wait',mode:'event',event:'opened',max:3}]}]]};
+ if(/compatibility wait/i.test(q))return done.length?{content:'I added a two-day follow-up wait.'}:{calls:[['add_steps',{after:'trigger',steps:[{type:'wait',fields:{duration:{unit:'days',amount:2}}}]}]]};
  if(/slow summary/i.test(q))return {content:'Here is the summary you asked for.'};
  if(/onboarding workflow/i.test(q))return done.length?{content:'Here is an onboarding workflow draft for you to review.'}:{calls:[['build_workflow',{name:'Onboarding',trigger:'event',steps:[{t:'email',template},{t:'wait',mode:'duration',amount:1,unit:'days'}]}]]};
  if(/connected domains/i.test(q))return done.length?{content:`You have ${JSON.parse(done[0]).data.connected} connected sending domains and ${JSON.parse(done[0]).data.verified} are verified.`}:{calls:[['read_workspace',{tool:'domain_status'}]]};
@@ -37,7 +38,7 @@ const llm=createServer((req,res)=>{const chunks=[];req.on('data',c=>chunks.push(
  res.writeHead(200,{'content-type':'text/event-stream'});
  res.write(`data: ${JSON.stringify({id:'r',object:'chat.completion.chunk',choices:[{index:0,delta:calls.length?{role:'assistant',tool_calls:calls.map((c,index)=>({index,...c}))}:{role:'assistant',content:turn.content},finish_reason:null}]})}\n\n`);
  res.write(`data: ${JSON.stringify({id:'r',object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:calls.length?'tool_calls':'stop'}],usage:{prompt_tokens:100,completion_tokens:20,total_tokens:120}})}\n\n`);
- res.end('data: [DONE]\n\n');},hold?60000:0);});});
+ res.end('data: [DONE]\n\n');},hold?60000:/compatibility wait/i.test(ask(body.messages||[]))?3000:0);});});
 await new Promise(r=>llm.listen(3102,'127.0.0.1',r));
 
 const email=`ai-everywhere-${randomUUID()}@example.test`;
@@ -80,6 +81,25 @@ try{
  console.log('Browser: workflow builder AI built and autosaved the workflow draft',types.join(' → '));
  await page.screenshot({path:`${out}/1-workflow-builder.png`});
 
+ // A malformed poll must reconnect, and a manual autosave during the run must
+ // not invalidate the live query or let the user submit duplicate turns.
+ let malformedPoll=true;
+ await page.route('**/api/account/ai/runs/*',async route=>{
+  if(malformedPoll && route.request().method()==='GET'){malformedPoll=false;await route.fulfill({status:200,contentType:'application/json',body:'{}'});}else await route.continue();
+ });
+ await page.getByLabel('Message the AI assistant').fill('Add a compatibility wait after the trigger');
+ await page.getByRole('button',{name:'Send message',exact:true}).click();
+ await page.locator('[data-editor-ai-conversation]').getByRole('button',{name:'Stop',exact:true}).waitFor();
+ await page.getByText('Wait',{exact:true}).first().click();
+ await page.locator('[data-editor-ai-conversation]').getByRole('button',{name:'Apply saved AI draft to workflow',exact:true}).waitFor({timeout:90000});
+ if((await page.locator('[data-editor-ai-conversation]').innerText()).includes('Cannot read properties'))throw new Error('A malformed poll broke the conversation');
+ await page.getByRole('button',{name:'Apply saved AI draft to workflow',exact:true}).click();
+ await page.getByText('Saved to workspace').waitFor({timeout:20000});
+ const revised=await db.selectFrom('workflows').select('builder_document').where('customer_id','=',customer.id).executeTakeFirstOrThrow();
+ if(revised.builder_document.graph.nodes.length!==5)throw new Error('Provider-compatible wait was not applied');
+ await page.unroute('**/api/account/ai/runs/*');
+ console.log('Browser: malformed poll recovers, autosave preserves the live request, and a stale draft requires explicit application');
+
  // Chat behaviour: live progress, Stop, Retry, restore on reopen, New chat.
  const conversation=page.locator('[data-editor-ai-conversation]');
  await page.getByLabel('Message the AI assistant').fill('Give me a slow summary of this workflow');
@@ -100,6 +120,17 @@ try{
  await conversation.getByRole('button',{name:'New chat',exact:true}).click();
  await conversation.getByText('Describe the journey you want').waitFor();
  console.log('Browser: New chat starts an empty conversation');
+ const builderChat=(await db.selectFrom('ai_chats').select('id').where('customer_id','=',customer.id).orderBy('created_at','asc').executeTakeFirstOrThrow()).id;
+ await page.goto('http://127.0.0.1:3101/ai-agent');
+ await page.getByPlaceholder(/Ask anything/).waitFor();
+ if(new URL(page.url()).searchParams.has('chat'))throw new Error('The main agent automatically selected a builder conversation');
+ if(await page.getByText('Set up a win-back journey for people who click our emails',{exact:true}).count())throw new Error('Builder history leaked into the main agent');
+ await page.goto(`http://127.0.0.1:3101/ai-agent?chat=${builderChat}`);
+ await page.waitForURL('**/workflow-builder?*');
+ await page.getByRole('button',{name:'\u2726 AI',exact:true}).click();
+ await page.locator('[data-editor-ai-conversation]').getByText('I added a two-day follow-up wait.').waitFor({timeout:30000});
+ console.log('Browser: main chat starts empty, excludes builder history, and builder chat links return to their workflow');
+
 
  // 2. Page-aware assistant drawer on Settings and Automations.
  await page.goto('http://127.0.0.1:3101/domains');
