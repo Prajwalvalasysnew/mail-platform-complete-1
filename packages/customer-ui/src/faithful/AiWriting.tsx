@@ -15,7 +15,16 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
   const assistantText=(m:any)=>{const r=m.result,changes=r?.operation==='draft' && Array.isArray(r.changes)?r.changes:[];
     return [r?.message || m.text || m.error || (['queued','running'].includes(m.status)?'Working on your request...':'Unable to finish this request.'),...changes.map((x:string)=>`• ${x}`)].join('\n');};
   /** Body HTML of the canvas with editor CSS inlined: the document the AI agent edits. */
-  const canvasHtml=()=>{const doc=new DOMParser().parseFromString(c.exportEmail().html,'text/html'),first=doc.body.firstElementChild;if(first && /display:\s*none/.test(first.getAttribute('style') || ''))first.remove();return doc.body.innerHTML.trim();};
+  /** Mark the block selected in the editor (in the exported copy only) so "this" means something to the AI. */
+  const markSelection=(doc:Document)=>{
+   const selected=c.ed?.getSelected(),el:Element|undefined=selected?.getEl?.();
+   if(!el || selected.is?.('wrapper') || !el.tagName)return;
+   const squash=(n:Element)=>(n.textContent || '').replace(/\s+/g,' ').trim(),same=(n:Element)=>n.tagName===el.tagName && squash(n)===squash(el) && n.getAttribute('href')===el.getAttribute('href') && n.getAttribute('src')===el.getAttribute('src');
+   let matches=Array.from(doc.body.getElementsByTagName(el.tagName)).filter(same);
+   if(matches.length>1){const peers=Array.from(el.ownerDocument.body.getElementsByTagName(el.tagName)).filter(same),index=peers.indexOf(el);matches=index>=0 && peers.length===matches.length?[matches[index]!]:[];}
+   if(matches.length===1)matches[0]!.classList.add('vx-ai-selected');
+  };
+  const canvasHtml=(withSelection=false)=>{const doc=new DOMParser().parseFromString(c.exportEmail().html,'text/html'),first=doc.body.firstElementChild;if(first && /display:\s*none/.test(first.getAttribute('style') || ''))first.remove();if(withSelection){try{markSelection(doc);}catch{}}return doc.body.innerHTML.trim();};
   const addMessage=(role:string,text:string,failed=false)=>c.setState((state:any)=>({aiMessages:[...state.aiMessages,{id:crypto.randomUUID(),role,text,failed}]}));
   async function refreshHistory(){
     const data=await getResource(`/account/ai/chats/${c.state.aiChatId}`,true);if(disposed || owner!==aiIdentity())return;
@@ -49,7 +58,7 @@ export function installAiWriting(c:Controller,onChanged:()=>void){
     const before=fingerprint(),owner=aiIdentity(),section=c.state.aiMode==='section';
     if(operation==='subjects')c.setState({subjMenu:true,subjBusy:true,subjOpts:[]});
     else c.setState(operation==='draft'?{busy:true}:{rwBusy:mode});
-    const conversational=operation==='draft',html=conversational?canvasHtml():'';
+    const conversational=operation==='draft',html=conversational?canvasHtml(true):'';
     if(conversational && html.length>60000){c.setState({busy:false});return c.toast('This email is too large for the AI assistant. Remove unused sections or select a block to rewrite.');}
     const currentLinks=conversational?[...new Set(Array.from(new DOMParser().parseFromString(c.ed.getHtml(),'text/html').querySelectorAll('a[href]')).map(a=>a.getAttribute('href') || '').filter(value=>{try{const url=new URL(value);return ['http:','https:'].includes(url.protocol) && !url.username && !url.password;}catch{return false;}}))]:[];
     if(currentLinks.length>20){c.setState({busy:false});return c.toast('This email has too many links for conversational generation. Select a text block to rewrite.');}

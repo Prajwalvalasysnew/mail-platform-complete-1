@@ -240,6 +240,7 @@ export interface Database {
   ai_chats: AiChatsTable;
   ai_chat_messages: AiChatMessagesTable;
   ai_chat_checkpoints: AiChatCheckpointsTable;
+  ai_workspace_memory: AiWorkspaceMemoryTable;
   audience_collections:AudienceCollectionsTable;
   customer_campaigns:CustomerCampaignsTable;
   audience_collection_members:{customer_id:string;collection_id:string;contact_id:string};
@@ -1610,7 +1611,10 @@ export interface AiChatsTable {
 }
 export interface AiChatMessagesTable {
  id:string;customer_id:string;chat_id:string;run_id:string|null;seq:number;role:'user'|'assistant';text:Generated<string>;status:Generated<string>;
- result:unknown;error:string|null;template_id:string|null;workflow_id:Generated<string|null>;decision:'applied'|'skipped'|null;created_at:ColumnType<Date,Date|string|undefined,never>;
+ result:unknown;error:string|null;template_id:string|null;workflow_id:Generated<string|null>;decision:'applied'|'skipped'|null;plan_items:Generated<Record<string,unknown>>;created_at:ColumnType<Date,Date|string|undefined,never>;
+}
+export interface AiWorkspaceMemoryTable {
+ customer_id:string;memory:unknown;revision:Generated<number>;updated_by:string|null;updated_at:Generated<Date>;
 }
 export interface AiChatCheckpointsTable {
  id:string;customer_id:string;chat_id:string;through_seq:number;summary:string;run_id:string|null;attempt:number;created_at:ColumnType<Date,Date|string|undefined,never>;

@@ -1,21 +1,11 @@
 import type {FastifyPluginAsync} from 'fastify';
 import {sql} from 'kysely';
 import {z} from 'zod';
-import {recordAuditSafe,enrollAudienceWorkflows,kickWorkflowRun,type TenantExecutor} from '@platform/shared';
+import {recordAuditSafe,enrollAudienceWorkflows,kickWorkflowRun,audienceMembers,SegmentRule} from '@platform/shared';
 import {tenantScoped} from '../lib/tenant.js';
 
-const Rule=z.object({field:z.enum(['Created','Opened any email','Clicked any email']),op:z.enum(['in last','not in last']),val:z.enum(['7 days','30 days','60 days','90 days','120 days'])}).strict();
-const Input=z.object({kind:z.enum(['list','segment']),name:z.string().trim().min(1).max(200),rules:z.array(Rule).max(20).default([])}).strict().refine(value=>value.kind==='list'?value.rules.length===0:value.rules.length>0,'A segment needs at least one supported rule; lists have no rules.');
-export function audienceMembers(trx:TenantExecutor,cid:string,collection:any){
- let query=trx.selectFrom('audience_contacts as c').where('c.customer_id','=',cid);
- if(collection.kind==='list')query=query.where(eb=>eb.exists(eb.selectFrom('audience_collection_members as m').select('m.contact_id').whereRef('m.contact_id','=','c.id').where('m.customer_id','=',cid).where('m.collection_id','=',collection.id)));
- else for(const rule of z.array(Rule).parse(collection.rules)){
-   const days=Number(rule.val.split(' ')[0]),since=new Date(Date.now()-days*86400000);
-   if(rule.field==='Created')query=query.where('c.created_at',rule.op==='in last'?'>=':'<',since);
-   else query=query.where(sql<boolean>`${rule.op==='not in last'?sql`NOT`:sql``} EXISTS (SELECT 1 FROM messages m JOIN events e ON e.customer_id=m.customer_id AND e.message_id=m.message_id WHERE m.customer_id=${cid} AND m.to_address=c.email AND e.event_type=${rule.field==='Opened any email'?'opened':'clicked'} AND e.occurred_at>=${since})`);
- }
- return query;
-}
+const Input=z.object({kind:z.enum(['list','segment']),name:z.string().trim().min(1).max(200),rules:z.array(SegmentRule).max(20).default([])}).strict().refine(value=>value.kind==='list'?value.rules.length===0:value.rules.length>0,'A segment needs at least one supported rule; lists have no rules.');
+export {audienceMembers};
 export const customerAudienceRoutes:FastifyPluginAsync=async app=>{
  app.get('/audiences',async req=>tenantScoped(req,async trx=>{
    const rows=await trx.selectFrom('audience_collections').selectAll().where('customer_id','=',req.auth!.customer_id).orderBy('created_at','desc').limit(200).execute();

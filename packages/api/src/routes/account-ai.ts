@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { sql } from 'kysely';
-import { AiInput, AiRunError, aiContextCatalog, ChatTurn,createChatTurn,listAiChats,getAiChat,decideAiDraft,deleteAiChat, aiEnabledFor, createAiRun, getAiRun, cancelAiRun, enqueueAiRun, redis, withTenant } from '@platform/shared';
+import { AiInput, AiRunError, aiContextCatalog, ChatTurn,createChatTurn,listAiChats,getAiChat,decideAiDraft,decideAiPlanItem,deleteAiChat,getAiMemory,saveAiMemory, aiEnabledFor, createAiRun, getAiRun, cancelAiRun, enqueueAiRun, redis, withTenant } from '@platform/shared';
 import { requireCapability } from '../plugins/session-auth.js';
 
 const Request=z.object({request_id:z.string().uuid(),input:AiInput.refine(input=>!['route','compact','assist','editor','workflow'].includes(input.operation))}).strict();
@@ -11,6 +11,13 @@ const Id=z.string().uuid();
 export const accountAiRoutes:FastifyPluginAsync=async app=>{
   app.addHook('preHandler',requireCapability('send'));
   app.get('/context',async req=>aiContextCatalog(req.user!.current_customer_id!));
+  // Workspace memory shared by every AI surface (AI agent page > Memory).
+  app.get('/memory',async(_req,reply)=>{try{return await getAiMemory(_req.user!.current_customer_id!);}catch(error){return chatError(error,reply);}});
+  app.put('/memory',{bodyLimit:20000},async(req,reply)=>{
+    const body=z.object({memory:z.record(z.unknown())}).strict().safeParse(req.body);
+    if(!body.success)return reply.code(400).send({error:'invalid_ai_memory'});
+    try{return await saveAiMemory(req.user!.current_customer_id!,req.user!.user_id,body.data.memory);}catch(error){return chatError(error,reply);}
+  });
   app.get('/capabilities',async req=>({enabled:aiEnabledFor(req.user!.current_customer_id!),operations:['subjects','rewrite','draft','chat','assist','editor','workflow']}));
   const chatError=(error:unknown,reply:any)=>{
     if(error instanceof AiRunError)return reply.code(error.status).send({error:error.code,message:error.message});
@@ -34,9 +41,14 @@ export const accountAiRoutes:FastifyPluginAsync=async app=>{
     }catch(error){return chatError(error,reply);}finally{clearTimeout(timer);}
   });
   app.post('/chats/:id/messages/:mid/decision',async(req,reply)=>{
-    const ids=z.object({id:Id,mid:Id}).safeParse(req.params),body=z.object({decision:z.enum(['applied','skipped'])}).strict().safeParse(req.body);
+    const ids=z.object({id:Id,mid:Id}).safeParse(req.params),body=z.object({decision:z.enum(['applied','skipped']),item:z.string().max(64).optional(),confirm:z.boolean().optional(),timezone:z.string().max(100).optional()}).strict().safeParse(req.body);
     if(!ids.success || !body.success)return reply.code(400).send({error:'invalid_decision'});
-    try{return await decideAiDraft(req.user!.current_customer_id!,req.user!.user_id,ids.data.id,ids.data.mid,body.data.decision);}catch(error){return chatError(error,reply);}
+    const timezone=body.data.timezone && (()=>{try{new Intl.DateTimeFormat('en',{timeZone:body.data.timezone});return true;}catch{return false;}})()?body.data.timezone:'UTC';
+    try{
+     // Campaign plans are decided part by part; a single email or workflow draft has one decision.
+     if(body.data.item)return await decideAiPlanItem(req.user!.current_customer_id!,req.user!.user_id,ids.data.id,ids.data.mid,body.data.item,body.data.decision,{confirm:body.data.confirm,timezone});
+     return await decideAiDraft(req.user!.current_customer_id!,req.user!.user_id,ids.data.id,ids.data.mid,body.data.decision);
+    }catch(error){return chatError(error,reply);}
   });
   app.post('/generations',{bodyLimit:40000},async(req,reply)=>{
     const parsed=Request.safeParse(req.body);

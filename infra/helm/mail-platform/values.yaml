@@ -41,7 +41,7 @@ ai:
   # OpenAI-compatible /v1/chat/completions API with tool calling (Ollama does).
   contextTokens: 32768
   maxOutputTokens: 8192
-  agentTimeoutMs: 240000
+  agentTimeoutMs: 480000
   resources:
     requests:
       cpu: 250m

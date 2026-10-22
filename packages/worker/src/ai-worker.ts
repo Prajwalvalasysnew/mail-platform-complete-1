@@ -6,6 +6,8 @@ import { createHarnessRuntime } from './ai-harness.js';
 
 const config=aiConfig();
 if(!config.enabled)throw new Error('Set AI_ENABLED=true and trusted inference settings before starting the AI worker');
+// Agent turns need ~9k tokens of instructions and tool definitions before any conversation.
+if(config.contextTokens<16384)console.warn(`[ai-worker] AI_CONTEXT_TOKENS=${config.contextTokens} is too small for agent turns; use 32768 (the model must serve that context) or replies will be truncated.`);
 if(process.env.NODE_ENV==='production' && !await rlsIsEnforced())throw new Error('AI worker requires a non-bypass tenant database role and migration 105');
 // Conversational editor/assistant turns run on the DeepSeek Harness agent loop.
 setAgentRuntime(await createHarnessRuntime());

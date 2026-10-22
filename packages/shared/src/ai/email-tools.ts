@@ -2,30 +2,48 @@
  * Every call runs here, inside the platform: tenant authority, link policy and sanitization
  * are enforced on each edit, and each call is persisted as a fenced ai_run_steps row.
  */
-import {randomUUID} from 'node:crypto';
-import type {Selectable} from 'kysely';
+import {createHash,randomUUID} from 'node:crypto';
+import {sql,type Selectable} from 'kysely';
 import {z} from 'zod';
 import {withTenant,type TenantExecutor} from '../tenant-context.js';
 import type {AiRunsTable} from '../schema.js';
-import {EmailDocument,DocumentToolError,policyProblems,type LinkPolicy} from './email-html.js';
+import {EmailDocument,DocumentToolError,policyProblems,extractUserUrls,normalizeUrl,type LinkPolicy} from './email-html.js';
 import {READ_TOOLS,ReadCall} from './tool-contracts.js';
 import {WorkflowDocument,WORKFLOW_STEP_TYPES,type TemplateRef} from './workflow-draft.js';
 import {TRIGGERS,GOALS} from '../workflow-builder.js';
 import {readWorkspace} from './workspace-tools.js';
+import {CampaignPlan,DRAFT_TEMPLATE_PREFIX,MAX_CAMPAIGN_EMAILS,describeRules,segmentRules,composeEmail} from './campaign-plan.js';
+import {audienceCounts,SEGMENT_RULE_FIELDS,SEGMENT_RULE_OPS,SEGMENT_RULE_WINDOWS} from '../audiences.js';
+import type {EmailDesign} from './email-layout.js';
+import {forgetFacts,rememberFacts,memoryLinks,type WorkspaceMemory} from './memory.js';
+import {linkPolicy as userLinks} from './email-html.js';
 
 type Run=Selectable<AiRunsTable>;
 export type AgentMode='editor'|'workflow'|'assist';
+export type AgentArtifact='email'|'workflow'|'campaign';
 export type AgentWorkspace={
  row:Run;mode:AgentMode;doc:EmailDocument;workflow:WorkflowDocument;templates:TemplateRef[];policy:LinkPolicy;signal:AbortSignal;allowed:(trx:TenantExecutor)=>Promise<boolean>;
  changes:string[];reads:number;seen:Map<string,number>;seq:number;section:boolean;
- /** The one artifact (email or workflow) this turn edits; assistant turns pick it with their first edit. */
- artifact:'email'|'workflow'|null;
+ /** The artifact this turn edits; assistant turns pick it with their first edit. A campaign includes its workflow. */
+ artifact:AgentArtifact|null;
+ /** Assistant turns: the campaign being planned (audience + emails); its journey is `workflow`. */
+ campaign?:CampaignPlan;
+ /** Saved lists and segments the campaign may target instead of a new segment. */
+ audiences?:{id:string;name:string;kind:'list'|'segment';rules:unknown}[];
+ /** Workspace memory loaded for this turn, and the user's own words (the only source for new remembered links). */
+ memory?:WorkspaceMemory;userText?:string;
+ /** A campaign from this conversation is already live. */
+ campaignLive?:boolean;
+ /** Brand defaults for campaign emails (theme, footer). */
+ brand?:Partial<EmailDesign>;
  /** Ends the agent session when the model keeps calling tools past the budget; the turn then finishes with what was done. */
  stop?:()=>void;stopped?:boolean;
  lastToolError?:string;
+ /** Why the turn was stopped early, for an accurate reply. */
+ stopReason?:'budget'|'repeat_failure';
 };
 export type ToolOutcome={text:string;isError:boolean};
-type Tool={name:string;scope:'email'|'workflow'|'workspace';description:string;inputSchema:Record<string,unknown>;mutates:boolean;run:(ws:AgentWorkspace,args:any)=>Promise<string>|string};
+type Tool={name:string;scope:'email'|'workflow'|'workspace'|'campaign';description:string;inputSchema:Record<string,unknown>;mutates:boolean;run:(ws:AgentWorkspace,args:any)=>Promise<string>|string};
 
 const id={type:'string',description:'Element id from the data-ai attribute, e.g. "e12".'};
 const html=(what:string)=>({type:'string',description:`${what} Email-safe HTML: tables/divs/text with inline style attributes only. <style>, <script>, forms and event handlers are removed.`});
@@ -40,7 +58,7 @@ function guard(ws:AgentWorkspace,fragment:string){
  const problems=policyProblems(fragment,ws.policy);
  if(problems.length)throw new DocumentToolError(`Edit rejected, nothing was changed: ${problems.join('; ')}.`);
 }
-const confirmation=(ws:AgentWorkspace,summary:string)=>{ws.changes.push(summary);return `Done: ${summary}. The email is updated.`;};
+const confirmation=(ws:AgentWorkspace,summary:string)=>{ws.changes.push(summary);return `Done: ${summary}.`;};
 
 export const AGENT_TOOLS:Tool[]=[
  {name:'view_email',scope:'email',mutates:false,description:'Show the current email: subject, preheader and HTML with data-ai element ids (or an outline for very large emails). Call this before editing if you are unsure of the current state.',
@@ -75,6 +93,19 @@ export const AGENT_TOOLS:Tool[]=[
    if(a.preheader)ws.doc.preheader=String(a.preheader).replace(/[\r\n]+/g,' ').slice(0,200);
    return confirmation(ws,blank?'Created the email design':'Rebuilt the email design')+' Call view_email to see the new element ids.';
   }},
+ {name:'compose_email',scope:'email',mutates:true,description:'Create a complete, premium email from copy blocks in the platform\'s tested layout: centred 600px, hero headline, bulletproof button, unsubscribe footer, in the brand colour (design.accent) when known. PREFER this for any new email or full redesign, then refine with targeted edits. Blocks: heading (the first is the hero headline), paragraph, feature (highlighted point), quote, button (url from the user or workspace memory, otherwise "#"). Write 4-8 blocks of specific, benefit-led copy. Also sets the subject and preheader.',
+  inputSchema:{type:'object',properties:{subject:{type:'string',maxLength:80},preheader:{type:'string',maxLength:150},
+   design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300},accent:{type:'string',description:'Brand colour as #rrggbb.'}}},
+   blocks:{type:'array',minItems:2,maxItems:14,items:{type:'object',properties:{type:{type:'string',enum:['heading','paragraph','feature','quote','button']},text:{type:'string'},url:{type:'string'}},required:['type','text']}},
+   full_rewrite_reason:{type:'string',description:'Required when the email already has content: quote the user asking for a new email or full redesign.'}},required:['subject','blocks'],additionalProperties:false},
+  run:(ws,a)=>{
+   if(ws.section)throw new DocumentToolError('The user is adding a section; use insert_html so the existing email is preserved.');
+   if(!ws.doc.isBlank() && !String(a.full_rewrite_reason || '').trim())throw new DocumentToolError('The email already has content. Make targeted edits with update_element/insert_html/replace_element/remove_element. If the user explicitly asked for a brand-new email or full redesign, call compose_email again with full_rewrite_reason.');
+   const blank=ws.doc.isBlank(),email=composeEmail(a,ws.policy,ws.brand);
+   ws.doc.write(email.html);ws.doc.subject=email.subject;ws.doc.preheader=email.preheader;
+   const button=email.blocks.find(b=>b.type==='button');
+   return confirmation(ws,`${blank?'Created':'Redesigned'} the email “${email.subject}”${email.design.accent?` in ${email.design.accent}`:''}`)+`${button && button.url==='#'?' Its button has no link yet; ask the user for the URL.':''} Call view_email to see element ids for further edits.`;
+  }},
  {name:'set_subject',scope:'email',mutates:true,description:'Set the email subject line and/or preheader (inbox preview text).',
   inputSchema:{type:'object',properties:{subject:{type:'string',maxLength:120},preheader:{type:'string',maxLength:200}},additionalProperties:false},
   run:(ws,a)=>{
@@ -87,12 +118,37 @@ export const AGENT_TOOLS:Tool[]=[
   inputSchema:{type:'object',properties:{tool:{type:'string',enum:[...READ_TOOLS]},id:{type:['string','null'],description:'Record id for read_* tools.'},query:{type:'string',description:'Literal name or phrase filter for list_*/search_history.'},days:{type:'integer',enum:[7,30]}},required:['tool'],additionalProperties:false},
   run:async(ws,a)=>{
    if(ws.reads>=8)throw new DocumentToolError('Workspace read limit reached for this turn. Answer with the evidence you have.');
-   const call=ReadCall.parse({tool:a.tool,id:a.id ?? null,query:a.query ?? '',days:a.days ?? 7});ws.reads++;
+   const call=ReadCall.parse({tool:a.tool,id:a.id || null,query:a.query ?? '',days:a.days ?? 7});ws.reads++;
    try{return JSON.stringify(await readWorkspace(ws.row,call,AbortSignal.any([ws.signal,AbortSignal.timeout(4000)]),ws.allowed)).slice(0,8000);}
    catch{ws.signal.throwIfAborted();throw new DocumentToolError('This workspace read is unavailable for your role or timed out.');}
   }},
 
  ...workflowTools(),
+ ...campaignTools(),
+ {name:'remember',scope:'workspace',mutates:true,description:'Save durable facts the user stated about their workspace or preferences so no AI surface asks again: website, brand colour, logo URL, sign-off, footer address, tone or rules. Prefix each fact with its topic ("Website: https://valasys.com"); a new fact replaces an older one on the same topic. Only facts the user said, never guesses or contact data.',
+  inputSchema:{type:'object',properties:{facts:{type:'array',minItems:1,maxItems:5,items:{type:'object',properties:{fact:{type:'string',maxLength:300},topic:{type:'string',description:'Short topic, e.g. "Website", "Brand colour".'}},required:['fact']}}},required:['facts'],additionalProperties:false},
+  run:async(ws,a)=>{
+   const facts:{fact:string;topic:string}[]=(Array.isArray(a.facts)?a.facts:[a.facts]).map((f:any)=>typeof f==='string'?{fact:f}:f).filter((f:any)=>f && typeof f.fact==='string' && f.fact.trim()).slice(0,5)
+    .map((f:any)=>{const fact=f.fact.replace(/\s+/g,' ').trim().slice(0,300),topic=String(f.topic || fact.split(':')[0] || '').trim().slice(0,40);return {fact:topic && !fact.toLowerCase().startsWith(`${topic.toLowerCase()}:`)?`${topic}: ${fact}`.slice(0,300):fact,topic};});
+   if(!facts.length)throw new DocumentToolError('Provide facts as [{fact:"Website: https://example.com"}].');
+   // Links and addresses may come only from the user's own messages or existing memory, never from workspace content.
+   const own=userLinks(ws.userText || '',''),known:{urls:string[];emails:string[]}=ws.memory?memoryLinks(ws.memory):{urls:[],emails:[]};
+   for(const {fact} of facts){
+    const unknownLink=extractUserUrls(fact).map(u=>normalizeUrl(u)).find(u=>!u || !own.allowed.has(u) && !known.urls.includes(u));
+    const unknownEmail=[...fact.matchAll(/([\w.+-]+@[\w-]+\.[\w.-]+)/g)].map(m=>`mailto:${m[1]!.toLowerCase()}`).find(e=>!own.allowed.has(e) && !known.emails.includes(e));
+    if(unknownLink!==undefined || unknownEmail)throw new DocumentToolError(`Not saved: ${unknownEmail?unknownEmail.slice(7):unknownLink || 'that link'} was not typed by the user. Remember only links and addresses the user gave.`);
+   }
+   const saved=await withTenant(ws.row.customer_id,async trx=>{if(!await ws.allowed(trx))throw new Error('read_unavailable');return rememberFacts(trx,ws.row.customer_id,ws.row.user_id,facts);});
+   ws.memory=saved.memory;
+   return `Remembered: ${facts.map(f=>f.fact).join('; ')}. Every Valasys AI surface will use this from now on.`;
+  }},
+ {name:'forget',scope:'workspace',mutates:true,description:'Remove remembered facts that contain the given text (e.g. "Brand colour").',
+  inputSchema:{type:'object',properties:{match:{type:'string',minLength:2}},required:['match'],additionalProperties:false},
+  run:async(ws,a)=>{
+   const match=String(a.match || '').trim();if(match.length<2)throw new DocumentToolError('Say which fact to forget, e.g. "Brand colour".');
+   const removed=await withTenant(ws.row.customer_id,async trx=>{if(!await ws.allowed(trx))throw new Error('read_unavailable');return forgetFacts(trx,ws.row.customer_id,ws.row.user_id,match);});
+   return removed?`Forgot ${removed} remembered fact${removed>1?'s':''} matching “${match}”.`:`Nothing remembered matches “${match}”.`;
+  }},
 ];
 
 function stepSchema(depth:number):Record<string,unknown>{
@@ -130,9 +186,54 @@ function workflowTools():Tool[]{return [
   run:(ws,a)=>{const done=ws.workflow.settings(a);if(!done.length)throw new DocumentToolError('Provide name, goal or reentry.');return confirmation(ws,`Set ${done.join(', ')}`);}},
 ];}
 
+const plan=(ws:AgentWorkspace)=>{if(!ws.campaign)throw new DocumentToolError('Campaign tools are only available in the Valasys AI chat.');return ws.campaign;};
+const n=(value:number)=>value.toLocaleString('en-US');
+/** Keep workflow email steps able to reference unsaved campaign emails as draft:<key>. */
+function syncDraftTemplates(ws:AgentWorkspace){
+ for(let i=ws.templates.length-1;i>=0;i--)if(ws.templates[i]!.id.startsWith(DRAFT_TEMPLATE_PREFIX))ws.templates.splice(i,1);
+ for(const e of ws.campaign?.emails || [])ws.templates.push({id:DRAFT_TEMPLATE_PREFIX+e.key,name:e.name,subject:e.subject});
+}
+export function seedCampaignTemplates(ws:AgentWorkspace){syncDraftTemplates(ws);}
+function campaignTools():Tool[]{return [
+ {name:'view_campaign',scope:'campaign',mutates:false,description:'Show the campaign being planned: its audience (with live contact counts) and every campaign email with its key and content blocks.',
+  inputSchema:{type:'object',properties:{},additionalProperties:false},run:ws=>plan(ws).view()+(ws.workflow.isBlank()?'\nWorkflow: not built yet.':`\n\n${ws.workflow.view()}`)},
+ {name:'define_audience',scope:'campaign',mutates:true,description:`Choose who the campaign targets: either an existing list or segment (audience_id from the request) or a new segment built from rules. Returns how many contacts match and how many can receive marketing email. Rule fields: ${SEGMENT_RULE_FIELDS.join(', ')}; ops: ${SEGMENT_RULE_OPS.join(', ')}; windows: ${SEGMENT_RULE_WINDOWS.join(', ')}. Example for inactive customers: {name:"Inactive 30 days",rules:[{field:"Opened any email",op:"not in last",val:"30 days"},{field:"Clicked any email",op:"not in last",val:"30 days"}]}.`,
+  inputSchema:{type:'object',properties:{name:{type:'string',description:'Segment name, e.g. "Inactive 30 days".'},rules:{type:'array',items:{type:'object',properties:{field:{type:'string',enum:[...SEGMENT_RULE_FIELDS]},op:{type:'string',enum:[...SEGMENT_RULE_OPS]},val:{type:'string',enum:[...SEGMENT_RULE_WINDOWS]}},required:['field','op','val']}},audience_id:{type:'string',description:'Use this saved list or segment instead of creating a new segment.'}},additionalProperties:false},
+  run:async(ws,a)=>{
+   const p=plan(ws);let target:{id?:string;kind:'list'|'segment';rules:unknown;name:string;audience_id:string|null};
+   if(a.audience_id){
+    const found=(ws.audiences || []).find(x=>x.id===String(a.audience_id));
+    if(!found)throw new DocumentToolError(`Audience ${a.audience_id} does not exist. Saved audiences: ${(ws.audiences || []).map(x=>`${x.id} (${x.kind} “${x.name}”)`).join(', ') || 'none'}. Or define a new segment with rules.`);
+    target={id:found.id,kind:found.kind,rules:found.kind==='segment'?segmentRules(found.rules):[],name:found.name,audience_id:found.id};
+   }else{
+    const name=String(a.name || '').replace(/\s+/g,' ').trim().slice(0,200);
+    if(!name)throw new DocumentToolError('Give the new segment a name, or pass audience_id to use a saved audience.');
+    target={kind:'segment',rules:segmentRules(a.rules),name,audience_id:null};
+   }
+   const counts=await withTenant(ws.row.customer_id,async trx=>{await sql`set local statement_timeout='5000ms'`.execute(trx);if(!await ws.allowed(trx))throw new Error('read_unavailable');return audienceCounts(trx,ws.row.customer_id,target);});
+   p.setSegment({name:target.name,kind:target.kind,rules:target.rules as any,audience_id:target.audience_id,matching:counts.matching,sendable:counts.sendable});
+   const summary=`${target.audience_id?'Targeted the saved':'Defined the'} ${target.kind} “${target.name}”${target.kind==='segment'?` (${describeRules(target.rules as any)})`:''}: ${n(counts.matching)} contact${counts.matching===1?'':'s'} match, ${n(counts.sendable)} can receive marketing email`;
+   return confirmation(ws,summary)+(counts.sendable?'':' Nobody in it can receive marketing email yet; tell the user (contacts need to be subscribed with confirmed consent).');
+  }},
+ {name:'draft_campaign_email',scope:'campaign',mutates:true,description:`Write (or replace, by key) one campaign email. It is rendered in the brand's email layout with an unsubscribe footer; you supply copy as blocks: heading (first one is the hero headline), paragraph, feature (highlighted point), quote, button (url from the user, or "#" when they gave none). Write 3-7 blocks of specific, benefit-led copy in the user's brand voice; never invent statistics, prices, offers or testimonials. Merge tags such as {{first_name}} are allowed. Up to ${MAX_CAMPAIGN_EMAILS} emails per campaign. Reference it in workflow email steps as template "${DRAFT_TEMPLATE_PREFIX}<key>".`,
+  inputSchema:{type:'object',properties:{key:{type:'string',description:'Short id such as "winback-1".'},name:{type:'string',description:'Internal name, e.g. "Win-back 1: we miss you".'},subject:{type:'string',maxLength:80},preheader:{type:'string',maxLength:150},
+   design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300},accent:{type:'string',description:'Brand colour as #rrggbb (from the user or workspace memory); overrides the theme.'}}},
+   blocks:{type:'array',minItems:2,maxItems:14,items:{type:'object',properties:{type:{type:'string',enum:['heading','paragraph','feature','quote','button']},text:{type:'string'},url:{type:'string'}},required:['type','text']}}},required:['key','subject','blocks'],additionalProperties:false},
+  run:(ws,a)=>{const {email,replaced}=plan(ws).upsertEmail(a,ws.policy,ws.brand);syncDraftTemplates(ws);
+   const button=email.blocks.find(b=>b.type==='button');
+   return confirmation(ws,`${replaced?'Rewrote':'Wrote'} the email “${email.name}” (subject “${email.subject}”)`)+` Reference it as template "${DRAFT_TEMPLATE_PREFIX}${email.key}".${button && button.url==='#'?' Its button has no link yet; ask the user for the URL.':''}`;}},
+ {name:'remove_campaign_email',scope:'campaign',mutates:true,description:'Remove one campaign email by key. Workflow steps that send it are left without a template.',
+  inputSchema:{type:'object',properties:{key:{type:'string'}},required:['key'],additionalProperties:false},
+  run:(ws,a)=>{const removed=plan(ws).removeEmail(String(a.key));syncDraftTemplates(ws);return confirmation(ws,`Removed the email “${removed.name}”`);}},
+];}
+
 /** The tools a turn may see: editors get their own artifact, the assistant gets everything. */
 export function toolsFor(ws:Pick<AgentWorkspace,'mode'>){
  return AGENT_TOOLS.filter(t=>t.scope==='workspace' || ws.mode==='assist' || (ws.mode==='editor'?t.scope==='email':t.scope==='workflow'));
+}
+/** A campaign turn may also build its workflow; any other pair of artifacts is two drafts. */
+function compatible(current:AgentArtifact,next:AgentArtifact){
+ return current===next || (current==='campaign' && next==='workflow') || (current==='workflow' && next==='campaign');
 }
 
 const bounded=(value:unknown)=>JSON.parse(JSON.stringify(value ?? {},(_k,v)=>typeof v==='string' && v.length>1500?v.slice(0,1500)+'…':v));
@@ -144,24 +245,46 @@ async function record(ws:AgentWorkspace,name:string,args:unknown,observation:unk
  });
 }
 
+/** Models often send nested arguments as JSON strings ("steps":"[...]") or numbers as strings;
+ * coerce those to the schema's types so a well-meant call is not rejected. */
+export function coerceToolArgs(schema:any,raw:unknown):unknown{
+ let value=raw;
+ if(typeof value==='string'){const t=value.trim();if(/^[[{]/.test(t)){try{value=JSON.parse(t);}catch{return raw;}}else return raw;}
+ const types=[].concat(schema?.type ?? []) as string[];
+ if(types.includes('number') || types.includes('integer')){if(typeof value==='string' && value.trim() && Number.isFinite(Number(value)))return Number(value);return value;}
+ if(Array.isArray(value))return schema?.items?value.map(v=>coerceToolArgs(schema.items,v)):value;
+ if(value && typeof value==='object' && schema?.properties){
+  const out:Record<string,unknown>={...value as Record<string,unknown>};
+  for(const [key,sub] of Object.entries(schema.properties))if(key in out)out[key]=coerceToolArgs(sub,out[key]);
+  return out;
+ }
+ return value;
+}
+
 /** Execute one model tool call. Tool errors go back to the model so it can correct itself. */
 export async function runAgentTool(ws:AgentWorkspace,name:string,args:unknown):Promise<ToolOutcome>{
  ws.signal.throwIfAborted();
- const tool=toolsFor(ws).find(t=>t.name===name);
- if(!tool)return {text:`Unknown tool ${name}.`,isError:true};
+ // Harness clients prefix MCP tool names with the server name ("valasys__add_steps").
+ const tool=toolsFor(ws).find(t=>t.name===name || name.endsWith(`__${t.name}`));
+ if(!tool)return {text:`Unknown tool ${name}. Available tools: ${toolsFor(ws).map(t=>t.name).join(', ')}.`,isError:true};
+ args=coerceToolArgs(tool.inputSchema,args);
  if(tool.mutates && tool.scope!=='workspace'){
-  if(ws.artifact && ws.artifact!==tool.scope)return {text:`This turn is already editing the ${ws.artifact}. Make one draft per turn; offer the ${tool.scope} as a next step.`,isError:true};
+  const next=tool.scope as AgentArtifact;
+  if(ws.artifact && !compatible(ws.artifact,next))return {text:ws.artifact==='campaign' || next==='campaign'?'This turn is building a campaign: write its emails with draft_campaign_email (not the single-email tools).':`This turn is already editing the ${ws.artifact}. Make one draft per turn; offer the ${tool.scope} as a next step.`,isError:true};
  }
- const key=name+JSON.stringify(args ?? {}),count=(ws.seen.get(key) || 0)+1;ws.seen.set(key,count);
+ // Identical calls against an unchanged draft are blocked; re-reading after an edit is allowed, and failed calls can be retried.
+ const state=createHash('sha1').update(ws.doc.html()).update('\u0000').update(ws.workflow.snapshot()).update('\u0000').update(ws.campaign?.snapshot() || '').digest('hex');
+ const key=name+JSON.stringify(args ?? {})+state,count=(ws.seen.get(key) || 0)+1;
  if(tool.mutates && count>1 || count>2){await record(ws,name,args,{error:'repeat_call_blocked'},'blocked');return {text:'You already made this exact call and its result is above. Do something different, or reply to the user.',isError:true};}
  if(ws.seq>=40){
   const over=(ws.seen.get('\u0000budget') || 0)+1;ws.seen.set('\u0000budget',over);
-  if(over>=3){ws.stopped=true;ws.stop?.();}
+  if(over>=3){ws.stopReason='budget';ws.stopped=true;ws.stop?.();}
   return {text:'Tool budget for this turn is exhausted. Reply to the user now with what you have done.',isError:true};
  }
  try{
   const text=await tool.run(ws,args && typeof args==='object'?args:{});
-  if(tool.mutates && tool.scope!=='workspace')ws.artifact=tool.scope;
+  ws.seen.set(key,count);ws.lastToolError=undefined;
+  if(tool.mutates && tool.scope!=='workspace')ws.artifact=ws.artifact==='campaign' || tool.scope==='campaign'?'campaign':tool.scope as AgentArtifact;
   // The edit is already applied: a failed audit write must not tell the model it failed (it would redo it).
   try{await record(ws,name,args,tool.mutates?{result:text}:{chars:text.length},'completed');}
   catch(error){if(error instanceof Error && error.message==='Stale tool call')throw error;ws.signal.throwIfAborted();console.warn('[valasys-ai] tool step not recorded',{tool:name});}
@@ -173,7 +296,7 @@ export async function runAgentTool(ws:AgentWorkspace,name:string,args:unknown):P
   await record(ws,name,args,{error:message},'failed');
   ws.lastToolError=message;
   const failureKey='\u0000failure:'+name+':'+message,count=(ws.seen.get(failureKey) || 0)+1;ws.seen.set(failureKey,count);
-  if(count>=4){ws.stopped=true;ws.stop?.();}
+  if(count>=4){ws.stopReason='repeat_failure';ws.stopped=true;ws.stop?.();}
   return {text:message,isError:true};
  }
 }

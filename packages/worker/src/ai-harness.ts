@@ -13,6 +13,10 @@ import {DeepSeekHarness,type RunResult} from '@deepseek-ai/dsh-sdk-client';
 import {aiConfig,AiProviderUnavailableError,type AgentRuntime} from '@platform/shared';
 
 const PROFILE='valasys-agent';
+/** Model families that accept reasoning_effort; other models must not be sent the parameter. */
+export const REASONING_MODEL=/gpt-oss|deepseek-r1|qwen3|magistral|o\d-|reason|think/i;
+/** AI_THINK maps onto the model's effort levels; gpt-oss cannot switch reasoning off, so "off" is low. */
+export function reasoningEffort(think:boolean|string){return think===false?'low':think===true?'medium':String(think);}
 const profileSource=join(dirname(fileURLToPath(import.meta.url)),'..','harness');
 
 async function harnessBin(){
@@ -31,10 +35,11 @@ function usage(result:RunResult){
  }
  return {input,output};
 }
+const turnEnd=(result:RunResult)=>[...(result.events as any[])].reverse().find(event=>event?.type==='turn/end')?.data?.reason;
 /** A turn that ended in error (provider failure, configuration error). Only the error code is logged. */
 function turnError(result:RunResult){
- const end=[...(result.events as any[])].reverse().find(event=>event?.type==='turn/end');
- return end?.data?.reason?.kind==='error'?String(end.data.reason.error?.code || 'UNKNOWN'):null;
+ const end=turnEnd(result);
+ return end?.kind==='error'?String(end.error?.code || 'UNKNOWN'):null;
 }
 
 const HOME_PREFIX='valasys-agent-';
@@ -54,17 +59,17 @@ export async function createHarnessRuntime():Promise<AgentRuntime>{
  const dshBin=await harnessBin();
  await sweepStaleHomes();
  return {open:async({systemPrompt,toolUrl,token,signal})=>{
-  const c=aiConfig();
+  const c=aiConfig(),reasoning=REASONING_MODEL.test(c.model);
   const home=await mkdtemp(join(tmpdir(),HOME_PREFIX)),work=join(home,'work'),profile=join(home,'profiles',PROFILE);
   let harness:DeepSeekHarness;
   try{
   await mkdir(work,{recursive:true});await mkdir(profile,{recursive:true});
   for(const file of ['package.json','cordis.yml','cordis.patch.yml'])await copyFile(join(profileSource,file),join(profile,file));
   harness=new DeepSeekHarness({
-   dshBin,profile:PROFILE,dshHome:home,processCwd:work,cwd:work,provider:'valasys',model:c.model,maxTokens:c.maxOutputTokens,initializeTimeoutMs:30000,
+   dshBin,profile:PROFILE,dshHome:home,processCwd:work,cwd:work,provider:'valasys',model:c.model,maxTokens:c.maxOutputTokens,initializeTimeoutMs:30000,...(reasoning?{reasoningEffort:reasoningEffort(c.think) as any}:{}),
    env:{PATH:process.env.PATH || '/usr/local/bin:/usr/bin:/bin',HOME:home,TMPDIR:home,NODE_ENV:'production',DSH_HOME:home,
     VALASYS_SYSTEM_PROMPT:systemPrompt,VALASYS_LLM_BASE_URL:`${c.baseUrl}/v1`,VALASYS_LLM_KEY:c.token || 'not-required',VALASYS_LLM_MODEL:c.model,
-    VALASYS_LLM_CONTEXT:String(c.contextTokens),VALASYS_LLM_MAX_TOKENS:String(c.maxOutputTokens),VALASYS_MCP_URL:toolUrl,VALASYS_MCP_TOKEN:token,
+    VALASYS_LLM_CONTEXT:String(c.contextTokens),VALASYS_LLM_MAX_TOKENS:String(c.maxOutputTokens),VALASYS_LLM_REASONING:reasoning?'1':'0',VALASYS_MCP_URL:toolUrl,VALASYS_MCP_TOKEN:token,
     ...(process.env.HTTPS_PROXY?{HTTPS_PROXY:process.env.HTTPS_PROXY,NO_PROXY:'127.0.0.1,localhost'}:{})},
   });
   }catch(error){await rm(home,{recursive:true,force:true});throw error;}
@@ -83,7 +88,8 @@ export async function createHarnessRuntime():Promise<AgentRuntime>{
     const error=turnError(result);
     if(error){console.warn('[valasys-ai] harness turn failed',{code:error});throw new AiProviderUnavailableError();}
     const {input,output}=usage(result);
-    return {text:result.finalResponse,promptTokens:input,outputTokens:output};
+    // A reply cut off at the output cap ends the turn before its tool calls run.
+    return {text:result.finalResponse,promptTokens:input,outputTokens:output,truncated:turnEnd(result)?.kind==='max-tokens'};
    },
    close:async()=>{
     if(closed)return;closed=true;signal.removeEventListener('abort',stop);

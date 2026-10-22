@@ -95,11 +95,14 @@ export async function executeAiRun(customerId:string,id:string,shutdown:AbortSig
     if(!await aiActorAllowed(trx,candidate)){
       await trx.updateTable('ai_runs').set({status:'failed',input:null,error:'Workspace access changed. Start a new request after signing in.',updated_at:new Date()}).where('id','=',id).where('customer_id','=',customerId).execute();return null;
     }
-    return trx.updateTable('ai_runs').set({status:'running',attempt:candidate.attempt+1,lease_until:new Date(Date.now()+15000),updated_at:new Date()})
+    // Agent turns get their whole budget from when they start: time spent queued behind other runs does not count.
+    const agent=AGENT_OPERATIONS.includes(String((candidate.input as any)?.operation));
+    return trx.updateTable('ai_runs').set({status:'running',attempt:candidate.attempt+1,lease_until:new Date(Date.now()+15000),updated_at:new Date(),...(agent?{deadline:new Date(Date.now()+c.agentTimeoutMs+30000)}:{})})
       .where('customer_id','=',customerId).where('id','=',id).returningAll().executeTakeFirstOrThrow();
   });
   if(!row)return;
-  const controller=new AbortController(),signal=AbortSignal.any([controller.signal,shutdown,AbortSignal.timeout(Math.max(1,row.deadline.getTime()-Date.now()))]);
+  const controller=new AbortController(),expiry=new AbortController(),signal=AbortSignal.any([controller.signal,shutdown,expiry.signal]);
+  let expiryTimer=setTimeout(()=>expiry.abort(new DOMException('The run deadline passed','TimeoutError')),Math.max(1,row.deadline.getTime()-Date.now()));
   let checking=false;
   const timer=setInterval(()=>{
     if(checking)return;checking=true;
@@ -117,7 +120,14 @@ export async function executeAiRun(customerId:string,id:string,shutdown:AbortSig
     const allowed=async(trx:TenantExecutor)=>await aiActorAllowed(trx,row);
     // The canvas HTML is agent tool state, not conversation history; keep it out of compaction budgets.
     const detached=detachEditorHtml(input);
+    const compactionStart=Date.now();
     let context=row.chat_id?await prepareChatContext(row,detached.input,signal,allowed):null;
+    // Long-history compaction must not consume the agent's own time budget.
+    if(AGENT_OPERATIONS.includes(input.operation) && Date.now()-compactionStart>10000){
+      const deadline=new Date(Date.now()+c.agentTimeoutMs+30000);
+      const extended=await withTenant(customerId,trx=>trx.updateTable('ai_runs').set({deadline}).where('customer_id','=',customerId).where('id','=',id).where('attempt','=',row.attempt).where('status','=','running').where('deadline','>',new Date()).executeTakeFirst());
+      if(Number(extended.numUpdatedRows)){row.deadline=deadline;clearTimeout(expiryTimer);expiryTimer=setTimeout(()=>expiry.abort(new DOMException('The run deadline passed','TimeoutError')),deadline.getTime()-Date.now());}
+    }
     let generated:{result:AiOutput;promptTokens:number|null;outputTokens:number|null};
     if(AGENT_OPERATIONS.includes(input.operation) && context && !context.manual){
       const history=JSON.parse(context.input.content || '{}');
@@ -141,12 +151,16 @@ export async function executeAiRun(customerId:string,id:string,shutdown:AbortSig
     signal.throwIfAborted();
     const output:AiOutput=generated.result;
     const subject=output.operation==='draft'?output.subject:output.operation==='subjects'?output.subjects.join('\n'):input.subject;
-    const text=output.operation==='compact'?output.summary:(output.operation==='rewrite'||output.operation==='chat')?output.text:output.operation==='draft'?output.text:output.operation==='workflow'?output.message:'';
+    const text=output.operation==='compact'?output.summary:(output.operation==='rewrite'||output.operation==='chat')?output.text:output.operation==='draft'?output.text:output.operation==='workflow' || output.operation==='campaign'?output.message:'';
     const html=output.operation==='draft'?output.html:'';
-    const scan=scanContent(subject,html,text),classification=await classify(subject,html,text);
+    // Every email that could be sent is screened: the single draft, or each campaign email.
+    const screened=output.operation==='campaign'?output.emails.map(e=>({subject:e.subject,html:e.html,text:e.text})):[{subject,html,text}];
     const warnings:string[]=[];
-    if(scan.score>=30 || classification.combined_score>=30)warnings.push('Review this copy for spam signals before sending.');
-    if(classification.flagged_domains.length)throw new AiUserFacingError('This draft links to a domain that is blocked for sending, so it was not applied. Use a different link.','blocked_link_domain');
+    for(const email of screened){
+      const scan=scanContent(email.subject,email.html,email.text),classification=await classify(email.subject,email.html,email.text);
+      if((scan.score>=30 || classification.combined_score>=30) && !warnings.length)warnings.push('Review this copy for spam signals before sending.');
+      if(classification.flagged_domains.length)throw new AiUserFacingError('This draft links to a domain that is blocked for sending, so it was not applied. Use a different link.','blocked_link_domain');
+    }
     await withTenant(customerId,async trx=>{
       if(signal.aborted || !await aiActorAllowed(trx,row))throw new Error('Access changed');
       const committed=await trx.updateTable('ai_runs').set({status:'completed',input:null,result:output,warnings:sql<unknown>`${JSON.stringify(warnings)}::jsonb`,prompt_tokens:generated.promptTokens,output_tokens:generated.outputTokens,lease_until:null,updated_at:new Date()})
@@ -158,7 +172,7 @@ export async function executeAiRun(customerId:string,id:string,shutdown:AbortSig
     if(!restarting)console.warn('[valasys-ai] run failed',{run_id:row.id,kind:error instanceof AgentRuntimeUnavailableError?'agent_runtime_unavailable':error instanceof AiProviderUnavailableError?'provider_unavailable':error instanceof AiContextOverflowError?'context_overflow':error instanceof AiOutputValidationError?error.code:signal.aborted?'cancelled_or_deadline':'execution_error'});
     await withTenant(customerId,trx=>trx.updateTable('ai_runs').set({status:restarting?'queued':new Date()>=row.deadline?'timed_out':'failed',input:restarting?row.input:null,result:null,lease_until:null,error:restarting?null:failureMessage(error,new Date()>=row.deadline),updated_at:new Date()})
       .where('customer_id','=',customerId).where('id','=',id).where('attempt','=',row.attempt).where('status','=','running').execute());
-  } finally {clearInterval(timer);}
+  } finally {clearInterval(timer);clearTimeout(expiryTimer);}
 }
 
 /** What the user sees when a run fails: specific and actionable where possible. */
