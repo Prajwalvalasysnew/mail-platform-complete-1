@@ -106,6 +106,8 @@ export function policyProblems(html:string,policy:LinkPolicy):string[]{
 
 const squash=(s:string,max:number)=>{const t=s.replace(/\s+/g,' ').trim();return t.length>max?t.slice(0,max-1)+'…':t;};
 
+/** Class the template editor adds to the user's selected block in the HTML it sends (never saved). */
+export const SELECTED_CLASS='vx-ai-selected';
 /** Mutable working copy; every element carries a data-ai ID the model can target. */
 export class EmailDocument{
  private $:CheerioAPI;private next=1;
@@ -113,7 +115,13 @@ export class EmailDocument{
  constructor(html:string,subject='',preheader=''){
   this.$=load(sanitizeEmailHtml(html || ''),null,false);this.subject=subject;this.preheader=preheader;
   this.$('[data-ai]').removeAttr('data-ai');this.tag(this.$.root());
+  // The editor marks the block the user selected; remember its id and strip the marker.
+  const marked=this.$(`.${SELECTED_CLASS}`);
+  if(marked.length===1)this.selected=marked.attr('data-ai');
+  marked.each((_,el)=>{const $el=this.$(el),rest=($el.attr('class') || '').split(/\s+/).filter(c=>c && c!==SELECTED_CLASS).join(' ');if(rest)$el.attr('class',rest);else $el.removeAttr('class');});
  }
+ /** data-ai id of the element the user selected in the editor, if any. */
+ selected?:string;
  private tag(scope:ReturnType<CheerioAPI>){
   const $=this.$;
   scope.find('*').addBack('*').each((_,el)=>{if(el.type==='tag' && !$(el).attr('data-ai'))$(el).attr('data-ai',`e${this.next++}`);});

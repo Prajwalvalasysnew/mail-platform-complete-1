@@ -14,8 +14,15 @@ export function prepareAgent(base:DesignState){
  const emptyMem=()=>({ind:'',about:'',voice:'',audience:'',rules:'',learned:[]});
  c.state={...c.state,contextGroups:[],chats:[],activity:[],routines:[],skills:[],mem:emptyMem()};
  const alive=()=>!disposed && owner===aiIdentity();
+ // Memory is shared by the workspace and every AI surface; edits here save automatically.
+ let savedMemory='',memoryTimer:ReturnType<typeof setTimeout>|undefined,memoryLoaded=false;
+ const loadMemory=async()=>{const data=await getResource('/account/ai/memory',true);if(!alive())return;savedMemory=JSON.stringify(data.memory);memoryLoaded=true;c.setState({mem:{...emptyMem(),...data.memory}});};
+ const saveMemory=()=>{
+  if(!memoryLoaded || !alive())return;const next=JSON.stringify(c.state.mem);if(next===savedMemory)return;
+  clearTimeout(memoryTimer);memoryTimer=setTimeout(()=>void performAction('/account/ai/memory',{memory:c.state.mem},'PUT').then((r:any)=>{savedMemory=JSON.stringify(r.memory);}).catch(error=>{if(alive())c.toast(errorMessage(error));}),800);
+ };
  const url=(id:string)=>{const u=new URL(location.href);u.searchParams.set('chat',id);u.searchParams.delete('q');history.replaceState({},'',u);};
- const step=(s:any)=>({label:({read_plan:'Planning workspace reads',context_evidence:'Prepared workspace evidence',workspace_overview:'Read workspace overview',list_campaigns:'Read campaigns',read_campaign:'Read campaign details',list_templates:'Read templates',read_template:'Read template content',list_workflows:'Read workflows',read_workflow:'Read workflow details',read_audience:'Read audience details',list_audiences:'Read audiences',delivery_summary:'Read delivery totals',domain_status:'Read domain verification',search_history:'Searched earlier chats',read_history:'Read an earlier message',read_workspace:'Read workspace data',view_email:'Reviewed the email',read_element:'Inspected an email section',write_email:'Designed the email',update_element:'Edited the email',insert_html:'Added to the email',replace_element:'Rewrote an email section',remove_element:'Removed an email section',set_subject:'Set subject and preview text',view_workflow:'Reviewed the workflow',build_workflow:'Built the workflow',add_steps:'Added workflow steps',update_step:'Edited a workflow step',remove_step:'Removed a workflow step',set_trigger:'Set the workflow trigger',update_workflow_settings:'Updated workflow settings',view_campaign:'Reviewed the campaign',define_audience:'Built the audience',draft_campaign_email:'Wrote a campaign email',remove_campaign_email:'Removed a campaign email'} as any)[s.name] || 'Checked context',meta:s.status==='completed'?'':s.status});
+ const step=(s:any)=>({label:({read_plan:'Planning workspace reads',context_evidence:'Prepared workspace evidence',workspace_overview:'Read workspace overview',list_campaigns:'Read campaigns',read_campaign:'Read campaign details',list_templates:'Read templates',read_template:'Read template content',list_workflows:'Read workflows',read_workflow:'Read workflow details',read_audience:'Read audience details',list_audiences:'Read audiences',delivery_summary:'Read delivery totals',domain_status:'Read domain verification',search_history:'Searched earlier chats',read_history:'Read an earlier message',read_workspace:'Read workspace data',view_email:'Reviewed the email',read_element:'Inspected an email section',write_email:'Designed the email',update_element:'Edited the email',insert_html:'Added to the email',replace_element:'Rewrote an email section',remove_element:'Removed an email section',set_subject:'Set subject and preview text',view_workflow:'Reviewed the workflow',build_workflow:'Built the workflow',add_steps:'Added workflow steps',update_step:'Edited a workflow step',remove_step:'Removed a workflow step',set_trigger:'Set the workflow trigger',update_workflow_settings:'Updated workflow settings',view_campaign:'Reviewed the campaign',compose_email:'Designed the email',remember:'Remembered for next time',forget:'Updated memory',define_audience:'Built the audience',draft_campaign_email:'Wrote a campaign email',remove_campaign_email:'Removed a campaign email'} as any)[s.name] || 'Checked context',meta:s.status==='completed'?'':s.status});
  const count=(n:number)=>Number(n || 0).toLocaleString();
  /** One line per path through the journey, e.g. "A/B split → send “Win-back 1” → wait 3 days → send “Win-back 2”". */
  function journey(document:any,emails:any[]){
@@ -73,17 +80,18 @@ export function prepareAgent(base:DesignState){
   }
   const t=thread(data.messages);
   const chat={id:data.chat.id,title:data.chat.title,at:new Date(data.chat.updated_at).getTime(),msgs:before?[...data.messages.map((m:any)=>message(m,(data.steps || []).filter((s:any)=>s.run_id===m.run_id),t)),...(c.state.chats.find((x:any)=>x.id===id)?.msgs || [])]:data.messages.map((m:any)=>message(m,(data.steps || []).filter((s:any)=>s.run_id===m.run_id),t)),hasMore:data.has_more,beforeSeq:data.before_seq};
-  c.setState((s:any)=>({chats:s.chats.some((x:any)=>x.id===id)?s.chats.map((x:any)=>x.id===id?chat:x):[chat,...s.chats],...(select?{chatId:id,section:'chat',mem:(data.chat.settings as any)?.mem || emptyMem(),skills:(data.chat.settings as any)?.skills || [],mode:(data.chat.settings as any)?.mode || 'ask'}:{})}));
+  c.setState((s:any)=>({chats:s.chats.some((x:any)=>x.id===id)?s.chats.map((x:any)=>x.id===id?chat:x):[chat,...s.chats],...(select?{chatId:id,section:'chat',skills:(data.chat.settings as any)?.skills || [],mode:(data.chat.settings as any)?.mode || 'ask'}:{})}));
   if(select){url(id);const pending=data.messages.find((m:any)=>m.role==='assistant' && ['queued','running'].includes(m.status));if(pending && !active)void follow(id,requestAi({},undefined,{runId:pending.run_id}),false);}
   return chat;
  }
  async function follow(cid:string,request:ReturnType<typeof requestAi>,auto:boolean){
   const n=++sequence;active=request;target=cid;c.setState({busy:true});
-  try{await request.promise;if(!alive() || n!==sequence)return;const chat=await loadChat(cid,false);if(auto && c.state.mode==='auto'){const last=chat?.msgs.at(-1);for(const item of (last?.plan?.items || []).filter((i:any)=>i.status==='pending' && !String(i.id).endsWith('|launch')))await c.setItem(cid,last.id,item.id,'applied');}}
+  try{await request.promise;if(!alive() || n!==sequence)return;void loadMemory().catch(()=>undefined);const chat=await loadChat(cid,false);if(auto && c.state.mode==='auto'){const last=chat?.msgs.at(-1);for(const item of (last?.plan?.items || []).filter((i:any)=>i.status==='pending' && !String(i.id).endsWith('|launch')))await c.setItem(cid,last.id,item.id,'applied');}}
   catch(error){if(alive() && n===sequence){c.toast(errorMessage(error));await loadChat(cid,false).catch(()=>{c.setState((s:any)=>({chats:s.chats.map((chat:any)=>chat.id===cid?{...chat,msgs:chat.msgs.map((m:any)=>m.status==='working'?{...m,status:'done',outcome:'failed',text:[errorMessage(error)],steps:[]}:m)}:chat)}));});}}
   finally{if(active===request && !stopping){active=undefined;target=undefined;if(alive())c.setState({busy:false});}}
  }
  c.componentDidMount=()=>void(async()=>{
+  void loadMemory().catch(error=>{if(alive())c.toast(errorMessage(error));});
   try{const [data,catalog]=await Promise.all([getResource('/account/ai/chats?scope=agent',true),getResource('/account/ai/context',true).catch(()=>({groups:[]}))]);if(alive())c.setState({contextGroups:catalog.groups});if(!alive())return;
    c.setState((s:any)=>({chats:[...s.chats,...data.chats.filter((x:any)=>!s.chats.some((old:any)=>old.id===x.id)).map((x:any)=>({id:x.id,title:x.title,at:new Date(x.updated_at).getTime(),msgs:[]}))]}));
    if(active || c.state.chatId)return;
@@ -91,7 +99,7 @@ export function prepareAgent(base:DesignState){
    if(q){c.setState({chatId:null});void c.ask(q);}else if(id)await loadChat(id);
   }catch(error){if(alive())c.toast(errorMessage(error));}
  })();
- c.componentDidUpdate=()=>{const el=c.scrollRef.current;if(!el)return;
+ c.componentDidUpdate=()=>{saveMemory();const el=c.scrollRef.current;if(!el)return;
   el.onscroll=()=>{c._stick=el.scrollHeight-el.scrollTop-el.clientHeight<40;const chat=c.curChat();if(el.scrollTop<24 && chat?.hasMore && !olderLoading){olderLoading=true;c._stick=false;const height=el.scrollHeight;void loadChat(chat.id,false,chat.beforeSeq).then(()=>requestAnimationFrame(()=>{el.scrollTop=el.scrollHeight-height;})).catch(error=>{if(alive())c.toast(errorMessage(error));}).finally(()=>{olderLoading=false;});}};
   if(c._stick!==false)el.scrollTop=el.scrollHeight;
  };
@@ -137,5 +145,5 @@ export function prepareAgent(base:DesignState){
   return v;
  };
  const unsubscribe=store.subscribe(()=>{if(!alive()){++sequence;active?.detach();active=undefined;if(!disposed)c.setState({chats:[],chatId:null,activity:[],skills:[],routines:[],mem:emptyMem(),busy:false});}});
- return()=>{disposed=true;++sequence;++loading;active?.detach();unsubscribe();};
+ return()=>{clearTimeout(memoryTimer);disposed=true;++sequence;++loading;active?.detach();unsubscribe();};
 }

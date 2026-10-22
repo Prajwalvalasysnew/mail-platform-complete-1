@@ -1,10 +1,19 @@
 /** Trusted email rendering: models choose constrained design tokens and text, never executable HTML. */
 type Block={type:string;text:string;url:string};
-export type EmailDesign={theme:'indigo'|'ocean'|'forest'|'charcoal'|'rose';layout:'showcase'|'editorial'|'minimal';eyebrow:string;footer:string};
+export type EmailDesign={theme:'indigo'|'ocean'|'forest'|'charcoal'|'rose';layout:'showcase'|'editorial'|'minimal';eyebrow:string;footer:string;
+ /** Brand colour (#rrggbb); overrides the theme's accent and derives matching tints. */
+ accent?:string};
 const palettes={indigo:['#ede9fe','#5b3fc4','#211547'],ocean:['#e0f2fe','#0369a1','#0c2940'],forest:['#dcfce7','#167348','#123527'],charcoal:['#e5e7eb','#27272a','#18181b'],rose:['#ffe4e6','#be3455','#4c1627']};
 const esc=(text:string)=>text.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
+const HEX=/^#[0-9a-f]{6}$/i;
+const mix=(hex:string,to:number,amount:number)=>'#'+[1,3,5].map(i=>Math.round(parseInt(hex.slice(i,i+2),16)*(1-amount)+to*amount).toString(16).padStart(2,'0')).join('');
+/** Theme colours, or a palette derived from the brand colour: [soft tint, accent, dark ink]. */
+export function emailPalette(design:Pick<EmailDesign,'theme'|'accent'>):[string,string,string]{
+ if(design.accent && HEX.test(design.accent))return [mix(design.accent,255,0.9),design.accent.toLowerCase(),mix(design.accent,0,0.68)];
+ return palettes[design.theme] as [string,string,string];
+}
 export function renderEmailLayout(blocks:Block[],preheader:string,design:EmailDesign,section=false,unsubscribe=false){
- const [soft,accent,ink]=palettes[design.theme],minimal=design.layout==='minimal';
+ const [soft,accent,ink]=emailPalette(design),minimal=design.layout==='minimal';
  const line=(s:string)=>esc(s).replace(/\n/g,'<br>');
  let hero=false;
  const parts=blocks.map(block=>{

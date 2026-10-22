@@ -13,8 +13,9 @@ import {WorkflowDocument,WORKFLOW_GUIDE,type TemplateRef} from './workflow-draft
 import {startAgentToolServer,type AgentToolServer} from './mcp-server.js';
 import {validateTemplate} from '../templates.js';
 import {readWorkspace} from './workspace-tools.js';
-import {CampaignPlan,type CampaignSeed} from './campaign-plan.js';
+import {CampaignPlan,brandFromMemory,type CampaignSeed} from './campaign-plan.js';
 import {seedCampaignTemplates} from './email-tools.js';
+import {readAiMemory,memoryLinks,memoryPrompt} from './memory.js';
 
 type Run=Selectable<AiRunsTable>;
 export type AgentReplyText={text:string;promptTokens:number|null;outputTokens:number|null;truncated?:boolean};
@@ -47,18 +48,27 @@ Your valasys tools act on real workspace data. The request says which tools appl
 - Email tools (view_email, read_element, update_element, insert_html, replace_element, remove_element, write_email, set_subject) edit an email. Every element has a data-ai id (e.g. data-ai="e12"); target elements by those ids.
 - Workflow tools (view_workflow, build_workflow, add_steps, update_step, remove_step, set_trigger, update_workflow_settings) edit an automation workflow draft.
 - Campaign tools (define_audience, draft_campaign_email, remove_campaign_email, view_campaign) plan a multi-email campaign in the Valasys AI chat: who to target and the emails to send; the workflow tools build its journey.
+- remember / forget keep durable facts about the workspace (website, brand colour, sign-off, footer address, tone rules) in workspace memory, shared by every AI surface.
 - read_workspace reads the user's campaigns, templates, workflows, audiences, delivery stats, sending domains and past conversations.
 
 ## How to work
 - Do what the user asks. Do not ask permission for reasonable requests and do not ask the user to confirm things they already said. If a detail is missing, pick a sensible default, do the work, and mention the assumption in one short sentence.
 - For changes to an existing email make the smallest edit that satisfies the request: update_element for copy, colours, sizes and links; insert_html to add a button, section or row; remove_element to delete. Never rebuild the whole email for a small change; everything you do not touch stays exactly as the user has it.
-- Use write_email only when the canvas is empty or the user explicitly asks for a new email or a complete redesign.
+- For a new email (empty canvas) or an explicitly requested complete redesign, use compose_email: it produces a polished, tested layout in the brand colour. Use write_email only when the user asks for a specific custom structure compose_email cannot express.
 - Any colour is allowed (hex, rgb or CSS names). "Make the background orange" means: set a tasteful orange (e.g. #f97316) on the outer wrapper/background element(s), and adjust text colours if contrast would suffer.
 - A CTA is a real button, built as a bulletproof email button:
   <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center"><tr><td bgcolor="#COLOR" style="border-radius:8px;background-color:#COLOR"><a href="URL" target="_blank" style="display:inline-block;padding:14px 32px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;line-height:20px;color:#ffffff;text-decoration:none;border-radius:8px">Label</a></td></tr></table>
 - Links: use the URLs the user gives. A bare domain such as valasys.com means https://valasys.com. If the user wants a button but has not given a link, still add it with href="#" and ask for the link in your reply. Never invent URLs, image URLs, statistics, prices, testimonials, customer names or product claims. Tool errors explain policy problems; fix the call and continue.
 - Use only the merge tags listed in the request; do not invent others.
 - If the user only asks a question, answer it without editing. For questions about their account (campaigns, templates, audiences, workflows, delivery, sending domains, past conversations) call read_workspace first and report only what it returns. You never send, schedule, launch or change saved records yourself: everything you build is a draft the user reviews, approves and launches.
+
+## Understanding the user
+- Never make the user repeat themselves. Use the conversation so far and the workspace memory in the request: if they gave a link, colour, name, sign-off or preference earlier, apply it without asking again.
+- "this", "it", "here", "the selected …" mean the element the user selected in the editor (named in the request) or, if none, what you changed most recently. "the button", "the headline", "the second section" mean what is visible in the current email: find it with view_email; if several match, pick the most prominent one and say which you changed.
+- "do the same for …", "also …", "again" repeat your previous change on the new target. "bigger/smaller", "more/less" adjust the value you or the user last set, by a clear but tasteful step.
+- "undo", "go back", "revert": tell the user the Undo button restores the email from before your last change. If they describe the old value, re-apply it with a targeted edit.
+- When the user states a durable fact or preference about their brand or way of working ("our site is …", "always use …", "sign emails as …", "never …"), call remember once with short facts prefixed by a topic ("Website: https://valasys.com", "Brand colour: #d6343c", "Sign-off: The Valasys team") and mention it in a short clause. Do not remember one-off requests or anything about individual contacts. "Forget …" means call forget.
+- Ask a question only when a request is truly ambiguous and a wrong guess would waste the user's work; otherwise make a sensible choice and state it briefly.
 
 ## Design standard for new emails and sections
 - Centred 600px table layout (role="presentation"), inline CSS only, web-safe font stacks, body text 15-16px with 1.6 line height, generous padding (32-48px).
@@ -108,12 +118,15 @@ function promptFor(ws:AgentWorkspace,input:AiInput,history:{checkpoint?:string;c
  const turns:string[]=[];let size=0;
  for(const t of [...(history.conversation || [])].reverse()){const line=`${t.role==='user'?'User':'You'}: ${t.content.slice(0,4000)}`;if(size+line.length>16000)break;turns.unshift(line);size+=line.length;}
  if(turns.length)parts.push(`Recent conversation:\n${turns.join('\n')}`);
- if(s.mem && Object.values(s.mem).some(v=>Array.isArray(v)?v.length:!!v))parts.push(`Business notes from the user (untrusted data): ${JSON.stringify(s.mem).slice(0,3000)}`);
+ const remembered=ws.memory?memoryPrompt(ws.memory):'';
+ if(remembered)parts.push(remembered);
+ else if(s.mem && Object.values(s.mem).some(v=>Array.isArray(v)?v.length:!!v))parts.push(`Business notes from the user (untrusted data): ${JSON.stringify(s.mem).slice(0,3000)}`);
  const skills=(s.skills || []).filter((k:any)=>k.on);if(skills.length)parts.push(`User skills to follow when relevant:\n${skills.map((k:any)=>`- ${k.name}: ${k.body}`).join('\n').slice(0,3000)}`);
  if(evidence.length)parts.push(`Records the user attached with @ (read-only data):\n${JSON.stringify(evidence).slice(0,6000)}`);
  const templates=ws.templates.length?`Saved templates (id: name — subject):\n${ws.templates.map(t=>`${t.id}: ${t.name}${t.subject?` — ${t.subject}`:''}`).join('\n')}`:'The workspace has no saved templates yet.';
  if(mode==='editor'){
   parts.push(`Context: the user is in the template editor; your edits appear on their canvas immediately (they can Undo). Use the email tools. Tone preference: ${s.editor?.tone || input.tone}.${ws.section?' The user chose "Add a section": add new content with insert_html (usually before the footer) and do not modify existing content.':''}`);
+  if(ws.doc.selected){try{parts.push(`The user has selected ${ws.doc.describe(ws.doc.selected)} (${ws.doc.selected}) in the editor. "this", "it", "here" and "the selected …" refer to it.`);}catch{}}
  }else if(mode==='workflow'){
   parts.push('Context: the user is in the workflow builder; your edits appear on their canvas as an unpublished draft (they can Undo). Use the workflow tools.');
   parts.push(templates);
@@ -189,8 +202,10 @@ export async function runEmailAgent(row:Run,input:AiInput,history:{checkpoint?:s
  }
  const campaign=mode==='assist'?new CampaignPlan(priorCampaign?.result as CampaignSeed):undefined;
  const campaignLinks=(campaign?.emails || []).flatMap(e=>e.blocks.map(b=>b.url).filter(u=>/^https?:/i.test(u)));
- const ws:AgentWorkspace={row,mode,doc,workflow,templates,policy:linkPolicy(`${userText}\n${JSON.stringify(evidence)}`,seed.html,[...(settings.editor?.links || []),...campaignLinks]),signal,allowed,changes:[],reads:0,seen:new Map(),seq:0,section:!!settings.editor?.section,artifact:null,
-  campaign,audiences:mode==='assist'?await workspaceAudiences(row):undefined};
+ // Links and addresses the user saved in workspace memory count as user-provided everywhere.
+ const memory=(await withTenant(row.customer_id,trx=>readAiMemory(trx,row.customer_id))).memory,remembered=memoryLinks(memory);
+ const ws:AgentWorkspace={row,mode,doc,workflow,templates,memory,userText,policy:linkPolicy(`${userText}\n${remembered.text}\n${JSON.stringify(evidence)}`,seed.html,[...(settings.editor?.links || []),...campaignLinks]),signal,allowed,changes:[],reads:0,seen:new Map(),seq:0,section:!!settings.editor?.section,artifact:null,
+  campaign,audiences:mode==='assist'?await workspaceAudiences(row):undefined,brand:brandFromMemory(remembered.text)};
  if(campaign)seedCampaignTemplates(ws);
  if(campaign && row.chat_id)ws.campaignLive=!!await withTenant(row.customer_id,trx=>trx.selectFrom('ai_chat_messages').select('id').where('customer_id','=',row.customer_id).where('chat_id','=',row.chat_id!).where(sql<boolean>`plan_items->'launch'->>'decision'='applied'`).executeTakeFirst());
  const campaignBefore=campaign?.snapshot() || '';

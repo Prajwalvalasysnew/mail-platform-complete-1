@@ -38,6 +38,13 @@ function model(messages){
   ['update_element',{id:id(doc,/<table[^>]*data-ai="(e\d+)"/),styles:{'background-color':'#f97316'}}],
   ['insert_html',{id:id(doc,/<p[^>]*data-ai="(e\d+)"[^>]*>Prioritise/),position:'after',html:'<table role="presentation" cellspacing="0" cellpadding="0" style="margin-top:24px"><tr><td bgcolor="#f97316" style="border-radius:8px;background-color:#f97316"><a href="#" target="_blank" style="display:inline-block;padding:14px 32px;font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none">Book your demo</a></td></tr></table>'}]]};
  if(/valasys\.com\/product/.test(q))return done.length?{content:'The “Book your demo” button now links to https://valasys.com/product. Nothing else changed.'}:{calls:[['update_element',{id:id(doc,/<a href="#"[^>]*data-ai="(e\d+)"/),attributes:{href:'https://valasys.com/product'}}]]};
+ if(/make this green/.test(q)){
+  if(done.length)return {content:'The selected button is now green.'};
+  const all=messages.map(text).join('\n'),selected=all.match(/The user has selected link “Book your demo” \((e\d+)\)/)?.[1];
+  if(!selected)return {content:'I do not know which element you mean.'};
+  return {calls:[['update_element',{id:selected,styles:{'background-color':'#16a34a'}}]]};
+ }
+ if(/remember our website/.test(q))return done.length?{content:'I will remember valasys.com for every email from now on.'}:{calls:[['remember',{facts:[{fact:'Website: https://valasys.com',topic:'Website'}]}]]};
  return {content:'I can help with that.'};
 }
 let callNo=0;
@@ -63,6 +70,7 @@ try{
  app.route({url:'/api/*',method:['GET','POST','PUT','PATCH','DELETE'],handler:async(req,reply)=>{const r=await app.inject({method:req.method,url:req.url.replace(/^\/api/,'/v1'),headers:req.headers,payload:req.body});return reply.code(r.statusCode).headers(r.headers).send(r.body);}});
  app.get('/assets/:file',async(req,reply)=>{const file=req.params.file;if(!/^[\w.-]+$/.test(file))return reply.code(404).send();const type={'.js':'text/javascript','.css':'text/css','.woff2':'font/woff2','.png':'image/png','.svg':'image/svg+xml'}[path.extname(file)]||'application/octet-stream';return reply.type(type).send(await readFile(path.join('packages/customer-ui/dist/assets',file)));});
  app.get('/email-builder',async(_req,reply)=>reply.type('text/html').send(await readFile('packages/customer-ui/dist/index.html')));
+ app.get('/ai-agent',async(_req,reply)=>reply.type('text/html').send(await readFile('packages/customer-ui/dist/index.html')));
  await app.listen({port:3101,host:'127.0.0.1'});
  worker=spawn(process.execPath,['packages/worker/dist/ai-worker.js'],{env:{...process.env,AI_HEALTH_PORT:'19104'},stdio:['ignore','ignore','pipe']});
  let workerLog='';worker.stderr.on('data',d=>{workerLog=(workerLog+d).slice(-4000);});
@@ -101,6 +109,33 @@ try{
  await page.getByRole('button',{name:'Undo',exact:true}).click();
  if(await frame.getByRole('link',{name:'Book your demo'}).getAttribute('href')!=='#')throw new Error('Undo did not restore the previous step');
  console.log('Browser: Undo restored the previous canvas');
+ // "this" means the block selected on the canvas.
+ await frame.getByRole('link',{name:'Book your demo'}).click();
+ await say('make this green','The selected button is now green');
+ const green=await frame.getByRole('link',{name:'Book your demo'}).evaluate(el=>getComputedStyle(el).backgroundColor);
+ if(green!=='rgb(22, 163, 74)')throw new Error(`Selected button is ${green}, expected green`);
+ if(await frame.locator('.vx-ai-selected').count())throw new Error('Selection marker leaked into the email');
+ console.log('Browser: "make this green" changed the block selected on the canvas');
+ await page.screenshot({path:`${out}/4-selected-green.png`});
+
+ // Memory: remembered once in the editor, visible and editable on the AI agent page.
+ await say('remember our website is valasys.com','I will remember valasys.com');
+ await page.goto('http://127.0.0.1:3101/ai-agent');
+ await page.getByText('Memory',{exact:true}).first().click();
+ await page.getByText('Website: https://valasys.com').waitFor({timeout:30000});
+ await page.screenshot({path:`${out}/5a-memory-open.png`,fullPage:true});
+ const voice=page.locator('textarea').nth(1);
+ await voice.fill('Clear, confident, no hype');
+ await page.waitForTimeout(1500);
+ await page.reload();
+ await page.getByText('Memory',{exact:true}).first().click();
+ await page.getByText('Website: https://valasys.com').waitFor({timeout:30000});
+ const kept=await page.locator('textarea').nth(1).inputValue();
+ if(kept!=='Clear, confident, no hype')throw new Error(`Brand voice after reload: ${kept}`);
+ const stored=await db.selectFrom('ai_workspace_memory').select('memory').where('customer_id','=',customer.id).executeTakeFirstOrThrow();
+ if(stored.memory.voice!=='Clear, confident, no hype')throw new Error('Memory edit was not saved');
+ console.log('Browser: a fact remembered in the editor shows on the AI agent page, and Memory edits persist');
+ await page.screenshot({path:`${out}/5-memory.png`,fullPage:true});
  if(errors.length)throw new Error(`Page errors: ${errors.join(' | ')}`);
  console.log('AI agent browser acceptance passed. Screenshots in',out);
 }catch(error){failed=true;console.error('FAILED:',error);}

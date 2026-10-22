@@ -6,6 +6,8 @@ The workflow step-format, polling and conversation-isolation corrections and the
 
 One-prompt campaigns (segment, emails, A/B journey, approval and launch) and the model context requirements are documented in [AI_CAMPAIGNS.md](AI_CAMPAIGNS.md).
 
+Workspace memory, editor selection ("this") and composed brand emails are documented in [AI_MEMORY_AND_UNDERSTANDING.md](AI_MEMORY_AND_UNDERSTANDING.md).
+
 ## Why the approach changed
 
 A real editor conversation showed that the old design could not do what users asked:

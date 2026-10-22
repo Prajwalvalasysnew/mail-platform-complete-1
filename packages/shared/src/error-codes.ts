@@ -211,6 +211,7 @@ export const ERROR_CODES = {
   delete_conversation: { description: 'This run belongs to a conversation; delete the conversation instead.', httpStatus: 409 },
   retention_hold: { description: 'A legal hold or retention lock prevents deleting this record.', httpStatus: 409 },
   invalid_chat_scope: { description: 'The chat list scope must be all or agent.', httpStatus: 400 },
+  invalid_ai_memory: { description: 'The AI workspace memory is malformed or too long.', httpStatus: 400 },
   plan_item_missing: { description: 'The AI campaign plan has no such part (audience, email, workflow or launch).', httpStatus: 404 },
   launch_confirmation_required: { description: 'Launching an AI campaign sends email; repeat the request with confirm=true after the user confirms.', httpStatus: 400 },
   launch_blocked: { description: 'The AI campaign cannot launch yet (no verified domain, missing template, empty or oversized audience); nothing was sent.', httpStatus: 422 },

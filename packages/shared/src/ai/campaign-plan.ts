@@ -38,7 +38,34 @@ export function segmentRules(raw:unknown):SegmentRule[]{
 }
 export const describeRules=(rules:SegmentRule[])=>rules.map(r=>`${r.field} ${r.op} ${r.val}`).join(' and ');
 
-const Design=z.object({theme:z.enum(THEMES).catch('indigo'),layout:z.enum(LAYOUTS).catch('showcase'),eyebrow:z.string().max(80).catch(''),footer:z.string().max(300).catch('')});
+const Design=z.object({theme:z.enum(THEMES).catch('indigo'),layout:z.enum(LAYOUTS).catch('showcase'),eyebrow:z.string().max(80).catch(''),footer:z.string().max(300).catch(''),accent:z.string().regex(/^#[0-9a-f]{6}$/i).optional().catch(undefined)});
+
+/** Render copy blocks in the trusted branded layout (escaped text, bulletproof button, unsubscribe footer). */
+export function composeEmail(input:any,policy:LinkPolicy,brand:Partial<EmailDesign>={}){
+ const subject=oneLine(input?.subject,80),preheader=oneLine(input?.preheader,150);
+ if(!subject)throw new DocumentToolError('subject is required (at most 80 characters).');
+ const rawBlocks=input?.blocks;
+ if(!Array.isArray(rawBlocks) || rawBlocks.length<2 || rawBlocks.length>14)throw new DocumentToolError('blocks must be 2-14 items such as {type:"heading",text:"..."}, {type:"paragraph",text:"..."}, {type:"button",text:"Label",url:"#"}.');
+ const blocks:CampaignBlock[]=rawBlocks.map((b:any,i:number)=>{
+  const type=BLOCK_TYPES.find(t=>t===String(b?.type ?? '').toLowerCase()) || (String(b?.type).toLowerCase()==='cta'?'button':undefined);
+  const text=String(b?.text ?? b?.label ?? '').trim().slice(0,2000);
+  if(!type)throw new DocumentToolError(`Block ${i+1} type must be one of: ${BLOCK_TYPES.join(', ')}.`);
+  if(!text)throw new DocumentToolError(`Block ${i+1} needs text.`);
+  const url=type==='button'?String(b?.url ?? b?.href ?? '#').trim() || '#':'';
+  return {type,text,url:url && url!=='#' && !/^(https?:|mailto:|{{)/i.test(url)?`https://${url}`:url};
+ });
+ if(!blocks.some(b=>b.type==='heading'))blocks.unshift({type:'heading',text:subject,url:''});
+ const design:EmailDesign=Design.parse({...brand,...(input?.design && typeof input.design==='object'?input.design:{})});
+ const html=renderEmailLayout(blocks,preheader,design,false,true);
+ const problems=policyProblems(html,policy);
+ if(problems.length)throw new DocumentToolError(`Email rejected, nothing was changed: ${problems.join('; ')}.`);
+ const text=[...blocks.map(b=>b.text+(b.url && b.url!=='#'?`\n${b.url}`:'')),'Unsubscribe: {{unsubscribe_url}}'].join('\n\n');
+ for(const field of [subject,html,text])if(!validateTemplate(field).valid)throw new DocumentToolError('The email contains template syntax that cannot be saved. Remove unusual braces.');
+ return {subject,preheader,design,blocks,html,text};
+}
+
+/** Brand defaults from workspace memory ("Brand colour: #d6343c"). */
+export function brandFromMemory(facts:string){const hex=facts.match(/brand\s*colou?r[^#\n]*(#[0-9a-f]{6})\b/i)?.[1];return hex?{accent:hex.toLowerCase()}:{};}
 
 export class CampaignPlan{
  segment:CampaignSegment|null;emails:CampaignEmail[];
@@ -57,23 +84,7 @@ export class CampaignPlan{
   if(!existing && this.emails.length>=MAX_CAMPAIGN_EMAILS)throw new DocumentToolError(`A campaign can have at most ${MAX_CAMPAIGN_EMAILS} emails. Replace an existing one by its key: ${this.emails.map(e=>e.key).join(', ')}.`);
   const subject=oneLine(input.subject ?? existing?.subject,80),name=oneLine(input.name ?? existing?.name ?? subject,120),preheader=oneLine(input.preheader ?? existing?.preheader,150);
   if(!subject)throw new DocumentToolError('subject is required (at most 80 characters).');
-  const rawBlocks=Array.isArray(input.blocks)?input.blocks:existing?.blocks;
-  if(!Array.isArray(rawBlocks) || rawBlocks.length<2 || rawBlocks.length>14)throw new DocumentToolError('blocks must be 2-14 items such as {type:"heading",text:"..."}, {type:"paragraph",text:"..."}, {type:"button",text:"Label",url:"#"}.');
-  const blocks:CampaignBlock[]=rawBlocks.map((b:any,i:number)=>{
-   const type=BLOCK_TYPES.find(t=>t===String(b?.type ?? '').toLowerCase()) || (String(b?.type).toLowerCase()==='cta'?'button':undefined);
-   const text=String(b?.text ?? b?.label ?? '').trim().slice(0,2000);
-   if(!type)throw new DocumentToolError(`Block ${i+1} type must be one of: ${BLOCK_TYPES.join(', ')}.`);
-   if(!text)throw new DocumentToolError(`Block ${i+1} needs text.`);
-   const url=type==='button'?String(b?.url ?? b?.href ?? '#').trim() || '#':'';
-   return {type,text,url:url && url!=='#' && !/^(https?:|mailto:|{{)/i.test(url)?`https://${url}`:url};
-  });
-  if(!blocks.some(b=>b.type==='heading'))blocks.unshift({type:'heading',text:subject,url:''});
-  const design:EmailDesign=Design.parse({...brand,...existing?.design,...(input.design && typeof input.design==='object'?input.design:{})});
-  const html=renderEmailLayout(blocks,preheader,design,false,true);
-  const problems=policyProblems(html,policy);
-  if(problems.length)throw new DocumentToolError(`Email rejected, nothing was changed: ${problems.join('; ')}.`);
-  const text=[...blocks.map(b=>b.text+(b.url && b.url!=='#'?`\n${b.url}`:'')),'Unsubscribe: {{unsubscribe_url}}'].join('\n\n');
-  for(const field of [subject,html,text])if(!validateTemplate(field).valid)throw new DocumentToolError('The email contains template syntax that cannot be saved. Remove unusual braces.');
+  const {design,blocks,html,text}=composeEmail({...input,subject,preheader,blocks:Array.isArray(input.blocks)?input.blocks:existing?.blocks,design:{...existing?.design,...(input.design && typeof input.design==='object'?input.design:{})}},policy,brand);
   const email:CampaignEmail={key,name,subject,preheader,design,blocks,html,text};
   if(existing)this.emails=this.emails.map(e=>e.key===key?email:e);else this.emails.push(email);
   return {email,replaced:!!existing};

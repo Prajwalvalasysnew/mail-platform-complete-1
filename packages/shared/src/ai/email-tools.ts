@@ -7,14 +7,16 @@ import {sql,type Selectable} from 'kysely';
 import {z} from 'zod';
 import {withTenant,type TenantExecutor} from '../tenant-context.js';
 import type {AiRunsTable} from '../schema.js';
-import {EmailDocument,DocumentToolError,policyProblems,type LinkPolicy} from './email-html.js';
+import {EmailDocument,DocumentToolError,policyProblems,extractUserUrls,normalizeUrl,type LinkPolicy} from './email-html.js';
 import {READ_TOOLS,ReadCall} from './tool-contracts.js';
 import {WorkflowDocument,WORKFLOW_STEP_TYPES,type TemplateRef} from './workflow-draft.js';
 import {TRIGGERS,GOALS} from '../workflow-builder.js';
 import {readWorkspace} from './workspace-tools.js';
-import {CampaignPlan,DRAFT_TEMPLATE_PREFIX,MAX_CAMPAIGN_EMAILS,describeRules,segmentRules} from './campaign-plan.js';
+import {CampaignPlan,DRAFT_TEMPLATE_PREFIX,MAX_CAMPAIGN_EMAILS,describeRules,segmentRules,composeEmail} from './campaign-plan.js';
 import {audienceCounts,SEGMENT_RULE_FIELDS,SEGMENT_RULE_OPS,SEGMENT_RULE_WINDOWS} from '../audiences.js';
 import type {EmailDesign} from './email-layout.js';
+import {forgetFacts,rememberFacts,memoryLinks,type WorkspaceMemory} from './memory.js';
+import {linkPolicy as userLinks} from './email-html.js';
 
 type Run=Selectable<AiRunsTable>;
 export type AgentMode='editor'|'workflow'|'assist';
@@ -28,6 +30,8 @@ export type AgentWorkspace={
  campaign?:CampaignPlan;
  /** Saved lists and segments the campaign may target instead of a new segment. */
  audiences?:{id:string;name:string;kind:'list'|'segment';rules:unknown}[];
+ /** Workspace memory loaded for this turn, and the user's own words (the only source for new remembered links). */
+ memory?:WorkspaceMemory;userText?:string;
  /** A campaign from this conversation is already live. */
  campaignLive?:boolean;
  /** Brand defaults for campaign emails (theme, footer). */
@@ -89,6 +93,19 @@ export const AGENT_TOOLS:Tool[]=[
    if(a.preheader)ws.doc.preheader=String(a.preheader).replace(/[\r\n]+/g,' ').slice(0,200);
    return confirmation(ws,blank?'Created the email design':'Rebuilt the email design')+' Call view_email to see the new element ids.';
   }},
+ {name:'compose_email',scope:'email',mutates:true,description:'Create a complete, premium email from copy blocks in the platform\'s tested layout: centred 600px, hero headline, bulletproof button, unsubscribe footer, in the brand colour (design.accent) when known. PREFER this for any new email or full redesign, then refine with targeted edits. Blocks: heading (the first is the hero headline), paragraph, feature (highlighted point), quote, button (url from the user or workspace memory, otherwise "#"). Write 4-8 blocks of specific, benefit-led copy. Also sets the subject and preheader.',
+  inputSchema:{type:'object',properties:{subject:{type:'string',maxLength:80},preheader:{type:'string',maxLength:150},
+   design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300},accent:{type:'string',description:'Brand colour as #rrggbb.'}}},
+   blocks:{type:'array',minItems:2,maxItems:14,items:{type:'object',properties:{type:{type:'string',enum:['heading','paragraph','feature','quote','button']},text:{type:'string'},url:{type:'string'}},required:['type','text']}},
+   full_rewrite_reason:{type:'string',description:'Required when the email already has content: quote the user asking for a new email or full redesign.'}},required:['subject','blocks'],additionalProperties:false},
+  run:(ws,a)=>{
+   if(ws.section)throw new DocumentToolError('The user is adding a section; use insert_html so the existing email is preserved.');
+   if(!ws.doc.isBlank() && !String(a.full_rewrite_reason || '').trim())throw new DocumentToolError('The email already has content. Make targeted edits with update_element/insert_html/replace_element/remove_element. If the user explicitly asked for a brand-new email or full redesign, call compose_email again with full_rewrite_reason.');
+   const blank=ws.doc.isBlank(),email=composeEmail(a,ws.policy,ws.brand);
+   ws.doc.write(email.html);ws.doc.subject=email.subject;ws.doc.preheader=email.preheader;
+   const button=email.blocks.find(b=>b.type==='button');
+   return confirmation(ws,`${blank?'Created':'Redesigned'} the email “${email.subject}”${email.design.accent?` in ${email.design.accent}`:''}`)+`${button && button.url==='#'?' Its button has no link yet; ask the user for the URL.':''} Call view_email to see element ids for further edits.`;
+  }},
  {name:'set_subject',scope:'email',mutates:true,description:'Set the email subject line and/or preheader (inbox preview text).',
   inputSchema:{type:'object',properties:{subject:{type:'string',maxLength:120},preheader:{type:'string',maxLength:200}},additionalProperties:false},
   run:(ws,a)=>{
@@ -108,6 +125,30 @@ export const AGENT_TOOLS:Tool[]=[
 
  ...workflowTools(),
  ...campaignTools(),
+ {name:'remember',scope:'workspace',mutates:true,description:'Save durable facts the user stated about their workspace or preferences so no AI surface asks again: website, brand colour, logo URL, sign-off, footer address, tone or rules. Prefix each fact with its topic ("Website: https://valasys.com"); a new fact replaces an older one on the same topic. Only facts the user said, never guesses or contact data.',
+  inputSchema:{type:'object',properties:{facts:{type:'array',minItems:1,maxItems:5,items:{type:'object',properties:{fact:{type:'string',maxLength:300},topic:{type:'string',description:'Short topic, e.g. "Website", "Brand colour".'}},required:['fact']}}},required:['facts'],additionalProperties:false},
+  run:async(ws,a)=>{
+   const facts:{fact:string;topic:string}[]=(Array.isArray(a.facts)?a.facts:[a.facts]).map((f:any)=>typeof f==='string'?{fact:f}:f).filter((f:any)=>f && typeof f.fact==='string' && f.fact.trim()).slice(0,5)
+    .map((f:any)=>{const fact=f.fact.replace(/\s+/g,' ').trim().slice(0,300),topic=String(f.topic || fact.split(':')[0] || '').trim().slice(0,40);return {fact:topic && !fact.toLowerCase().startsWith(`${topic.toLowerCase()}:`)?`${topic}: ${fact}`.slice(0,300):fact,topic};});
+   if(!facts.length)throw new DocumentToolError('Provide facts as [{fact:"Website: https://example.com"}].');
+   // Links and addresses may come only from the user's own messages or existing memory, never from workspace content.
+   const own=userLinks(ws.userText || '',''),known:{urls:string[];emails:string[]}=ws.memory?memoryLinks(ws.memory):{urls:[],emails:[]};
+   for(const {fact} of facts){
+    const unknownLink=extractUserUrls(fact).map(u=>normalizeUrl(u)).find(u=>!u || !own.allowed.has(u) && !known.urls.includes(u));
+    const unknownEmail=[...fact.matchAll(/([\w.+-]+@[\w-]+\.[\w.-]+)/g)].map(m=>`mailto:${m[1]!.toLowerCase()}`).find(e=>!own.allowed.has(e) && !known.emails.includes(e));
+    if(unknownLink!==undefined || unknownEmail)throw new DocumentToolError(`Not saved: ${unknownEmail?unknownEmail.slice(7):unknownLink || 'that link'} was not typed by the user. Remember only links and addresses the user gave.`);
+   }
+   const saved=await withTenant(ws.row.customer_id,async trx=>{if(!await ws.allowed(trx))throw new Error('read_unavailable');return rememberFacts(trx,ws.row.customer_id,ws.row.user_id,facts);});
+   ws.memory=saved.memory;
+   return `Remembered: ${facts.map(f=>f.fact).join('; ')}. Every Valasys AI surface will use this from now on.`;
+  }},
+ {name:'forget',scope:'workspace',mutates:true,description:'Remove remembered facts that contain the given text (e.g. "Brand colour").',
+  inputSchema:{type:'object',properties:{match:{type:'string',minLength:2}},required:['match'],additionalProperties:false},
+  run:async(ws,a)=>{
+   const match=String(a.match || '').trim();if(match.length<2)throw new DocumentToolError('Say which fact to forget, e.g. "Brand colour".');
+   const removed=await withTenant(ws.row.customer_id,async trx=>{if(!await ws.allowed(trx))throw new Error('read_unavailable');return forgetFacts(trx,ws.row.customer_id,ws.row.user_id,match);});
+   return removed?`Forgot ${removed} remembered fact${removed>1?'s':''} matching “${match}”.`:`Nothing remembered matches “${match}”.`;
+  }},
 ];
 
 function stepSchema(depth:number):Record<string,unknown>{
@@ -176,7 +217,7 @@ function campaignTools():Tool[]{return [
   }},
  {name:'draft_campaign_email',scope:'campaign',mutates:true,description:`Write (or replace, by key) one campaign email. It is rendered in the brand's email layout with an unsubscribe footer; you supply copy as blocks: heading (first one is the hero headline), paragraph, feature (highlighted point), quote, button (url from the user, or "#" when they gave none). Write 3-7 blocks of specific, benefit-led copy in the user's brand voice; never invent statistics, prices, offers or testimonials. Merge tags such as {{first_name}} are allowed. Up to ${MAX_CAMPAIGN_EMAILS} emails per campaign. Reference it in workflow email steps as template "${DRAFT_TEMPLATE_PREFIX}<key>".`,
   inputSchema:{type:'object',properties:{key:{type:'string',description:'Short id such as "winback-1".'},name:{type:'string',description:'Internal name, e.g. "Win-back 1: we miss you".'},subject:{type:'string',maxLength:80},preheader:{type:'string',maxLength:150},
-   design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300}}},
+   design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300},accent:{type:'string',description:'Brand colour as #rrggbb (from the user or workspace memory); overrides the theme.'}}},
    blocks:{type:'array',minItems:2,maxItems:14,items:{type:'object',properties:{type:{type:'string',enum:['heading','paragraph','feature','quote','button']},text:{type:'string'},url:{type:'string'}},required:['type','text']}}},required:['key','subject','blocks'],additionalProperties:false},
   run:(ws,a)=>{const {email,replaced}=plan(ws).upsertEmail(a,ws.policy,ws.brand);syncDraftTemplates(ws);
    const button=email.blocks.find(b=>b.type==='button');

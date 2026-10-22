@@ -124,3 +124,4 @@ export * from './ai/llm.js';
 export * from './ai/workflow-draft.js';
 export * from './ai/campaign-plan.js';
 export * from './ai/campaign-launch.js';
+export * from './ai/memory.js';
