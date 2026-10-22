@@ -23,7 +23,7 @@ export function aiConfig(env: NodeJS.ProcessEnv = process.env) {
     tenants: (env.AI_ENABLED_TENANTS || '').split(',').map(s => s.trim()).filter(Boolean),
     timeoutMs: number('AI_TIMEOUT_MS', 90000, 180000),
     // Whole multi-step agent turn (several model calls plus tool execution).
-    agentTimeoutMs: number('AI_AGENT_TIMEOUT_MS', 240000, 900000),
+    agentTimeoutMs: number('AI_AGENT_TIMEOUT_MS', 480000, 900000),
     agentMaxSteps: number('AI_AGENT_MAX_STEPS', 10, 24),
     maxOutputTokens, contextTokens,
     concurrency: number('AI_CONCURRENCY', 1, 8),

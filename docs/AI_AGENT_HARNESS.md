@@ -79,7 +79,7 @@ The editor sends the canvas body HTML (editor CSS inlined, up to 60,000 characte
 | `AI_MODEL` | `gpt-oss:120b` | Must support tool calling |
 | `AI_CONTEXT_TOKENS` | 32768 | Was 8192; agent turns carry HTML and tool results |
 | `AI_MAX_OUTPUT_TOKENS` | 8192 | Was 3000; a full designed email needs room |
-| `AI_AGENT_TIMEOUT_MS` | 240000 | Whole multi-step turn; run deadline adds 30 s |
+| `AI_AGENT_TIMEOUT_MS` | 480000 | Whole multi-step turn, counted from when it starts (queue time excluded); run deadline adds 30 s. Turns stop 45 s early and keep finished work |
 | `AI_PROVIDER` | `ollama` | Only for the simple operations (subjects/rewrite/compact); `openai` uses `/v1/chat/completions` in JSON mode |
 | `AI_THINK` | `medium` | Ollama `think` value for simple operations (subject lines, compaction and routing run without reasoning so their small output caps are not used up) |
 | `AI_USER_DAILY_LIMIT` | 50 | Requests per user in a rolling 24 hours. Deleting chats does not reset it |

@@ -35,7 +35,7 @@ export function prepareAgent(base:DesignState){
   return out.join(' → ');
  }
  /** A campaign is approved part by part; launching is its own item and always asks first. */
- function campaignPlan(m:any,plan:any){
+ function campaignPlan(m:any,plan:any,liveElsewhere:boolean){
   const state=m.plan_items || {},status=(key:string)=>state[key]?.decision || 'pending',items:any[]=[];
   const seg=plan.segment;
   if(seg)items.push({id:`${m.id}|audience`,kind:seg.audience_id?'Use saved segment':'Create segment',title:seg.name,detail:`${seg.rules?.length?seg.rules.map((r:any)=>`${r.field} ${r.op} ${r.val}`).join(' and ')+' · ':''}${count(seg.matching)} contacts match, ${count(seg.sendable)} can receive marketing email`,status:status('audience'),link:'/contacts'});
@@ -43,20 +43,25 @@ export function prepareAgent(base:DesignState){
   if(plan.workflow){
    const blockers=plan.workflow.issues || [];
    items.push({id:`${m.id}|workflow`,kind:'Save workflow draft',title:plan.workflow.name,detail:journey(plan.workflow.document,plan.emails || []) || 'Journey steps',impact:blockers.length?`Before launch: ${blockers.join(' ')}`:undefined,status:status('workflow'),link:state.workflow?.id?`/workflow-builder?id=${encodeURIComponent(state.workflow.id)}`:undefined});
-   if(seg){
+   if(seg && !liveElsewhere){
     const launched=state.launch;
-    items.push({id:`${m.id}|launch`,kind:'Launch campaign',title:launched?.decision==='applied'?`Live · ${count(launched.enrolled)} contacts enrolled`:`Email ${count(seg.sendable)} contacts`,detail:launched?.decision==='applied'?`The workflow is live${launched.not_started?`; ${count(launched.not_started)} contacts were not enrolled (already in it or excluded)`:''}.`:'Publishes the workflow and enrolls the audience. This sends real email, so it always asks you first.',status:status('launch'),link:launched?.id?`/workflow-builder?id=${encodeURIComponent(launched.id)}`:undefined});
+    items.push({id:`${m.id}|launch`,kind:'Launch campaign',title:launched?.decision==='applied'?`Live · ${count(launched.enrolled)} contacts enrolled`:`Email ${count(seg.sendable)} contacts`,detail:launched?.decision==='applied'?`The workflow is live${launched.not_started?`; ${count(launched.not_started)} contacts were not enrolled (already in it or excluded)`:''}.`:'Publishes the workflow and enrolls the audience. This sends real email, so it always asks you first.',status:launched?.decision==='applied'?'applied':'pending',link:launched?.id?`/workflow-builder?id=${encodeURIComponent(launched.id)}`:undefined});
    }
   }
   return {title:'Campaign plan',items};
  }
- function message(m:any,steps:any[]=[]){
+ type Thread={latestCampaign?:string;launchedIn?:string};
+ /** Which campaign message is current, and which one (if any) already went live. */
+ const thread=(messages:any[]):Thread=>({latestCampaign:[...messages].reverse().find((m:any)=>m.role==='assistant' && m.result?.operation==='campaign')?.id,launchedIn:messages.find((m:any)=>m.plan_items?.launch?.decision==='applied')?.id});
+ function message(m:any,steps:any[]=[],t:Thread={}){
   if(m.role==='user')return {id:m.id,role:'user',text:m.text,ctx:[]};
   const pending=['queued','running'].includes(m.status),draft=m.result?.operation==='draft'?m.result:null,flow=m.result?.operation==='workflow'?m.result:null,campaign=m.result?.operation==='campaign'?m.result:null;
-  const text=campaign?[campaign.message || 'Here is the campaign plan.']:flow?[flow.message,...(flow.changes || []).map((x:string)=>`• ${x}`),...(flow.issues?.length?[`Before publishing: ${flow.issues.join(' ')}`]:[])]:draft?[...(draft.message?[draft.message]:[]),...(Array.isArray(draft.changes)?draft.changes.map((x:string)=>`• ${x}`):[]),`Subject: ${draft.subject}`,...(draft.changes?.length?[]:[draft.text])]:[m.text || m.error || (m.status==='cancelled'?'Generation stopped.':'AI could not finish this response.')];
+  // Earlier versions of a plan are history: only the latest version (or the launched one) can be acted on.
+  const superseded=!!campaign && t.latestCampaign!==m.id && t.launchedIn!==m.id,liveElsewhere=!!campaign && !!t.launchedIn && t.launchedIn!==m.id;
+  const text=campaign?[campaign.message || 'Here is the campaign plan.',...(superseded?['This version of the plan was replaced by a newer one below.']:liveElsewhere?['This campaign is already live from an earlier version, so it cannot be launched again here. Saving these parts creates new drafts.']:[])]:flow?[flow.message,...(flow.changes || []).map((x:string)=>`• ${x}`),...(flow.issues?.length?[`Before publishing: ${flow.issues.join(' ')}`]:[])]:draft?[...(draft.message?[draft.message]:[]),...(Array.isArray(draft.changes)?draft.changes.map((x:string)=>`• ${x}`):[]),`Subject: ${draft.subject}`,...(draft.changes?.length?[]:[draft.text])]:[m.text || m.error || (m.status==='cancelled'?'Generation stopped.':'AI could not finish this response.')];
   return {id:m.id,run_id:m.run_id,role:'agent',status:pending?'working':'done',outcome:m.status,t0:new Date(m.created_at).getTime(),ms:m.run_created_at && m.run_updated_at?Math.max(0,new Date(m.run_updated_at).getTime()-new Date(m.run_created_at).getTime()):0,
    text:pending?[]:text,steps:steps.length?steps.map(step):[{label:pending?'Request queued':'Response saved',meta:''}],
-   plan:campaign?campaignPlan(m,campaign):flow?{title:'Save workflow draft',items:[{id:m.id,kind:'Build workflow draft',title:flow.name,detail:'Saved as an inactive draft. Review, test and publish it in the workflow builder.',status:m.decision || 'pending',link:m.workflow_id?`/workflow-builder?id=${encodeURIComponent(m.workflow_id)}`:undefined}]}:draft?{title:'Save email draft',items:[{id:m.id,kind:'Write email draft',title:draft.subject,detail:'Save as a template, then review in the editor.',status:m.decision || 'pending',link:m.template_id?`/email-builder?id=${encodeURIComponent(m.template_id)}`:undefined}]}:null};
+   plan:campaign?(superseded?null:campaignPlan(m,campaign,liveElsewhere)):flow?{title:'Save workflow draft',items:[{id:m.id,kind:'Build workflow draft',title:flow.name,detail:'Saved as an inactive draft. Review, test and publish it in the workflow builder.',status:m.decision || 'pending',link:m.workflow_id?`/workflow-builder?id=${encodeURIComponent(m.workflow_id)}`:undefined}]}:draft?{title:'Save email draft',items:[{id:m.id,kind:'Write email draft',title:draft.subject,detail:'Save as a template, then review in the editor.',status:m.decision || 'pending',link:m.template_id?`/email-builder?id=${encodeURIComponent(m.template_id)}`:undefined}]}:null};
  }
  async function loadChat(id:string,select=true,before?:number){
   const n=select?++loading:loading,data=await getResource(`/account/ai/chats/${id}${before?`?before_seq=${before}`:''}`,true);if(!alive() || (select && n!==loading))return;
@@ -66,7 +71,8 @@ export function prepareAgent(base:DesignState){
    const params=new URLSearchParams({ai_chat:id});if(bound && bound!==id)params.set('id',bound);
    location.replace(`/${kind==='workflow'?'workflow-builder':'email-builder'}?${params}`);return;
   }
-  const chat={id:data.chat.id,title:data.chat.title,at:new Date(data.chat.updated_at).getTime(),msgs:before?[...data.messages.map((m:any)=>message(m,(data.steps || []).filter((s:any)=>s.run_id===m.run_id))),...(c.state.chats.find((x:any)=>x.id===id)?.msgs || [])]:data.messages.map((m:any)=>message(m,(data.steps || []).filter((s:any)=>s.run_id===m.run_id))),hasMore:data.has_more,beforeSeq:data.before_seq};
+  const t=thread(data.messages);
+  const chat={id:data.chat.id,title:data.chat.title,at:new Date(data.chat.updated_at).getTime(),msgs:before?[...data.messages.map((m:any)=>message(m,(data.steps || []).filter((s:any)=>s.run_id===m.run_id),t)),...(c.state.chats.find((x:any)=>x.id===id)?.msgs || [])]:data.messages.map((m:any)=>message(m,(data.steps || []).filter((s:any)=>s.run_id===m.run_id),t)),hasMore:data.has_more,beforeSeq:data.before_seq};
   c.setState((s:any)=>({chats:s.chats.some((x:any)=>x.id===id)?s.chats.map((x:any)=>x.id===id?chat:x):[chat,...s.chats],...(select?{chatId:id,section:'chat',mem:(data.chat.settings as any)?.mem || emptyMem(),skills:(data.chat.settings as any)?.skills || [],mode:(data.chat.settings as any)?.mode || 'ask'}:{})}));
   if(select){url(id);const pending=data.messages.find((m:any)=>m.role==='assistant' && ['queued','running'].includes(m.status));if(pending && !active)void follow(id,requestAi({},undefined,{runId:pending.run_id}),false);}
   return chat;
@@ -112,7 +118,7 @@ export function prepareAgent(base:DesignState){
   saving.add(id);
   try{
    const result=await performAction(`/account/ai/chats/${cid}/messages/${mid}/decision`,{decision,...(item?{item,...(item==='launch'?{confirm:true}:{}),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}:{})});
-   if(alive()){await loadChat(cid,false);c.toast(decision!=='applied'?'Skipped':item==='launch'?`Campaign launched: ${count(result?.enrolled)} contacts enrolled.`:item==='audience'?'Segment saved.':item==='workflow'?'Workflow saved as an inactive draft.':item?'Email saved to templates.':'Draft saved. Open it to review.');}
+   if(alive()){await loadChat(cid,false);c.toast(decision!=='applied' || result?.decision==='skipped'?'Skipped':item==='launch'?`Campaign launched: ${count(result?.enrolled)} contacts enrolled.`:item==='audience'?'Segment saved.':item==='workflow'?'Workflow saved as an inactive draft.':item?'Email saved to templates.':'Draft saved. Open it to review.');}
   }
   catch(error){if(alive()){c.toast(errorMessage(error));await loadChat(cid,false).catch(()=>undefined);}}finally{saving.delete(id);}
  };

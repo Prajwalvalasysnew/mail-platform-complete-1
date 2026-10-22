@@ -52,12 +52,41 @@ Updated 22 October 2026. The landing page promises that one plain-English reques
 
 Workflow email steps reference unsaved campaign emails as `draft:<key>`. Saving the workflow replaces those references with the saved template ids.
 
+## Launch rules (from the approval audit)
+
+- One launch per conversation. A follow-up version of a launched plan can be saved as new drafts, but it is never launched again. Older versions cannot launch while a newer version exists, and older plan cards show no actions.
+- Launch requires the "Started via API or manually" trigger. Other triggers would keep enrolling future contacts after launch, outside the confirmed audience.
+- The conversation rules are checked before anything is saved, so a refused launch leaves no stray drafts.
+- Only an approval is final. A skipped part can be approved later, and confirming the launch applies the required audience and workflow even if they were skipped. Skipped emails stay skipped.
+- Saved names are unique per workspace ("Name (2)"). Allocation is serialized per tenant, so parallel approvals cannot collide.
+
+## Reliability with real models
+
+| Situation | Behavior |
+| --- | --- |
+| Arguments sent as JSON strings, numbers as strings, empty ids, tool names prefixed with the server name | Coerced to the tool's schema before validation |
+| Multi-part campaign left unfinished (no audience, emails or journey) | One "Completeness check" follow-up names what is missing; the agent finishes it |
+| Reply cut off at the output cap (its tool call never ran) | Detected from the harness turn end; the agent is asked to continue with smaller calls (at most twice) |
+| Provider fails mid-turn after work was done | The finished work is returned, with "The AI service stopped responding… ask me to continue" |
+| Slow model near the deadline | The turn stops 45 s before the hard deadline (or at 85% of the budget) and keeps finished work |
+| Turn budget | Counted from when the turn starts, not from when it was queued. Long-history compaction does not consume it. Default 480 s |
+| Identical repeated calls | Blocked only while the draft is unchanged; re-reading after an edit is allowed, and failed calls can be retried |
+| Step budget or repeated tool failures | The reply names the real cause |
+| A reply claims a change no tool made | Replaced with an honest "nothing was modified" message |
+
+These are covered by `packages/tests/e2e/ai-agent-reliability.e2e.test.ts`, which uses the real harness with a scripted misbehaving model.
+
 ## Model configuration (important for quality)
 
 An AI chat turn carries about 6,200 tokens of tool definitions and 2,700 tokens of instructions before any conversation. A designed email can need several thousand output tokens.
 
 - Use `AI_CONTEXT_TOKENS=32768` and `AI_MAX_OUTPUT_TOKENS=8192`. Docker Compose and `.env.example` defaulted to 8192/3000 until this change, which truncated nearly every chat turn. The AI worker now warns at startup below 16,384.
 - **Local Ollama:** the OpenAI-compatible endpoint uses the server's context length, not the request's. Start Ollama with `OLLAMA_CONTEXT_LENGTH=32768`, or set `num_ctx 32768` in a Modelfile. Otherwise the instructions are silently cut. Cloud-hosted models (`*-cloud`) already serve their full context.
+- The harness profile (`packages/worker/harness/cordis.patch.yml`):
+  - sends the output cap as `max_tokens` and the reasoning level as `reasoning_effort`, which Ollama's OpenAI-compatible endpoint reads;
+  - sends `reasoning_effort` (from `AI_THINK`, default medium) only for reasoning-model families (gpt-oss, DeepSeek-R1, Qwen3…);
+  - sizes history compaction for the configured window. The bundle default assumed a 64k headroom, which turned compaction off at 32k;
+  - trims oversized old tool outputs.
 - The model must support tool calling. Results depend on the model; `gpt-oss:120b` is the documented default.
 
 ## Verification

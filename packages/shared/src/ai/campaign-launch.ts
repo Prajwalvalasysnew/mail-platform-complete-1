@@ -45,10 +45,12 @@ async function uniqueName(base:string,taken:(name:string)=>Promise<boolean>){
 }
 const referencedDrafts=(document:any)=>[...new Set<string>((document?.graph?.nodes || []).map((n:any)=>n?.template).filter((t:unknown):t is string=>typeof t==='string' && t.startsWith(DRAFT_TEMPLATE_PREFIX)).map((t:string)=>t.slice(DRAFT_TEMPLATE_PREFIX.length)))];
 
-/** Save one part (idempotent: a decided part keeps its first decision). */
+/** Save one part. Applying is final and idempotent; a skipped part can still be applied later. */
 async function apply(ctx:Ctx,item:string,decision:'applied'|'skipped'):Promise<ItemState>{
  const {plan,items}=await load(ctx),done=items[item];
- if(done)return done;
+ if(done && (done.decision==='applied' || decision==='skipped'))return done;
+ // Plans in different messages lock different rows; serialize name allocation for the tenant.
+ if(decision==='applied')await sql`select pg_advisory_xact_lock(hashtextextended(${ctx.cid+':ai-plan-names'},0))`.execute(ctx.trx);
  const at=new Date().toISOString();
  if(decision==='skipped')return record(ctx,item,{decision,at});
  if(item==='audience'){
@@ -66,7 +68,8 @@ async function apply(ctx:Ctx,item:string,decision:'applied'|'skipped'):Promise<I
  if(item.startsWith('email:')){
   const email=plan.emails.find(e=>`email:${e.key}`===item);if(!email)throw new AiRunError('plan_item_missing',404,'This plan has no such email.');
   for(const field of [email.subject,email.html,email.text])if(!validateTemplate(field).valid)throw new AiRunError('invalid_template',400,'The generated email cannot be saved.');
-  const created=await ctx.trx.insertInto('templates').values({customer_id:ctx.cid,name:email.name,subject:email.subject,html_body:email.html,text_body:email.text,editor_document:{schemaVersion:1,preheader:email.preheader}}).returningAll().executeTakeFirstOrThrow();
+  const templateName=await uniqueName(email.name,async n=>!!await ctx.trx.selectFrom('templates').select('id').where('customer_id','=',ctx.cid).where('name','=',n).executeTakeFirst());
+  const created=await ctx.trx.insertInto('templates').values({customer_id:ctx.cid,name:templateName,subject:email.subject,html_body:email.html,text_body:email.text,editor_document:{schemaVersion:1,preheader:email.preheader}}).returningAll().executeTakeFirstOrThrow();
   await ctx.trx.insertInto('template_versions').values({customer_id:ctx.cid,template_id:created.id,revision:created.revision,name:created.name,subject:created.subject,html_body:created.html_body,text_body:created.text_body,editor_document:created.editor_document}).execute();
   return record(ctx,item,{decision,id:created.id,at});
  }
@@ -76,7 +79,7 @@ async function apply(ctx:Ctx,item:string,decision:'applied'|'skipped'):Promise<I
   const ids:Record<string,string>={};
   for(const key of referencedDrafts(flow.document)){
    if(!plan.emails.some(e=>e.key===key))continue;
-   const state=await apply(ctx,`email:${key}`,'applied');
+   const state=items[`email:${key}`]?.decision==='skipped'?items[`email:${key}`]!:await apply(ctx,`email:${key}`,'applied');
    if(state.decision==='applied' && state.id)ids[key]=state.id;
   }
   const document=structuredClone(flow.document);
@@ -90,9 +93,19 @@ async function apply(ctx:Ctx,item:string,decision:'applied'|'skipped'):Promise<I
  throw new AiRunError('plan_item_missing',404,'Unknown plan item.');
 }
 
+/** Conversation-level launch rules, checked before anything is saved and again under the launch lock. */
+async function launchable(ctx:Ctx){
+ // One launch per conversation: follow-up versions of a plan must never enroll the audience again.
+ const live=await ctx.trx.selectFrom('ai_chat_messages').select('id').where('customer_id','=',ctx.cid).where('chat_id','=',ctx.chatId).where('id','!=',ctx.messageId).where(sql<boolean>`plan_items->'launch'->>'decision'='applied'`).executeTakeFirst();
+ if(live)throw new AiRunError('launch_blocked',409,'This conversation already launched a version of this campaign, so nothing was sent again. Manage the live workflow from Automations, or start a new chat for a new campaign.');
+ const newer=await ctx.trx.selectFrom('ai_chat_messages as m').innerJoin('ai_chat_messages as cur',join=>join.onRef('cur.chat_id','=','m.chat_id').on('cur.id','=',ctx.messageId)).select('m.id').where('m.customer_id','=',ctx.cid).where('m.chat_id','=',ctx.chatId).where('m.role','=','assistant').where('m.status','=','completed').whereRef('m.seq','>','cur.seq').where(sql<boolean>`m.result->>'operation'='campaign'`).executeTakeFirst();
+ if(newer)throw new AiRunError('launch_blocked',409,'A newer version of this campaign plan exists in this conversation. Launch the latest version instead.');
+}
+
 async function launch(ctx:Ctx,timezone:string){
  const {plan,items}=await load(ctx);
- if(items.launch)return {state:items.launch,runs:[] as string[]};
+ if(items.launch?.decision==='applied')return {state:items.launch,runs:[] as string[]};
+ await launchable(ctx);
  const member=await ctx.trx.selectFrom('memberships').select('role').where('customer_id','=',ctx.cid).where('user_id','=',ctx.uid).where('scim_active','=',true).executeTakeFirst();
  if(!member || !roleHasCapability(member.role,'send'))throw new AiRunError('forbidden',403,'Your role cannot launch campaigns. Ask a workspace admin to launch it.');
  const audienceId=items.audience?.decision==='applied'?items.audience.id:undefined,workflowId=items.workflow?.decision==='applied'?items.workflow.id:undefined;
@@ -110,6 +123,8 @@ async function launch(ctx:Ctx,timezone:string){
  const templates=templateIds.length?(await ctx.trx.selectFrom('templates').select('id').where('customer_id','=',ctx.cid).where('id','in',templateIds).execute()).map(t=>t.id):[];
  const {definition,issues}=compileWorkflowDetailed(document,{from:domains[0]?`hello@${domains[0]}`:'',domains,templates,workspaceTz:timezone});
  const blockers=issues.filter(i=>i.level==='error').map(i=>i.text);
+ // Launch enrolls the confirmed audience once. Any other trigger would keep enrolling future contacts.
+ if(definition && definition.trigger?.type!=='api')blockers.push('Set the workflow trigger to “Started via API or manually”: a launch enrolls this audience once, and other triggers keep adding contacts after launch.');
  if(!definition || blockers.length)throw new AiRunError('launch_blocked',422,`Nothing was sent. Fix ${blockers.length===1?'this':'these'} first: ${[...new Set(blockers)].slice(0,5).join(' ')}`);
  const contacts=await sendableAudienceMembers(ctx.trx,ctx.cid,collection as any).select('c.email').orderBy('c.id').limit(CAMPAIGN_LAUNCH_MAX_CONTACTS+1).execute();
  if(!contacts.length)throw new AiRunError('launch_blocked',422,'Nothing was sent: nobody in this audience is subscribed with confirmed consent.');
@@ -141,9 +156,10 @@ export async function decideAiPlanItem(cid:string,uid:string,chatId:string,messa
  }
  if(!options.confirm)throw new AiRunError('launch_confirmation_required',400,'Launching sends email to the audience. Confirm the launch to continue.');
  // Save every part the user has not skipped (each commits on its own), then publish and enroll atomically.
- const {plan,items}=await withTenant(cid,trx=>load(ctx(trx)));
- if(!items.launch){
-  const parts=[...(plan.segment?['audience']:[]),...plan.emails.map(e=>`email:${e.key}`),...(plan.workflow?['workflow']:[])].filter(part=>!items[part]);
+ const {plan,items}=await withTenant(cid,async trx=>{const loaded=await load(ctx(trx));if(loaded.items.launch?.decision!=='applied')await launchable(ctx(trx));return loaded;});
+ if(items.launch?.decision!=='applied'){
+  // The audience and workflow are required to launch, so confirming the launch applies them even if skipped earlier; skipped emails stay skipped.
+  const parts=[...(plan.segment?['audience']:[]),...plan.emails.map(e=>`email:${e.key}`),...(plan.workflow?['workflow']:[])].filter(part=>items[part]?.decision!=='applied' && !(part.startsWith('email:') && items[part]?.decision==='skipped'));
   for(const part of parts)await withTenant(cid,trx=>apply(ctx(trx),part,'applied'));
  }
  const {state,runs}=await withTenant(cid,trx=>launch(ctx(trx),options.timezone || 'UTC'));

@@ -23,8 +23,8 @@ export function requestAi(input:Record<string,unknown>,onStatus?:(status:string,
   if(stopped){await cancel();throw new Error('Generation stopped.');}
   if(detached || owner!==aiIdentity())throw new Error('Generation stopped.');
   options.onAccepted?.(row);
-  // Agent turns run several model steps; the server deadline is authoritative.
-  const deadline=Date.now()+330000;
+  // Agent turns run several model steps and may wait in the queue first; the server deadline is authoritative.
+  const deadline=Date.now()+1200000;
   while(Date.now()<deadline){
    if(stopped || detached || owner!==aiIdentity())throw new Error('Generation stopped.');
    let run:any;

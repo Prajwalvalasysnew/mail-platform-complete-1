@@ -2,7 +2,7 @@
  * Every call runs here, inside the platform: tenant authority, link policy and sanitization
  * are enforced on each edit, and each call is persisted as a fenced ai_run_steps row.
  */
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {sql,type Selectable} from 'kysely';
 import {z} from 'zod';
 import {withTenant,type TenantExecutor} from '../tenant-context.js';
@@ -28,11 +28,15 @@ export type AgentWorkspace={
  campaign?:CampaignPlan;
  /** Saved lists and segments the campaign may target instead of a new segment. */
  audiences?:{id:string;name:string;kind:'list'|'segment';rules:unknown}[];
+ /** A campaign from this conversation is already live. */
+ campaignLive?:boolean;
  /** Brand defaults for campaign emails (theme, footer). */
  brand?:Partial<EmailDesign>;
  /** Ends the agent session when the model keeps calling tools past the budget; the turn then finishes with what was done. */
  stop?:()=>void;stopped?:boolean;
  lastToolError?:string;
+ /** Why the turn was stopped early, for an accurate reply. */
+ stopReason?:'budget'|'repeat_failure';
 };
 export type ToolOutcome={text:string;isError:boolean};
 type Tool={name:string;scope:'email'|'workflow'|'workspace'|'campaign';description:string;inputSchema:Record<string,unknown>;mutates:boolean;run:(ws:AgentWorkspace,args:any)=>Promise<string>|string};
@@ -97,7 +101,7 @@ export const AGENT_TOOLS:Tool[]=[
   inputSchema:{type:'object',properties:{tool:{type:'string',enum:[...READ_TOOLS]},id:{type:['string','null'],description:'Record id for read_* tools.'},query:{type:'string',description:'Literal name or phrase filter for list_*/search_history.'},days:{type:'integer',enum:[7,30]}},required:['tool'],additionalProperties:false},
   run:async(ws,a)=>{
    if(ws.reads>=8)throw new DocumentToolError('Workspace read limit reached for this turn. Answer with the evidence you have.');
-   const call=ReadCall.parse({tool:a.tool,id:a.id ?? null,query:a.query ?? '',days:a.days ?? 7});ws.reads++;
+   const call=ReadCall.parse({tool:a.tool,id:a.id || null,query:a.query ?? '',days:a.days ?? 7});ws.reads++;
    try{return JSON.stringify(await readWorkspace(ws.row,call,AbortSignal.any([ws.signal,AbortSignal.timeout(4000)]),ws.allowed)).slice(0,8000);}
    catch{ws.signal.throwIfAborted();throw new DocumentToolError('This workspace read is unavailable for your role or timed out.');}
   }},
@@ -200,24 +204,45 @@ async function record(ws:AgentWorkspace,name:string,args:unknown,observation:unk
  });
 }
 
+/** Models often send nested arguments as JSON strings ("steps":"[...]") or numbers as strings;
+ * coerce those to the schema's types so a well-meant call is not rejected. */
+export function coerceToolArgs(schema:any,raw:unknown):unknown{
+ let value=raw;
+ if(typeof value==='string'){const t=value.trim();if(/^[[{]/.test(t)){try{value=JSON.parse(t);}catch{return raw;}}else return raw;}
+ const types=[].concat(schema?.type ?? []) as string[];
+ if(types.includes('number') || types.includes('integer')){if(typeof value==='string' && value.trim() && Number.isFinite(Number(value)))return Number(value);return value;}
+ if(Array.isArray(value))return schema?.items?value.map(v=>coerceToolArgs(schema.items,v)):value;
+ if(value && typeof value==='object' && schema?.properties){
+  const out:Record<string,unknown>={...value as Record<string,unknown>};
+  for(const [key,sub] of Object.entries(schema.properties))if(key in out)out[key]=coerceToolArgs(sub,out[key]);
+  return out;
+ }
+ return value;
+}
+
 /** Execute one model tool call. Tool errors go back to the model so it can correct itself. */
 export async function runAgentTool(ws:AgentWorkspace,name:string,args:unknown):Promise<ToolOutcome>{
  ws.signal.throwIfAborted();
- const tool=toolsFor(ws).find(t=>t.name===name);
- if(!tool)return {text:`Unknown tool ${name}.`,isError:true};
+ // Harness clients prefix MCP tool names with the server name ("valasys__add_steps").
+ const tool=toolsFor(ws).find(t=>t.name===name || name.endsWith(`__${t.name}`));
+ if(!tool)return {text:`Unknown tool ${name}. Available tools: ${toolsFor(ws).map(t=>t.name).join(', ')}.`,isError:true};
+ args=coerceToolArgs(tool.inputSchema,args);
  if(tool.mutates && tool.scope!=='workspace'){
   const next=tool.scope as AgentArtifact;
   if(ws.artifact && !compatible(ws.artifact,next))return {text:ws.artifact==='campaign' || next==='campaign'?'This turn is building a campaign: write its emails with draft_campaign_email (not the single-email tools).':`This turn is already editing the ${ws.artifact}. Make one draft per turn; offer the ${tool.scope} as a next step.`,isError:true};
  }
- const key=name+JSON.stringify(args ?? {}),count=(ws.seen.get(key) || 0)+1;ws.seen.set(key,count);
+ // Identical calls against an unchanged draft are blocked; re-reading after an edit is allowed, and failed calls can be retried.
+ const state=createHash('sha1').update(ws.doc.html()).update('\u0000').update(ws.workflow.snapshot()).update('\u0000').update(ws.campaign?.snapshot() || '').digest('hex');
+ const key=name+JSON.stringify(args ?? {})+state,count=(ws.seen.get(key) || 0)+1;
  if(tool.mutates && count>1 || count>2){await record(ws,name,args,{error:'repeat_call_blocked'},'blocked');return {text:'You already made this exact call and its result is above. Do something different, or reply to the user.',isError:true};}
  if(ws.seq>=40){
   const over=(ws.seen.get('\u0000budget') || 0)+1;ws.seen.set('\u0000budget',over);
-  if(over>=3){ws.stopped=true;ws.stop?.();}
+  if(over>=3){ws.stopReason='budget';ws.stopped=true;ws.stop?.();}
   return {text:'Tool budget for this turn is exhausted. Reply to the user now with what you have done.',isError:true};
  }
  try{
   const text=await tool.run(ws,args && typeof args==='object'?args:{});
+  ws.seen.set(key,count);ws.lastToolError=undefined;
   if(tool.mutates && tool.scope!=='workspace')ws.artifact=ws.artifact==='campaign' || tool.scope==='campaign'?'campaign':tool.scope as AgentArtifact;
   // The edit is already applied: a failed audit write must not tell the model it failed (it would redo it).
   try{await record(ws,name,args,tool.mutates?{result:text}:{chars:text.length},'completed');}
@@ -230,7 +255,7 @@ export async function runAgentTool(ws:AgentWorkspace,name:string,args:unknown):P
   await record(ws,name,args,{error:message},'failed');
   ws.lastToolError=message;
   const failureKey='\u0000failure:'+name+':'+message,count=(ws.seen.get(failureKey) || 0)+1;ws.seen.set(failureKey,count);
-  if(count>=4){ws.stopped=true;ws.stop?.();}
+  if(count>=4){ws.stopReason='repeat_failure';ws.stopped=true;ws.stop?.();}
   return {text:message,isError:true};
  }
 }

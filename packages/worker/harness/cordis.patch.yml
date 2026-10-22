@@ -29,6 +29,15 @@
   disabled: true
 - id: jobs
   disabled: true
+# Sized for the configured window (default 32k): the bundle's 64k headroom default makes the
+# trigger negative, which disables proactive condensation; Ollama then drops the oldest
+# messages (the request and instructions) silently instead of reporting an overflow.
+- id: compaction-basic
+  config:
+    thresholdRatio: 0.7
+    headroomTokens: 2048
+    maxTokens: 4096
+    retainRatio: 0.2
 - id: system-prompt
   config:
     includeHarnessIdentity: false
@@ -43,11 +52,24 @@
             apiKeyEnv: VALASYS_LLM_KEY
             api: openai-completions
             baseURL: !!js process.env.VALASYS_LLM_BASE_URL
+            # Ollama's OpenAI-compatible endpoint reads max_tokens and reasoning_effort.
+            compat:
+              maxTokensField: max_tokens
+              supportsReasoningEffort: true
             models:
               - id: !!js process.env.VALASYS_LLM_MODEL
                 name: Valasys AI
                 contextWindow: !!js Number(process.env.VALASYS_LLM_CONTEXT)
                 maxTokens: !!js Number(process.env.VALASYS_LLM_MAX_TOKENS)
+                # Only reasoning models accept reasoning_effort; others are declared non-reasoning.
+                reasoningEfforts: !!js "process.env.VALASYS_LLM_REASONING === '1' ? {low: 'low', medium: 'medium', high: 'high'} : false"
+    # Trims oversized old tool outputs (email views, workspace reads) before condensation.
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 12000
+        headChars: 6000
+        tailChars: 1500
     - id: mcp-valasys
       name: '@deepseek-ai/dsh-mcp-client'
       config:

@@ -162,6 +162,42 @@ describe('Valasys AI campaign: one prompt to launch',()=>{
   expect(flow.status).not.toBe('active');
  },120000);
 
+ it('never launches twice from one conversation, only launches the latest version, and requires a one-time trigger',async()=>{
+  const a=await actor(),chat=randomUUID();await verifiedDomain(a);await contacts(a);
+  script=({messages})=>{
+   const ask=lastUserText(messages),results=toolResults(messages),prompt=messages.map(m=>typeof m.content==='string'?m.content:'').join('\n');
+   if(/Win back customers/.test(ask))return results.length?{content:'Built it.'}:{calls:WINBACK_CALLS};
+   if(/subject of the second email/.test(ask))return results.length?{content:'Changed it.'}:{calls:[{name:'draft_campaign_email',arguments:{key:'winback-2',subject:'Still there?'}}]};
+   if(/start it when someone opens/.test(ask))return results.length?{content:'Changed the trigger.'}:{calls:[{name:'set_trigger',arguments:{trigger:'opened'}}]};
+   if(/relaunch/.test(ask)){expect(prompt).toContain('already launched its campaign');return {content:'This campaign is already live; I can draft a new version, but it cannot be launched again from this chat.'};}
+   return {content:'ok'};
+  };
+  const v1=await turn(a,chat,"Win back customers who've been inactive for 30 days.");
+  const v2=await turn(a,chat,'Change the subject of the second email.');
+  // The older version cannot launch while a newer one exists.
+  const stale=await decide(a,chat,v1.messageId,{decision:'applied',item:'launch',confirm:true});
+  expect(stale.statusCode).toBe(409);expect(stale.json().message).toMatch(/newer version/);
+  // Reject all, then change of mind: a skipped launch (and skipped audience) can still be approved.
+  for(const item of ['audience','launch'])expect((await decide(a,chat,v2.messageId,{decision:'skipped',item})).json().decision).toBe('skipped');
+  const launched=await decide(a,chat,v2.messageId,{decision:'applied',item:'launch',confirm:true});
+  expect(launched.statusCode,launched.body).toBe(200);expect(launched.json()).toMatchObject({decision:'applied',enrolled:3});
+  expect(launched.json().plan_items.audience.decision).toBe('applied');
+  // A follow-up version in the same conversation can be saved but never enrolls the audience again.
+  const v3=await turn(a,chat,'Now relaunch it with a new subject.');
+  expect(v3.result.operation).toBe('chat');
+  const v4=await turn(a,chat,'Change the subject of the second email again.');
+  const again=await decide(a,chat,v4.messageId,{decision:'applied',item:'launch',confirm:true});
+  expect(again.statusCode).toBe(409);expect(again.json().message).toMatch(/already launched/);
+  expect(await withTenant(a.cid,trx=>trx.selectFrom('workflow_runs').select('id').where('customer_id','=',a.cid).execute())).toHaveLength(3);
+  // A plan whose journey has an ongoing trigger is refused before anything is published.
+  const b=await actor(),other=randomUUID();await verifiedDomain(b);await contacts(b);
+  await turn(b,other,"Win back customers who've been inactive for 30 days.");
+  const evented=await turn(b,other,'Actually start it when someone opens an email.');
+  const blocked=await decide(b,other,evented.messageId,{decision:'applied',item:'launch',confirm:true});
+  expect(blocked.statusCode).toBe(422);expect(blocked.json().message).toMatch(/Started via API or manually/);
+  expect(await withTenant(b.cid,trx=>trx.selectFrom('workflows').select('status').where('customer_id','=',b.cid).where('status','=','active').execute())).toHaveLength(0);
+ },180000);
+
  it('keeps campaign tools out of the editors and launch out of reach of read-only roles',async()=>{
   const a=await actor(),chat=randomUUID();let seen:string[]=[];
   script=({tools,messages})=>{seen=tools;return toolResults(messages).length?{content:'Done.'}:{content:'Here is how the workflow works.'};};
