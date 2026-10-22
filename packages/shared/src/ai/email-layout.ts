@@ -3,7 +3,7 @@ type Block={type:string;text:string;url:string};
 export type EmailDesign={theme:'indigo'|'ocean'|'forest'|'charcoal'|'rose';layout:'showcase'|'editorial'|'minimal';eyebrow:string;footer:string};
 const palettes={indigo:['#ede9fe','#5b3fc4','#211547'],ocean:['#e0f2fe','#0369a1','#0c2940'],forest:['#dcfce7','#167348','#123527'],charcoal:['#e5e7eb','#27272a','#18181b'],rose:['#ffe4e6','#be3455','#4c1627']};
 const esc=(text:string)=>text.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
-export function renderEmailLayout(blocks:Block[],preheader:string,design:EmailDesign,section=false){
+export function renderEmailLayout(blocks:Block[],preheader:string,design:EmailDesign,section=false,unsubscribe=false){
  const [soft,accent,ink]=palettes[design.theme],minimal=design.layout==='minimal';
  const line=(s:string)=>esc(s).replace(/\n/g,'<br>');
  let hero=false;
@@ -19,5 +19,5 @@ export function renderEmailLayout(blocks:Block[],preheader:string,design:EmailDe
   return `<tr><td style="padding:16px 36px 8px;font:400 16px/1.7 Arial,sans-serif;color:#374151"><p style="margin:0">${content}</p></td></tr>`;
  });
  if(section)return `<div class="email"><table width="100%" role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse">${parts.join('')}</table></div>`;
- return `<div class="email" style="width:100%;max-width:640px;margin:24px auto;background:#f3f4f6;font-family:Arial,sans-serif;padding:20px 0"><div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(preheader)}</div><table width="100%" role="presentation" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-collapse:separate;border-spacing:0;border-radius:12px;overflow:hidden">${parts.join('')}<tr><td style="padding:28px 36px 32px">${design.footer?`<p style="margin:0;padding-top:20px;border-top:1px solid #e5e7eb;font:400 12px/1.6 Arial,sans-serif;color:#6b7280">${line(design.footer)}</p>`:''}</td></tr></table></div>`;
+ return `<div class="email" style="width:100%;max-width:640px;margin:24px auto;background:#f3f4f6;font-family:Arial,sans-serif;padding:20px 0"><div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(preheader)}</div><table width="100%" role="presentation" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-collapse:separate;border-spacing:0;border-radius:12px;overflow:hidden">${parts.join('')}<tr><td style="padding:28px 36px 32px">${design.footer?`<p style="margin:0;padding-top:20px;border-top:1px solid #e5e7eb;font:400 12px/1.6 Arial,sans-serif;color:#6b7280">${line(design.footer)}</p>`:''}${unsubscribe?`<p style="margin:0;padding-top:${design.footer?'8px':'20px'};${design.footer?'':'border-top:1px solid #e5e7eb;'}font:400 12px/1.6 Arial,sans-serif;color:#6b7280"><a href="{{unsubscribe_url}}" style="color:#6b7280;text-decoration:underline">Unsubscribe</a></p>`:''}</td></tr></table></div>`;
 }

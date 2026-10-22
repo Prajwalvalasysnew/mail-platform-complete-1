@@ -4,6 +4,8 @@ Updated 22 October 2026. This replaces the structured-draft approach for the tem
 
 The workflow step-format, polling and conversation-isolation corrections and their live-model verification are documented in [AI_WORKFLOW_CHAT_RELIABILITY.md](AI_WORKFLOW_CHAT_RELIABILITY.md).
 
+One-prompt campaigns (segment, emails, A/B journey, approval and launch) and the model context requirements are documented in [AI_CAMPAIGNS.md](AI_CAMPAIGNS.md).
+
 ## Why the approach changed
 
 A real editor conversation showed that the old design could not do what users asked:

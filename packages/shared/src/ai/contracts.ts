@@ -3,6 +3,7 @@ import { z } from 'zod';
 /** A failure the user can act on; its message is shown instead of the generic retry text. */
 export class AiUserFacingError extends Error{constructor(public userMessage:string,code='ai_user_facing'){super(code);}}
 import {renderEmailLayout} from './email-layout.js';
+import type {CampaignEmail,CampaignSegment} from './campaign-plan.js';
 import {ReadPlan,READ_PLAN_FORMAT,type ReadCall} from './tool-contracts.js';
 
 const plain = (max: number) => z.string().trim().min(1).max(max).refine(s => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(s), 'Invalid text');
@@ -27,7 +28,7 @@ const Subjects = z.object({ subjects: z.array(plain(80).refine(s => !/[\r\n]/.te
 const Rewrite = z.object({ text: plain(12000) }).strict();
 const Design=z.object({theme:z.enum(['indigo','ocean','forest','charcoal','rose']),layout:z.enum(['showcase','editorial','minimal']),eyebrow:z.string().max(80),footer:z.string().max(300)}).strict();
 const Draft = z.object({ subject: plain(80).refine(s => !/[\r\n]/.test(s)), preheader: z.string().max(150), blocks: z.array(Block).min(1).max(12),design:Design.optional() }).strict();
-export type AiOutput = {operation:'workflow';name:string;document:unknown;issues:string[];message:string;changes:string[]} | {operation:'route';calls:ReadCall[]} | { operation:'compact';summary:string } | { operation: 'chat'; text: string } | { operation: 'subjects'; subjects: string[] } | { operation: 'rewrite'; text: string } | { operation: 'draft'; subject: string; preheader: string; html: string; text: string; message?:string; design?:z.infer<typeof Design>; changes?:string[] };
+export type AiOutput = {operation:'workflow';name:string;document:unknown;issues:string[];message:string;changes:string[]} | {operation:'campaign';name:string;message:string;changes:string[];segment:CampaignSegment|null;emails:CampaignEmail[];workflow:{name:string;document:unknown;issues:string[]}|null} | {operation:'route';calls:ReadCall[]} | { operation:'compact';summary:string } | { operation: 'chat'; text: string } | { operation: 'subjects'; subjects: string[] } | { operation: 'rewrite'; text: string } | { operation: 'draft'; subject: string; preheader: string; html: string; text: string; message?:string; design?:z.infer<typeof Design>; changes?:string[] };
 
 const AI_FORMATS_BASE = {
   route:READ_PLAN_FORMAT,

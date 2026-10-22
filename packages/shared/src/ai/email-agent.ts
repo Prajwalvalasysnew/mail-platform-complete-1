@@ -12,6 +12,8 @@ import {WorkflowDocument,WORKFLOW_GUIDE,type TemplateRef} from './workflow-draft
 import {startAgentToolServer,type AgentToolServer} from './mcp-server.js';
 import {validateTemplate} from '../templates.js';
 import {readWorkspace} from './workspace-tools.js';
+import {CampaignPlan,type CampaignSeed} from './campaign-plan.js';
+import {seedCampaignTemplates} from './email-tools.js';
 
 type Run=Selectable<AiRunsTable>;
 export type AgentReplyText={text:string;promptTokens:number|null;outputTokens:number|null};
@@ -43,6 +45,7 @@ const SYSTEM_PROMPT=`You are Valasys AI, the assistant built into the Valasys em
 Your valasys tools act on real workspace data. The request says which tools apply on the user's current page.
 - Email tools (view_email, read_element, update_element, insert_html, replace_element, remove_element, write_email, set_subject) edit an email. Every element has a data-ai id (e.g. data-ai="e12"); target elements by those ids.
 - Workflow tools (view_workflow, build_workflow, add_steps, update_step, remove_step, set_trigger, update_workflow_settings) edit an automation workflow draft.
+- Campaign tools (define_audience, draft_campaign_email, remove_campaign_email, view_campaign) plan a multi-email campaign in the Valasys AI chat: who to target and the emails to send; the workflow tools build its journey.
 - read_workspace reads the user's campaigns, templates, workflows, audiences, delivery stats, sending domains and past conversations.
 
 ## How to work
@@ -54,7 +57,7 @@ Your valasys tools act on real workspace data. The request says which tools appl
   <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center"><tr><td bgcolor="#COLOR" style="border-radius:8px;background-color:#COLOR"><a href="URL" target="_blank" style="display:inline-block;padding:14px 32px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;line-height:20px;color:#ffffff;text-decoration:none;border-radius:8px">Label</a></td></tr></table>
 - Links: use the URLs the user gives. A bare domain such as valasys.com means https://valasys.com. If the user wants a button but has not given a link, still add it with href="#" and ask for the link in your reply. Never invent URLs, image URLs, statistics, prices, testimonials, customer names or product claims. Tool errors explain policy problems; fix the call and continue.
 - Use only the merge tags listed in the request; do not invent others.
-- If the user only asks a question, answer it without editing. For questions about their account (campaigns, templates, audiences, workflows, delivery, sending domains, past conversations) call read_workspace first and report only what it returns. You cannot send, schedule or change account records.
+- If the user only asks a question, answer it without editing. For questions about their account (campaigns, templates, audiences, workflows, delivery, sending domains, past conversations) call read_workspace first and report only what it returns. You never send, schedule, launch or change saved records yourself: everything you build is a draft the user reviews, approves and launches.
 
 ## Design standard for new emails and sections
 - Centred 600px table layout (role="presentation"), inline CSS only, web-safe font stacks, body text 15-16px with 1.6 line height, generous padding (32-48px).
@@ -72,18 +75,27 @@ Your valasys tools act on real workspace data. The request says which tools appl
 - Use a saved email template only if it fits the purpose of that workflow step. Do not choose an unrelated template just because it is available; leave template empty and describe the email needed instead.
 - Tool results list remaining publish issues; fix what you can. You never publish or activate a workflow; the user reviews and publishes it.
 
+## Campaigns (Valasys AI chat)
+When the user asks to reach a group of contacts with more than a single email (a win-back or re-engagement, onboarding or nurture series, launch, promotion, newsletter sequence, event invitation...), build the complete campaign in this one turn. Do not stop after one part and do not ask for confirmation first:
+1. define_audience: reuse a saved list or segment that fits (ids are listed in the request) or define a new segment from rules. "Inactive for 30 days" means Opened any email not in last 30 days AND Clicked any email not in last 30 days.
+2. draft_campaign_email for each email: 2-3 emails unless the user says otherwise (for example a first touch and a follow-up), each with its own angle, a compelling subject (at most 60 characters) and preheader, in the user's brand voice. For an A/B test write the alternative subject line too.
+3. build_workflow with trigger "api" (the audience is enrolled when the user launches): email steps use template "draft:<key>", put a wait between emails (3 days unless asked otherwise), and set a goal when one fits (e.g. clicks any email). For an A/B test use a split step with two paths that send the same email with different subject overrides, then continue.
+4. Reply in 2-4 short sentences: the audience size, the emails and the flow, and what still needs attention (for example a verified sending domain or button links). Tell the user to review and approve; launching sends real email and always needs their approval. Never say anything was sent, launched or saved.
+Follow-up requests about the campaign edit the same plan: rewrite one email with draft_campaign_email (same key), change the audience with define_audience, or edit the journey with the workflow tools.
+
 ## Reply
 After working, reply in 1-3 short sentences saying exactly what you changed (or answering the question). Only describe changes your tool calls actually made. Use human-readable names for steps and templates in replies; keep internal IDs in tool calls. Never paste HTML into the reply.`;
 
 const CLAIMS_EDIT=/\b(?:i(?:'ve| have)?|i’ve)\s+(?:now\s+|also\s+|just\s+)?(?:added|updated|changed|switched|replaced|inserted|removed|made|set|applied|kept|rewrote|rebuilt|built|created|polished|moved|styled|adjusted|turned|converted|placed|connected|drafted)\b/i;
 
-async function latestDraft(row:Run,operation:'draft'|'workflow'){
+async function latestDraftWithSeq(row:Run,operation:'draft'|'workflow'|'campaign'){
  if(!row.chat_id)return null;
  return withTenant(row.customer_id,async trx=>{
-  const found=await trx.selectFrom('ai_chat_messages').select(['result']).where('customer_id','=',row.customer_id).where('chat_id','=',row.chat_id!).where('role','=','assistant').where('status','=','completed').where('seq','<',row.chat_seq!).where(sql<boolean>`result->>'operation'=${operation}`).orderBy('seq','desc').executeTakeFirst();
-  return (found?.result as any) || null;
+  const found=await trx.selectFrom('ai_chat_messages').select(['result','seq']).where('customer_id','=',row.customer_id).where('chat_id','=',row.chat_id!).where('role','=','assistant').where('status','=','completed').where('seq','<',row.chat_seq!).where(sql<boolean>`result->>'operation'=${operation}`).orderBy('seq','desc').executeTakeFirst();
+  return found?{result:found.result as any,seq:found.seq}:null;
  });
 }
+const latestDraft=async(row:Run,operation:'draft'|'workflow'|'campaign')=>(await latestDraftWithSeq(row,operation))?.result || null;
 
 const PAGE_HINTS:Record<string,string>={
  home:'the dashboard (overview of sending, delivery and recent activity)',campaigns:'Campaigns',contacts:'Contacts and audiences',messages:'the message log',automations:'Automations (workflows)',templates:'Templates',analytics:'Analytics',deliverability:'Deliverability (domains, authentication, reputation)',webhooks:'Webhooks',apikeys:'API keys',settings:'Settings',
@@ -107,8 +119,11 @@ function promptFor(ws:AgentWorkspace,input:AiInput,history:{checkpoint?:string;c
   parts.push(WORKFLOW_GUIDE);
  }else{
   const page=String(s.page?.view || '');
-  parts.push(`Context: the Valasys AI ${s.page?'assistant panel':'chat'}${page?`, opened on ${PAGE_HINTS[page] || page}`:''}. Answer questions (use read_workspace for anything about their account, especially data relevant to that page). When the user asks for an email or template, build it with the email tools; when they ask for an automation or journey, build it with the workflow tools. Drafts are shown to the user to review and save; make one draft per turn.`);
+  parts.push(`Context: the Valasys AI ${s.page?'assistant panel':'chat'}${page?`, opened on ${PAGE_HINTS[page] || page}`:''}. Answer questions (use read_workspace for anything about their account, especially data relevant to that page). When the user asks for a single email or template, build it with the email tools; for an automation or journey use the workflow tools; for a campaign to a group of contacts use the campaign tools plus the workflow tools. Drafts are shown to the user to review and approve; make one draft (or one campaign) per turn.`);
   parts.push(templates);
+  const audiences=ws.audiences || [];
+  parts.push(audiences.length?`Saved audiences (id: kind “name”):\n${audiences.map(a=>`${a.id}: ${a.kind} “${a.name}”`).join('\n')}`:'The workspace has no saved lists or segments yet.');
+  if(ws.campaign && !ws.campaign.isBlank())parts.push(`Current campaign (the plan you produced earlier in this conversation):\n${ws.campaign.view()}`);
   parts.push(WORKFLOW_GUIDE);
  }
  if(mode!=='workflow'){
@@ -138,11 +153,18 @@ async function workflowWorkspace(row:Run,templates:TemplateRef[],timezone:string
  }));
 }
 
+async function workspaceAudiences(row:Run){
+ return withTenant(row.customer_id,async trx=>trx.selectFrom('audience_collections').select(['id','name','kind','rules']).where('customer_id','=',row.customer_id).orderBy('updated_at','desc').limit(30).execute());
+}
+
 /** Run one agent turn through the registered harness runtime. */
 export async function runEmailAgent(row:Run,input:AiInput,history:{checkpoint?:string;conversation?:{role:string;content:string}[];settings?:any},canvas:{html:string|null;preheader:string;workflow?:unknown},signal:AbortSignal,allowed:(trx:TenantExecutor)=>Promise<boolean>):Promise<{result:AiOutput;promptTokens:number|null;outputTokens:number|null}>{
  if(!runtime)throw new AgentRuntimeUnavailableError();
  const mode:AgentMode=input.operation==='editor'?'editor':input.operation==='workflow'?'workflow':'assist',settings=history.settings || {};
- const priorEmail=mode==='assist'?await latestDraft(row,'draft'):null,priorFlow=mode==='assist'?await latestDraft(row,'workflow'):null;
+ const priorEmail=mode==='assist'?await latestDraft(row,'draft'):null;
+ // A campaign carries its own journey; follow-ups edit whichever of the two the user worked on last.
+ const priorCampaign=mode==='assist'?await latestDraftWithSeq(row,'campaign'):null,priorWorkflow=mode==='assist'?await latestDraftWithSeq(row,'workflow'):null;
+ const priorFlow=priorCampaign?.result.workflow && (!priorWorkflow || priorCampaign.seq>priorWorkflow.seq)?priorCampaign.result.workflow:priorWorkflow?.result || null;
  const seed=mode==='editor'?{html:canvas.html || '',subject:settings.editor?.subject || '',preheader:canvas.preheader}:priorEmail?{html:priorEmail.html,subject:priorEmail.subject,preheader:priorEmail.preheader || ''}:{html:'',subject:'',preheader:''};
  const templates=mode==='editor'?[]:await workspaceTemplates(row,referencedTemplates(mode==='workflow'?canvas.workflow:priorFlow?.document));
  const doc=new EmailDocument(seed.html,seed.subject,seed.preheader),workflow=new WorkflowDocument(mode==='workflow'?(canvas.workflow as any):priorFlow?.document || null,mode==='editor'?undefined:await workflowWorkspace(row,templates,typeof settings.timezone==='string'?settings.timezone:'UTC'));
@@ -153,7 +175,12 @@ export async function runEmailAgent(row:Run,input:AiInput,history:{checkpoint?:s
   const tool=ref.kind==='template'?'read_template':ref.kind==='campaign'?'read_campaign':ref.kind==='workflow'?'read_workflow':'read_audience';
   try{evidence.push(await readWorkspace(row,{tool,id:ref.id,query:'',days:7},AbortSignal.any([signal,AbortSignal.timeout(4000)]),allowed));}catch{signal.throwIfAborted();evidence.push({tool,id:ref.id,error:'read_unavailable'});}
  }
- const ws:AgentWorkspace={row,mode,doc,workflow,templates,policy:linkPolicy(`${userText}\n${JSON.stringify(evidence)}`,seed.html,settings.editor?.links || []),signal,allowed,changes:[],reads:0,seen:new Map(),seq:0,section:!!settings.editor?.section,artifact:null};
+ const campaign=mode==='assist'?new CampaignPlan(priorCampaign?.result as CampaignSeed):undefined;
+ const campaignLinks=(campaign?.emails || []).flatMap(e=>e.blocks.map(b=>b.url).filter(u=>/^https?:/i.test(u)));
+ const ws:AgentWorkspace={row,mode,doc,workflow,templates,policy:linkPolicy(`${userText}\n${JSON.stringify(evidence)}`,seed.html,[...(settings.editor?.links || []),...campaignLinks]),signal,allowed,changes:[],reads:0,seen:new Map(),seq:0,section:!!settings.editor?.section,artifact:null,
+  campaign,audiences:mode==='assist'?await workspaceAudiences(row):undefined};
+ if(campaign)seedCampaignTemplates(ws);
+ const campaignBefore=campaign?.snapshot() || '';
  // Webhooks and alerts send contact data out, so only the user's own words may name new destinations (not attached records).
  workflow.restrictDestinations(linkPolicy(userText,'').allowed);
  const server=await (toolServer ||= startAgentToolServer().catch(error=>{toolServer=undefined;throw error;}));
@@ -162,18 +189,24 @@ export async function runEmailAgent(row:Run,input:AiInput,history:{checkpoint?:s
  // Sends after the step-cap stop return no text; the turn finishes with the edits already made.
  const send=async(prompt:string)=>{if(ws.stopped)return '';try{return add(await session!.send(prompt));}catch(error){if(ws.stopped && !signal.aborted)return '';throw error;}};
  const add=(r:AgentReplyText)=>{promptTokens=promptTokens===null || r.promptTokens===null?null:promptTokens+r.promptTokens;outputTokens=outputTokens===null || r.outputTokens===null?null:outputTokens+r.outputTokens;return r.text.trim();};
- const emailChanged=()=>doc.html()+'\u0000'+doc.subject+'\u0000'+doc.preheader!==emailBefore,flowChanged=()=>workflow.snapshot()!==flowBefore;
+ const emailChanged=()=>doc.html()+'\u0000'+doc.subject+'\u0000'+doc.preheader!==emailBefore,flowChanged=()=>workflow.snapshot()!==flowBefore,campaignChanged=()=>!!campaign && campaign.snapshot()!==campaignBefore;
  try{
   session=await runtime.open({systemPrompt:SYSTEM_PROMPT,toolUrl:server.url,token,signal});
   ws.stop=()=>void session?.close().catch(()=>undefined);
   let reply=await send(promptFor(ws,input,history,evidence));
   // Harness-style verification step: a reply may only claim edits that tools actually made.
-  if(!emailChanged() && !flowChanged() && CLAIMS_EDIT.test(reply)){signal.throwIfAborted();reply=await send('Verification: no edit tool succeeded during this turn, so nothing has changed. If the user asked for a change, make it now with the tools and then reply. Otherwise rewrite your reply without claiming any change.');}
+  if(!emailChanged() && !flowChanged() && !campaignChanged() && CLAIMS_EDIT.test(reply)){signal.throwIfAborted();reply=await send('Verification: no edit tool succeeded during this turn, so nothing has changed. If the user asked for a change, make it now with the tools and then reply. Otherwise rewrite your reply without claiming any change.');}
   if(!reply){signal.throwIfAborted();reply=await send('Reply to the user now in 1-3 sentences.');}
   signal.throwIfAborted();
   const changes=ws.changes.slice(0,30);
   // Never show an empty reply: fall back to what the tools actually did.
   const message=reply.replace(/<[^>]+>/g,'').trim().slice(0,4000) || (ws.stopped && ws.lastToolError?`I could not finish because a tool repeatedly rejected the request: ${ws.lastToolError.slice(0,500)}${changes.length?' Review the partial changes below.':''}`:changes.length?`Done. ${changes.length===1?'I made this change':'I made these changes'}:`:'');
+  if(campaign && !campaign.isBlank() && (campaignChanged() || flowChanged() && ws.artifact==='campaign' || flowChanged() && !!priorCampaign && priorFlow===priorCampaign.result.workflow)){
+   const document=workflow.isBlank()?null:structuredClone(workflow.doc);
+   if(Buffer.byteLength(JSON.stringify({document,emails:campaign.emails}))>400000)throw new Error('Campaign draft too large');
+   const name=document?.name && document.name!=='Untitled workflow'?document.name:campaign.segment?`Campaign for ${campaign.segment.name}`:campaign.emails[0]?.name || 'Campaign';
+   return {result:{operation:'campaign',name,message,changes,segment:campaign.segment,emails:campaign.emails,workflow:document?{name:document.name,document,issues:workflow.issues()}:null},promptTokens,outputTokens};
+  }
   if(flowChanged()){
    const document=structuredClone(workflow.doc);
    if(Buffer.byteLength(JSON.stringify(document))>200000)throw new Error('Workflow draft too large');

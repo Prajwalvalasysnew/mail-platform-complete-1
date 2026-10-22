@@ -141,12 +141,16 @@ export async function executeAiRun(customerId:string,id:string,shutdown:AbortSig
     signal.throwIfAborted();
     const output:AiOutput=generated.result;
     const subject=output.operation==='draft'?output.subject:output.operation==='subjects'?output.subjects.join('\n'):input.subject;
-    const text=output.operation==='compact'?output.summary:(output.operation==='rewrite'||output.operation==='chat')?output.text:output.operation==='draft'?output.text:output.operation==='workflow'?output.message:'';
+    const text=output.operation==='compact'?output.summary:(output.operation==='rewrite'||output.operation==='chat')?output.text:output.operation==='draft'?output.text:output.operation==='workflow' || output.operation==='campaign'?output.message:'';
     const html=output.operation==='draft'?output.html:'';
-    const scan=scanContent(subject,html,text),classification=await classify(subject,html,text);
+    // Every email that could be sent is screened: the single draft, or each campaign email.
+    const screened=output.operation==='campaign'?output.emails.map(e=>({subject:e.subject,html:e.html,text:e.text})):[{subject,html,text}];
     const warnings:string[]=[];
-    if(scan.score>=30 || classification.combined_score>=30)warnings.push('Review this copy for spam signals before sending.');
-    if(classification.flagged_domains.length)throw new AiUserFacingError('This draft links to a domain that is blocked for sending, so it was not applied. Use a different link.','blocked_link_domain');
+    for(const email of screened){
+      const scan=scanContent(email.subject,email.html,email.text),classification=await classify(email.subject,email.html,email.text);
+      if((scan.score>=30 || classification.combined_score>=30) && !warnings.length)warnings.push('Review this copy for spam signals before sending.');
+      if(classification.flagged_domains.length)throw new AiUserFacingError('This draft links to a domain that is blocked for sending, so it was not applied. Use a different link.','blocked_link_domain');
+    }
     await withTenant(customerId,async trx=>{
       if(signal.aborted || !await aiActorAllowed(trx,row))throw new Error('Access changed');
       const committed=await trx.updateTable('ai_runs').set({status:'completed',input:null,result:output,warnings:sql<unknown>`${JSON.stringify(warnings)}::jsonb`,prompt_tokens:generated.promptTokens,output_tokens:generated.outputTokens,lease_until:null,updated_at:new Date()})
