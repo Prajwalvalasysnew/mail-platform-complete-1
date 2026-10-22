@@ -4,6 +4,8 @@
 // This makes it impossible to accidentally deploy the development credentials
 // shipped in .env.example / docker-compose.
 
+import { aiConfig } from './ai/config.js';
+
 const KNOWN_DEFAULTS = new Set<string>([
   'dev-secret-change-in-production-min-32-chars',
   'worker-secret-change-me',
@@ -180,6 +182,7 @@ export function checkConfig(env: NodeJS.ProcessEnv = process.env): GuardResult {
     if (!env.AUDIT_SIGNING_KEY_PEM) errors.push('AUDIT_SIGNING_KEY_PEM is required in production');
   }
 
+  try { aiConfig(env); } catch { errors.push('Valasys AI configuration is invalid; check its URL, cloud opt-in and numeric limits'); }
   return { ok: errors.length === 0, errors, warnings };
 }
 

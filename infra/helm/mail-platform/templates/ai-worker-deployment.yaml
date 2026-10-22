@@ -1,0 +1,65 @@
+{{- if .Values.ai.enabled }}
+{{- $tag := include "mail-platform.imageTag" (dict "componentTag" .Values.worker.image.tag "globalTag" .Values.global.image.tag "Chart" .Chart) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-ai-worker
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "mail-platform.fullname" . }}-ai-worker
+  template:
+    metadata:
+      labels:
+        app: {{ include "mail-platform.fullname" . }}-ai-worker
+    spec:
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ai-worker
+          image: "{{ .Values.global.image.registry }}/{{ .Values.global.image.repository }}-worker:{{ $tag }}"
+          command: ["node", "packages/worker/dist/ai-worker.js"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.existingSecret }}
+            - configMapRef:
+                name: {{ include "mail-platform.fullname" . }}-api-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.databaseKeys.api }}
+          # Each agent turn boots the DeepSeek Harness in a throwaway home under /tmp.
+          volumeMounts:
+            - name: agent-tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.ai.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: 9103
+            initialDelaySeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9103
+            initialDelaySeconds: 5
+      volumes:
+        - name: agent-tmp
+          emptyDir:
+            sizeLimit: 512Mi
+{{- end }}

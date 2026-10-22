@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<title>AI agent — Valasys</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"></link>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"></link>
+<style>
+html,body{margin:0;height:100%;font-family:'Geist',system-ui,sans-serif;color:oklch(0.21 0.015 260);background:oklch(0.975 0.003 250);}
+a{color:oklch(0.50 0.19 25);text-decoration:none;} a:hover{color:oklch(0.42 0.18 25);}
+input,textarea,button{font-family:inherit;}
+@keyframes popIn{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:none;}}
+@keyframes pulse{0%{opacity:.4}50%{opacity:1}100%{opacity:.4}}
+@keyframes spin{to{transform:rotate(360deg);}}
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;height:100vh;overflow:hidden;">
+  <header style="display:flex;align-items:center;gap:12px;height:56px;flex-shrink:0;padding:0 16px;border-bottom:1px solid oklch(0.91 0.004 250);background:#fff;">
+    <a href="Customer App.dc.html" title="Back to Valasys" style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px;border:1px solid oklch(0.91 0.004 250);color:oklch(0.35 0.012 260);"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg></a>
+    <span style="display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;background:oklch(0.50 0.16 290);color:#fff;font-size:14px;">✦</span>
+    <div style="display:flex;flex-direction:column;">
+      <span style="font-size:14.5px;font-weight:600;letter-spacing:-.01em;">AI agent</span>
+      <span style="font-size:11.5px;color:oklch(0.55 0.012 260);">Acme workspace · {{ industryLabel }}</span>
+    </div>
+    <span style="flex:1;"></span>
+    <span style="font-size:12px;color:oklch(0.52 0.012 260);">Changes</span>
+    <div style="display:flex;gap:3px;padding:3px;border-radius:9px;background:oklch(0.955 0.003 250);">
+      <sc-for list="{{ modes }}" as="m" hint-placeholder-count="2"><button onClick="{{ m.onClick }}" title="{{ m.tip }}" style="{{ m.style }}">{{ m.label }}</button></sc-for>
+    </div>
+  </header>
+
+  <div style="flex:1;display:flex;min-height:0;">
+    <aside style="width:250px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid oklch(0.91 0.004 250);background:#fff;min-height:0;">
+      <div style="padding:12px;">
+        <button onClick="{{ newChat }}" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:38px;border-radius:10px;border:1px solid oklch(0.45 0.16 290);background:oklch(0.50 0.16 290);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">+ New chat</button>
+      </div>
+      <nav style="display:flex;flex-direction:column;gap:2px;padding:0 8px 8px;border-bottom:1px solid oklch(0.94 0.003 250);">
+        <sc-for list="{{ sections }}" as="s" hint-placeholder-count="4">
+          <button onClick="{{ s.onClick }}" style="{{ s.style }}"><span style="flex:1;text-align:left;">{{ s.label }}</span><span style="{{ s.badgeStyle }}">{{ s.badge }}</span></button>
+        </sc-for>
+      </nav>
+      <p style="margin:0;padding:14px 16px 6px;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:oklch(0.58 0.010 260);">Recent</p>
+      <div style="flex:1;overflow-y:auto;padding:0 8px 12px;display:flex;flex-direction:column;gap:1px;">
+        <sc-for list="{{ recent }}" as="c" hint-placeholder-count="5">
+          <div style="position:relative;">
+          <button onClick="{{ c.onClick }}" style="{{ c.style }}">
+            <span style="display:block;padding-right:18px;font-size:13px;font-weight:500;color:oklch(0.26 0.015 260);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.title }}</span>
+            <span style="display:block;margin-top:1px;font-size:11.5px;color:oklch(0.58 0.010 260);">{{ c.when }}</span>
+          </button>
+          <button onClick="{{ c.onDelete }}" title="Delete chat" aria-label="Delete chat" style="position:absolute;top:6px;right:6px;width:22px;height:22px;border:0;border-radius:6px;background:transparent;cursor:pointer;font-size:14px;line-height:1;color:oklch(0.62 0.010 260);" style-hover="background:oklch(0.94 0.004 250);color:oklch(0.50 0.19 25);">×</button>
+          </div>
+        </sc-for>
+      </div>
+    </aside>
+
+    <main style="flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;">
+      <sc-if value="{{ isChat }}" hint-placeholder-val="{{ true }}">
+        <div ref="{{ scrollRef }}" style="flex:1;overflow-y:auto;min-height:0;">
+          <div style="max-width:780px;margin:0 auto;padding:28px 24px 24px;display:flex;flex-direction:column;gap:22px;">
+            <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ true }}">
+              <div style="padding-top:28px;">
+                <p style="margin:0;font-size:28px;font-weight:600;letter-spacing:-.03em;">What should we work on today?</p>
+                <p style="margin:8px 0 0;font-size:14px;line-height:1.55;color:oklch(0.48 0.012 260);text-wrap:pretty;">I can build campaigns and workflows, find audiences, analyze results and fix deliverability across your workspace. I’ll show you every change before anything goes live.</p>
+              </div>
+              <sc-if value="{{ hasDigest }}" hint-placeholder-val="">
+                <div style="border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;overflow:hidden;">
+                  <p style="margin:0;padding:12px 16px 8px;font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:oklch(0.48 0.012 260);">From your routines</p>
+                  <sc-for list="{{ digest }}" as="d" hint-placeholder-count="2">
+                    <button onClick="{{ d.onClick }}" style="display:flex;align-items:center;gap:12px;width:100%;padding:11px 16px;border:0;border-top:1px solid oklch(0.95 0.003 250);background:#fff;cursor:pointer;text-align:left;" style-hover="background:oklch(0.985 0.002 250);">
+                      <span style="{{ d.dot }}"></span>
+                      <span style="flex:1;min-width:0;"><span style="display:block;font-size:13px;font-weight:500;color:oklch(0.24 0.015 260);">{{ d.title }}</span><span style="display:block;margin-top:2px;font-size:12px;color:oklch(0.52 0.012 260);">{{ d.sub }}</span></span>
+                      <span style="font-size:12px;font-weight:600;color:oklch(0.46 0.15 290);">Review →</span>
+                    </button>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">
+                <sc-for list="{{ starters }}" as="s" hint-placeholder-count="6">
+                  <button onClick="{{ s.onClick }}" style="display:flex;flex-direction:column;gap:6px;padding:14px;border-radius:12px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;text-align:left;" style-hover="border-color:oklch(0.55 0.15 290 / 0.45);box-shadow:0 6px 18px -12px oklch(0.3 0.1 290 / 0.4);">
+                    <span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:oklch(0.48 0.14 290);">{{ s.cat }}</span>
+                    <span style="font-size:13.5px;line-height:1.45;color:oklch(0.24 0.015 260);text-wrap:pretty;">{{ s.text }}</span>
+                  </button>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-for list="{{ msgs }}" as="m" hint-placeholder-count="0">
+              <div style="animation:popIn .2s ease-out;">
+                <sc-if value="{{ m.isUser }}" hint-placeholder-val="">
+                  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+                    <sc-if value="{{ m.hasCtx }}" hint-placeholder-val=""><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;"><sc-for list="{{ m.ctx }}" as="x" hint-placeholder-count="1"><span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;background:oklch(0.55 0.15 290 / 0.10);font-size:11.5px;font-weight:500;color:oklch(0.42 0.15 290);">@ {{ x }}</span></sc-for></div></sc-if>
+                    <div style="max-width:80%;padding:10px 14px;border-radius:14px 14px 4px 14px;background:oklch(0.24 0.015 260);color:#fff;font-size:14px;line-height:1.55;white-space:pre-wrap;">{{ m.text }}</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ m.isAgent }}" hint-placeholder-val="">
+                  <div style="display:flex;gap:12px;">
+                    <span style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;flex-shrink:0;border-radius:8px;background:oklch(0.55 0.15 290 / 0.12);color:oklch(0.46 0.16 290);font-size:13px;">✦</span>
+                    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;">
+                      <div style="border-radius:10px;border:1px solid oklch(0.93 0.004 250);background:#fff;overflow:hidden;">
+                        <button onClick="{{ m.toggleSteps }}" style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:0;background:transparent;cursor:pointer;text-align:left;font-size:12.5px;color:oklch(0.45 0.012 260);">
+                          <span style="{{ m.spinStyle }}"></span><span style="flex:1;">{{ m.stepsLabel }}</span><span style="font-size:11px;">{{ m.stepsArrow }}</span>
+                        </button>
+                        <sc-if value="{{ m.showSteps }}" hint-placeholder-val="">
+                          <div style="display:flex;flex-direction:column;gap:6px;padding:2px 12px 10px 32px;">
+                            <sc-for list="{{ m.steps }}" as="s" hint-placeholder-count="3">
+                              <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:oklch(0.40 0.012 260);animation:popIn .2s ease-out;"><span style="{{ s.dot }}"></span><span style="flex:1;">{{ s.label }}</span><span style="font-size:11.5px;color:oklch(0.60 0.010 260);">{{ s.meta }}</span></div>
+                            </sc-for>
+                          </div>
+                        </sc-if>
+                      </div>
+                      <sc-if value="{{ m.hasText }}" hint-placeholder-val="">
+                        <div style="display:flex;flex-direction:column;gap:8px;animation:popIn .25s ease-out;">
+                          <sc-for list="{{ m.paras }}" as="p" hint-placeholder-count="2"><p style="margin:0;font-size:14px;line-height:1.65;color:oklch(0.24 0.015 260);text-wrap:pretty;">{{ p }}</p></sc-for>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ m.hasTable }}" hint-placeholder-val="">
+                        <div style="border-radius:12px;border:1px solid oklch(0.91 0.004 250);background:#fff;overflow-x:auto;animation:popIn .25s ease-out;">
+                          <table style="width:100%;min-width:520px;border-collapse:collapse;">
+                            <thead><tr style="background:oklch(0.985 0.002 250);border-bottom:1px solid oklch(0.93 0.004 250);"><sc-for list="{{ m.cols }}" as="c" hint-placeholder-count="4"><th style="{{ c.style }}">{{ c.label }}</th></sc-for></tr></thead>
+                            <tbody><sc-for list="{{ m.rows }}" as="r" hint-placeholder-count="4"><tr style="border-bottom:1px solid oklch(0.955 0.003 250);"><sc-for list="{{ r.cells }}" as="c" hint-placeholder-count="4"><td style="{{ c.style }}">{{ c.v }}</td></sc-for></tr></sc-for></tbody>
+                          </table>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ m.hasPlan }}" hint-placeholder-val="">
+                        <div style="border-radius:14px;border:1px solid oklch(0.55 0.15 290 / 0.28);background:#fff;overflow:hidden;animation:popIn .25s ease-out;">
+                          <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:oklch(0.55 0.15 290 / 0.05);border-bottom:1px solid oklch(0.55 0.15 290 / 0.16);">
+                            <span style="flex:1;font-size:13.5px;font-weight:600;color:oklch(0.30 0.06 290);">{{ m.planTitle }}</span>
+                            <span style="font-size:12px;color:oklch(0.48 0.06 290);">{{ m.planMeta }}</span>
+                          </div>
+                          <sc-for list="{{ m.items }}" as="it" hint-placeholder-count="3">
+                            <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid oklch(0.955 0.003 250);">
+                              <span style="{{ it.iconStyle }}">{{ it.glyph }}</span>
+                              <div style="flex:1;min-width:0;">
+                                <p style="margin:0;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:oklch(0.52 0.012 260);">{{ it.kind }}</p>
+                                <p style="margin:2px 0 0;font-size:13.5px;font-weight:600;color:oklch(0.22 0.015 260);">{{ it.title }}</p>
+                                <p style="margin:3px 0 0;font-size:12.5px;line-height:1.5;color:oklch(0.48 0.012 260);">{{ it.detail }}</p>
+                                <sc-if value="{{ it.hasImpact }}" hint-placeholder-val=""><p style="margin:5px 0 0;font-size:12px;font-weight:500;color:oklch(0.44 0.12 155);">{{ it.impact }}</p></sc-if>
+                              </div>
+                              <sc-if value="{{ it.pending }}" hint-placeholder-val="{{ true }}">
+                                <div style="display:flex;gap:6px;flex-shrink:0;">
+                                  <button onClick="{{ it.onSkip }}" style="height:30px;padding:0 10px;border-radius:8px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:12.5px;font-weight:500;color:oklch(0.40 0.012 260);">Skip</button>
+                                  <button onClick="{{ it.onApprove }}" style="height:30px;padding:0 11px;border-radius:8px;border:1px solid oklch(0.45 0.16 290);background:oklch(0.50 0.16 290);cursor:pointer;font-size:12.5px;font-weight:600;color:#fff;">Approve</button>
+                                </div>
+                              </sc-if>
+                              <sc-if value="{{ it.done }}" hint-placeholder-val="">
+                                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">
+                                  <span style="{{ it.stStyle }}">{{ it.stLabel }}</span>
+                                  <sc-if value="{{ it.hasLink }}" hint-placeholder-val=""><a href="{{ it.href }}" style="font-size:12px;font-weight:600;">{{ it.linkLabel }} ↗</a></sc-if>
+                                </div>
+                              </sc-if>
+                            </div>
+                          </sc-for>
+                          <sc-if value="{{ m.planPending }}" hint-placeholder-val="">
+                            <div style="display:flex;align-items:center;gap:8px;padding:11px 16px;background:oklch(0.985 0.002 250);">
+                              <span style="flex:1;font-size:12px;color:oklch(0.52 0.012 260);">{{ m.planNote }}</span>
+                              <button onClick="{{ m.rejectAll }}" style="height:32px;padding:0 12px;border-radius:8px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:12.5px;font-weight:500;color:oklch(0.40 0.012 260);">Reject all</button>
+                              <button onClick="{{ m.approveAll }}" style="height:32px;padding:0 13px;border-radius:8px;border:1px solid oklch(0.45 0.16 290);background:oklch(0.50 0.16 290);cursor:pointer;font-size:12.5px;font-weight:600;color:#fff;">{{ m.approveAllLabel }}</button>
+                            </div>
+                          </sc-if>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ m.hasChips }}" hint-placeholder-val="">
+                        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                          <sc-for list="{{ m.chips }}" as="c" hint-placeholder-count="3"><button onClick="{{ c.onClick }}" style="height:30px;padding:0 11px;border-radius:15px;border:1px solid oklch(0.55 0.15 290 / 0.28);background:#fff;cursor:pointer;font-size:12.5px;color:oklch(0.42 0.15 290);" style-hover="background:oklch(0.55 0.15 290 / 0.06);">{{ c.label }}</button></sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="flex-shrink:0;padding:0 24px 18px;">
+          <div style="max-width:780px;margin:0 auto;">
+            <div style="position:relative;border-radius:16px;border:1px solid oklch(0.88 0.006 250);background:#fff;box-shadow:0 8px 24px -16px oklch(0.2 0.02 260 / 0.35);" style-focus-within="border-color:oklch(0.55 0.15 290);">
+              <sc-if value="{{ hasCtx }}" hint-placeholder-val="">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px 0;">
+                  <sc-for list="{{ ctxChips }}" as="x" hint-placeholder-count="1">
+                    <span style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 4px 0 9px;border-radius:7px;background:oklch(0.55 0.15 290 / 0.10);font-size:12px;font-weight:500;color:oklch(0.40 0.15 290);">@ {{ x.label }}<button onClick="{{ x.onRemove }}" style="display:flex;align-items:center;justify-content:center;width:18px;height:18px;border:0;border-radius:4px;background:transparent;cursor:pointer;color:inherit;font-size:13px;">×</button></span>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <textarea ref="{{ inputRef }}" value="{{ input }}" onChange="{{ onInput }}" onKeyDown="{{ onKey }}" rows="2" placeholder="Ask anything, or describe what to build… Type @ to add a campaign, segment or workflow" style="display:block;width:100%;box-sizing:border-box;padding:12px 14px 6px;border:0;border-radius:16px;font-size:14px;line-height:1.55;outline:0;resize:none;background:transparent;color:oklch(0.21 0.015 260);"></textarea>
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 8px 8px 10px;">
+                <div style="position:relative;">
+                  <button onClick="{{ toggleAt }}" title="Add context" style="display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:8px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;font-size:12.5px;color:oklch(0.40 0.012 260);">@ Add context</button>
+                  <sc-if value="{{ atOpen }}" hint-placeholder-val="">
+                    <div onClick="{{ toggleAt }}" style="position:fixed;inset:0;z-index:40;"></div>
+                    <div style="position:absolute;bottom:38px;left:0;z-index:41;width:300px;max-height:340px;overflow-y:auto;padding:6px;border-radius:12px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 16px 40px -12px oklch(0.2 0.02 260 / 0.3);animation:popIn .12s ease-out;">
+                      <sc-for list="{{ atGroups }}" as="g" hint-placeholder-count="4">
+                        <p style="margin:0;padding:8px 10px 4px;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:oklch(0.60 0.010 260);">{{ g.name }}</p>
+                        <sc-for list="{{ g.items }}" as="i" hint-placeholder-count="3">
+                          <button onClick="{{ i.onClick }}" style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border:0;border-radius:8px;background:transparent;cursor:pointer;text-align:left;font-size:13px;color:oklch(0.26 0.015 260);" style-hover="background:oklch(0.965 0.003 250);"><span style="flex:1;">{{ i.label }}</span><span style="font-size:11.5px;color:oklch(0.58 0.010 260);">{{ i.meta }}</span></button>
+                        </sc-for>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+                <span style="flex:1;font-size:11.5px;color:oklch(0.58 0.010 260);">{{ composerNote }}</span>
+                <sc-if value="{{ busy }}" hint-placeholder-val="">
+                  <button onClick="{{ stop }}" style="height:32px;padding:0 12px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:12.5px;font-weight:600;color:oklch(0.35 0.012 260);">Stop</button>
+                </sc-if>
+                <button onClick="{{ send }}" title="Send (Enter)" style="{{ sendStyle }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isRoutines }}" hint-placeholder-val="">
+        <div style="flex:1;overflow-y:auto;">
+          <div style="max-width:860px;margin:0 auto;padding:28px 24px;display:flex;flex-direction:column;gap:14px;">
+            <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:240px;">
+                <p style="margin:0;font-size:22px;font-weight:600;letter-spacing:-.02em;">Routines</p>
+                <p style="margin:5px 0 0;font-size:13.5px;color:oklch(0.50 0.012 260);">Recurring jobs the agent runs on a schedule. Results land in your chats — any changes still wait for your approval.</p>
+              </div>
+              <button onClick="{{ rtNewToggle }}" style="height:36px;padding:0 14px;border-radius:9px;border:1px solid oklch(0.45 0.16 290);background:oklch(0.50 0.16 290);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">+ New routine</button>
+            </div>
+            <sc-if value="{{ rtNewOpen }}" hint-placeholder-val="">
+              <div style="display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:14px;border:1px solid oklch(0.55 0.15 290 / 0.3);background:#fff;animation:popIn .15s ease-out;">
+                <input value="{{ rtName }}" onChange="{{ onRtName }}" placeholder="Name, e.g. Friday performance digest" style="height:38px;padding:0 12px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);font-size:13.5px;outline:0;color:oklch(0.21 0.015 260);"></input>
+                <textarea value="{{ rtPrompt }}" onChange="{{ onRtPrompt }}" rows="3" placeholder="What should the agent do each time? e.g. Summarize last week’s campaigns against our benchmark and flag anything under 20% opens." style="padding:10px 12px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);font-size:13.5px;line-height:1.5;outline:0;resize:vertical;color:oklch(0.21 0.015 260);"></textarea>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                  <div style="display:flex;gap:3px;padding:3px;border-radius:9px;background:oklch(0.955 0.003 250);"><sc-for list="{{ rtFreqs }}" as="r" hint-placeholder-count="3"><button onClick="{{ r.onClick }}" style="{{ r.style }}">{{ r.label }}</button></sc-for></div>
+                  <div style="display:flex;gap:3px;padding:3px;border-radius:9px;background:oklch(0.955 0.003 250);"><sc-for list="{{ rtDests }}" as="r" hint-placeholder-count="3"><button onClick="{{ r.onClick }}" style="{{ r.style }}">{{ r.label }}</button></sc-for></div>
+                  <span style="flex:1;"></span>
+                  <button onClick="{{ rtNewToggle }}" style="height:34px;padding:0 12px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:13px;color:oklch(0.35 0.012 260);">Cancel</button>
+                  <button onClick="{{ rtCreate }}" style="{{ rtCreateStyle }}">Create routine</button>
+                </div>
+              </div>
+            </sc-if>
+            <sc-for list="{{ routines }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex;align-items:flex-start;gap:14px;padding:16px;border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;">
+                <button onClick="{{ r.onToggle }}" title="Turn on or off" style="padding:0;border:0;background:transparent;cursor:pointer;"><span style="{{ r.track }}"><span style="{{ r.knob }}"></span></span></button>
+                <div style="flex:1;min-width:0;">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span style="font-size:14px;font-weight:600;">{{ r.name }}</span><span style="display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:5px;background:oklch(0.955 0.003 250);font-size:11.5px;color:oklch(0.42 0.012 260);">{{ r.when }}</span><span style="display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:5px;background:oklch(0.955 0.003 250);font-size:11.5px;color:oklch(0.42 0.012 260);">→ {{ r.dest }}</span></div>
+                  <p style="margin:5px 0 0;font-size:12.5px;line-height:1.5;color:oklch(0.48 0.012 260);">{{ r.prompt }}</p>
+                  <p style="{{ r.lastStyle }}">{{ r.last }}</p>
+                </div>
+                <button onClick="{{ r.onRun }}" style="height:32px;padding:0 12px;border-radius:8px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:12.5px;font-weight:600;color:oklch(0.30 0.015 260);white-space:nowrap;">Run now</button>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSkills }}" hint-placeholder-val="">
+        <div style="flex:1;overflow-y:auto;">
+          <div style="max-width:860px;margin:0 auto;padding:28px 24px;display:flex;flex-direction:column;gap:14px;">
+            <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:240px;">
+                <p style="margin:0;font-size:22px;font-weight:600;letter-spacing:-.02em;">Skills</p>
+                <p style="margin:5px 0 0;font-size:13.5px;color:oklch(0.50 0.012 260);">Reusable instructions the agent applies automatically — your team’s way of doing things.</p>
+              </div>
+              <button onClick="{{ skNewToggle }}" style="height:36px;padding:0 14px;border-radius:9px;border:1px solid oklch(0.45 0.16 290);background:oklch(0.50 0.16 290);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">+ New skill</button>
+            </div>
+            <sc-if value="{{ skNewOpen }}" hint-placeholder-val="">
+              <div style="display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:14px;border:1px solid oklch(0.55 0.15 290 / 0.3);background:#fff;animation:popIn .15s ease-out;">
+                <input value="{{ skName }}" onChange="{{ onSkName }}" placeholder="Name, e.g. Holiday promo checklist" style="height:38px;padding:0 12px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);font-size:13.5px;outline:0;color:oklch(0.21 0.015 260);"></input>
+                <textarea value="{{ skBody }}" onChange="{{ onSkBody }}" rows="4" placeholder="Instructions. e.g. Always include a plain-text version, keep subjects under 45 characters, never use “FREE” in caps." style="padding:10px 12px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);font-size:13.5px;line-height:1.5;outline:0;resize:vertical;color:oklch(0.21 0.015 260);"></textarea>
+                <div style="display:flex;justify-content:flex-end;gap:8px;">
+                  <button onClick="{{ skNewToggle }}" style="height:34px;padding:0 12px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:13px;color:oklch(0.35 0.012 260);">Cancel</button>
+                  <button onClick="{{ skCreate }}" style="{{ skCreateStyle }}">Save skill</button>
+                </div>
+              </div>
+            </sc-if>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;">
+              <sc-for list="{{ skills }}" as="s" hint-placeholder-count="5">
+                <div style="display:flex;flex-direction:column;gap:8px;padding:16px;border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;">
+                  <div style="display:flex;align-items:center;gap:10px;"><span style="flex:1;font-size:14px;font-weight:600;">{{ s.name }}</span><button onClick="{{ s.onToggle }}" style="padding:0;border:0;background:transparent;cursor:pointer;"><span style="{{ s.track }}"><span style="{{ s.knob }}"></span></span></button></div>
+                  <p style="margin:0;font-size:12.5px;line-height:1.55;color:oklch(0.48 0.012 260);">{{ s.body }}</p>
+                  <span style="font-size:11.5px;color:oklch(0.58 0.010 260);">{{ s.meta }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isMemory }}" hint-placeholder-val="">
+        <div style="flex:1;overflow-y:auto;">
+          <div style="max-width:860px;margin:0 auto;padding:28px 24px;display:flex;flex-direction:column;gap:14px;">
+            <div>
+              <p style="margin:0;font-size:22px;font-weight:600;letter-spacing:-.02em;">Memory</p>
+              <p style="margin:5px 0 0;font-size:13.5px;color:oklch(0.50 0.012 260);">What the agent knows about your business. It reads this before every task, so answers fit your brand and industry.</p>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding:16px;border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;">
+              <span style="font-size:13.5px;font-weight:600;">Industry</span>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;"><sc-for list="{{ industries }}" as="i" hint-placeholder-count="10"><button onClick="{{ i.onClick }}" style="{{ i.style }}">{{ i.label }}</button></sc-for></div>
+              <span style="font-size:12px;color:oklch(0.55 0.012 260);">Sets benchmarks, compliance rules and starter suggestions.</span>
+            </div>
+            <sc-for list="{{ memFields }}" as="f" hint-placeholder-count="4">
+              <div style="display:flex;flex-direction:column;gap:8px;padding:16px;border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;">
+                <span style="font-size:13.5px;font-weight:600;">{{ f.label }}</span>
+                <textarea value="{{ f.value }}" onChange="{{ f.onChange }}" rows="3" style="padding:10px 12px;border-radius:9px;border:1px solid oklch(0.92 0.004 250);background:oklch(0.985 0.002 250);font-size:13.5px;line-height:1.55;outline:0;resize:vertical;color:oklch(0.21 0.015 260);" style-focus="border-color:oklch(0.55 0.15 290);background:#fff;"></textarea>
+              </div>
+            </sc-for>
+            <div style="padding:16px;border-radius:14px;border:1px solid oklch(0.91 0.004 250);background:#fff;">
+              <span style="display:block;font-size:13.5px;font-weight:600;margin-bottom:10px;">Learned from your feedback</span>
+              <sc-for list="{{ learned }}" as="l" hint-placeholder-count="3">
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid oklch(0.95 0.003 250);">
+                  <span style="flex:1;font-size:13px;color:oklch(0.30 0.015 260);">{{ l.text }}</span>
+                  <span style="font-size:11.5px;color:oklch(0.58 0.010 260);">{{ l.when }}</span>
+                  <button onClick="{{ l.onForget }}" style="height:26px;padding:0 9px;border-radius:7px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;font-size:12px;color:oklch(0.45 0.012 260);">Forget</button>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+    </main>
+
+    <aside style="width:300px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid oklch(0.91 0.004 250);background:#fff;min-height:0;">
+      <div style="display:flex;gap:2px;padding:0 12px;border-bottom:1px solid oklch(0.93 0.004 250);">
+        <sc-for list="{{ rTabs }}" as="t" hint-placeholder-count="2"><button onClick="{{ t.onClick }}" style="{{ t.style }}">{{ t.label }}</button></sc-for>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;">
+        <sc-if value="{{ rIsPending }}" hint-placeholder-val="{{ true }}">
+          <sc-for list="{{ pending }}" as="p" hint-placeholder-count="0">
+            <div style="padding:11px 12px;border-radius:10px;border:1px solid oklch(0.55 0.15 290 / 0.22);background:oklch(0.55 0.15 290 / 0.03);">
+              <p style="margin:0;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:oklch(0.48 0.12 290);">{{ p.kind }}</p>
+              <p style="margin:2px 0 8px;font-size:13px;font-weight:500;color:oklch(0.24 0.015 260);">{{ p.title }}</p>
+              <div style="display:flex;gap:6px;">
+                <button onClick="{{ p.onOpen }}" style="height:28px;padding:0 9px;border-radius:7px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:12px;color:oklch(0.40 0.012 260);">View</button>
+                <span style="flex:1;"></span>
+                <button onClick="{{ p.onSkip }}" style="height:28px;padding:0 9px;border-radius:7px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:12px;color:oklch(0.40 0.012 260);">Skip</button>
+                <button onClick="{{ p.onApprove }}" style="height:28px;padding:0 10px;border-radius:7px;border:1px solid oklch(0.45 0.16 290);background:oklch(0.50 0.16 290);cursor:pointer;font-size:12px;font-weight:600;color:#fff;">Approve</button>
+              </div>
+            </div>
+          </sc-for>
+          <sc-if value="{{ noPending }}" hint-placeholder-val="{{ true }}">
+            <div style="padding:22px 14px;border-radius:12px;border:1px dashed oklch(0.86 0.005 250);text-align:center;">
+              <p style="margin:0;font-size:13px;font-weight:600;">Nothing waiting</p>
+              <p style="margin:5px 0 0;font-size:12px;line-height:1.5;color:oklch(0.52 0.012 260);">Changes the agent proposes show up here until you approve or skip them.</p>
+            </div>
+          </sc-if>
+        </sc-if>
+        <sc-if value="{{ rIsActivity }}" hint-placeholder-val="">
+          <sc-for list="{{ activity }}" as="a" hint-placeholder-count="4">
+            <div style="display:flex;gap:10px;padding:8px 2px;border-bottom:1px solid oklch(0.95 0.003 250);">
+              <span style="{{ a.dot }}"></span>
+              <div style="flex:1;min-width:0;">
+                <p style="margin:0;font-size:12.5px;line-height:1.45;color:oklch(0.26 0.015 260);">{{ a.text }}</p>
+                <p style="margin:2px 0 0;font-size:11.5px;color:oklch(0.58 0.010 260);">{{ a.meta }}</p>
+              </div>
+              <sc-if value="{{ a.canUndo }}" hint-placeholder-val=""><button onClick="{{ a.onUndo }}" style="align-self:flex-start;height:24px;padding:0 8px;border-radius:6px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;font-size:11.5px;color:oklch(0.40 0.012 260);">Undo</button></sc-if>
+            </div>
+          </sc-for>
+        </sc-if>
+      </div>
+      <div style="padding:12px 14px;border-top:1px solid oklch(0.94 0.003 250);font-size:11.5px;line-height:1.5;color:oklch(0.55 0.012 260);">The agent only acts with your permissions. Sending, deleting and DNS changes always need approval. Everything is logged.</div>
+    </aside>
+  </div>
+
+  <sc-if value="{{ hasToast }}" hint-placeholder-val="">
+    <div style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:90;padding:10px 14px;border-radius:10px;background:oklch(0.22 0.015 260);color:#fff;font-size:13px;font-weight:500;box-shadow:0 10px 30px -8px oklch(0.2 0.02 260 / 0.4);animation:popIn .16s ease-out;">{{ toast }}</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  KEY = 'vb-agent-v1';
+  scrollRef = React.createRef(); inputRef = React.createRef();
+  IND = { ecom:'E-commerce & retail', saas:'SaaS & software', b2b:'B2B services', health:'Healthcare', finance:'Finance & insurance', edu:'Education', travel:'Travel & hospitality', nonprofit:'Nonprofit', media:'Media & publishing', realestate:'Real estate' };
+  state = { section:'chat', chatId:null, chats:[], input:'', ctx:[], atOpen:false, busy:false, mode:'ask', rTab:'pending', activity:[], toast:null, openSteps:{},
+    routines:null, skills:null, mem:null, rtNewOpen:false, rtName:'', rtPrompt:'', rtFreq:'weekly', rtDest:'chat', skNewOpen:false, skName:'', skBody:'' };
+  componentDidMount(){
+    let d = null; try{ d = JSON.parse(localStorage.getItem(this.KEY)||'null'); }catch(e){}
+    if(d) this.setState({chats:d.chats||[], activity:d.activity||[], routines:d.routines||null, skills:d.skills||null, mem:d.mem||null, mode:d.mode||'ask'});
+    const q = new URLSearchParams(location.search).get('q'); if(q) setTimeout(()=>this.ask(q), 300);
+  }
+  componentWillUnmount(){ (this._t||[]).forEach(clearTimeout); clearTimeout(this.tT); }
+  componentDidUpdate(pp, ps){
+    const s = this.state;
+    if(['chats','activity','routines','skills','mem','mode'].some(k=>ps[k]!==s[k])){ try{ localStorage.setItem(this.KEY, JSON.stringify({chats:s.chats.slice(0,30), activity:s.activity.slice(0,80), routines:s.routines, skills:s.skills, mem:s.mem, mode:s.mode})); }catch(e){} }
+    if(ps.chats!==s.chats || ps.chatId!==s.chatId){ const el = this.scrollRef.current; if(el && this._stick!==false) requestAnimationFrame(()=>{ el.scrollTop = el.scrollHeight; }); }
+  }
+  toast(m){ clearTimeout(this.tT); this.setState({toast:m}); this.tT = setTimeout(()=>this.setState({toast:null}), 2600); }
+  later(fn, ms){ (this._t = this._t||[]).push(setTimeout(fn, ms)); }
+  uid(){ return Math.random().toString(36).slice(2,9); }
+  routinesV(){ return this.state.routines || [
+    {id:'r1', name:'Deliverability check', prompt:'Check authentication, bounce and complaint rates, and Gmail/Yahoo placement. Flag anything outside sender requirements.', freq:'weekly', when:'Mondays · 9:00 AM', dest:'chat', on:true, last:'Ran today 9:00 AM · 1 issue found', lastTone:'warn'},
+    {id:'r2', name:'Weekly performance digest', prompt:'Summarize last week’s campaigns and automations against the industry benchmark. Highlight the best and worst performer.', freq:'weekly', when:'Fridays · 4:00 PM', dest:'email', on:true, last:'Ran Oct 10 · emailed to 3 people', lastTone:''},
+    {id:'r3', name:'Segment & list hygiene', prompt:'Find contacts with no opens in 180 days, duplicate profiles and invalid addresses. Propose a sunset segment.', freq:'monthly', when:'1st of month · 8:00 AM', dest:'chat', on:true, last:'Ran Oct 1 · proposed 1 change', lastTone:''},
+    {id:'r4', name:'Draft cleanup', prompt:'List campaigns and workflows that have been in draft for more than 30 days.', freq:'monthly', when:'15th of month · 9:00 AM', dest:'slack', on:false, last:'Paused', lastTone:''},
+  ]; }
+  skillsV(){ return this.state.skills || [
+    {id:'s1', name:'Brand voice', body:'Warm, direct and short. Second person. No exclamation marks in subject lines. Sign off as “The Acme team”.', on:true, uses:142},
+    {id:'s2', name:'Compliance check', body:'Before proposing any send: unsubscribe link and postal address present, SMS includes “Reply STOP to opt out”, no health or financial details in subject lines.', on:true, uses:96},
+    {id:'s3', name:'Subject line scoring', body:'Give 3–5 options under 50 characters, each with predicted open rate based on our last 90 days, and flag spam-trigger words.', on:true, uses:61},
+    {id:'s4', name:'Report format', body:'Lead with the one number that changed most, then a table, then at most three recommendations with expected impact.', on:true, uses:38},
+    {id:'s5', name:'Discount guardrails', body:'Never offer more than 20% off without asking. Prefer free shipping for first-order incentives.', on:false, uses:4},
+  ]; }
+  memV(){ return this.state.mem || { ind:'ecom', about:'Acme sells everyday bags and travel gear direct-to-consumer in the US and Canada. Average order $86, ~48k subscribers.', voice:'Friendly, practical, a little witty. Avoid hype. Short sentences.', audience:'Mostly 25–44, urban, mobile-first. VIPs (12.4k) buy 3+ times a year.', rules:'Never email unsubscribed or bounced contacts. No sends between 9 PM and 8 AM local time. Max 3 marketing emails per week.',
+    learned:[['Prefers Tuesday 10 AM for newsletters', Date.now()-6*864e5],['Wants SMS only as a fallback to email', Date.now()-12*864e5],['Calls VIP customers “insiders” in copy', Date.now()-20*864e5]] }; }
+  starters(ind){
+    const C = {
+      ecom:[['Build','Create a win-back flow for customers who haven’t bought in 90 days'],['Analyze','Why did last week’s Black Friday teaser underperform?'],['Audience','Find VIPs likely to buy again this month'],['Write','Write 5 subject lines for our holiday gift guide'],['Fix','Check our deliverability before Black Friday'],['Clean up','Audit drafts and campaigns nobody is using']],
+      saas:[['Build','Build a trial onboarding flow that branches on activation'],['Analyze','Which onboarding email drives the most upgrades?'],['Audience','Find trial users who never connected their data'],['Write','Write a failed-payment email that doesn’t sound scary'],['Fix','Check our deliverability and DMARC setup'],['Clean up','Audit drafts and campaigns nobody is using']],
+      health:[['Build','Create appointment reminders by SMS 24h and 2h before'],['Analyze','How did our flu shot campaign do vs. benchmark?'],['Audience','Find patients overdue for an annual check-up'],['Write','Rewrite our reminder to be HIPAA-safe'],['Fix','Check our deliverability and DMARC setup'],['Clean up','Audit drafts and campaigns nobody is using']],
+    };
+    return (C[ind] || C.ecom);
+  }
+  newChat = () => this.setState({section:'chat', chatId:null, input:'', ctx:[]}, ()=>this.inputRef.current && this.inputRef.current.focus());
+  curChat(){ return this.state.chats.find(c=>c.id===this.state.chatId); }
+  patchMsg(cid, mid, fn){ this.setState(s=>({chats:s.chats.map(c=>c.id!==cid ? c : {...c, msgs:c.msgs.map(m=>m.id===mid ? fn(m) : m)})})); }
+  intent(q){
+    const s = q.toLowerCase();
+    if(/win.?back|re.?engag|lapsed|inactive|haven.?t bought|flow|workflow|onboard|abandon|reminder|journey|series|build|create (a|an)/.test(s)) return 'build';
+    if(/deliverab|spam|dmarc|dkim|spf|bounce|inbox placement|blocklist|reputation/.test(s)) return 'deliv';
+    if(/subject|write|rewrite|copy|headline/.test(s)) return 'write';
+    if(/find|segment|audience|who |likely|overdue|never connected/.test(s)) return 'segment';
+    if(/audit|draft|clean|unused|nobody/.test(s)) return 'audit';
+    if(/why|underperform|analy|report|perform|compare|which|how did|benchmark/.test(s)) return 'analyze';
+    return 'general';
+  }
+  script(kind, q, mem){
+    const ind = mem.ind, I = this.IND[ind];
+    const P = (kind, title, detail, impact, link)=>({id:this.uid(), kind, title, detail, impact:impact||'', status:'pending', link:link||null});
+    if(kind==='build'){
+      const health = ind==='health', saas = ind==='saas';
+      const name = health ? 'Appointment reminders' : saas ? 'Trial onboarding' : 'Win-back · 90 days';
+      return { steps:[['Reading your audience and past purchases','48,210 contacts'],['Checking 3 similar automations for overlap','No conflicts'],['Applying skills: Brand voice, Compliance check','2 skills'],['Drafting segment, workflow and 3 messages','']],
+        text:[health ? 'Here’s a reminder workflow built from your clinic’s booking data. Messages say “your appointment” only — no treatment details — so they stay HIPAA-safe.' : saas ? 'Here’s an onboarding workflow that branches on whether a trial user has connected their data. Activated users get power tips; stuck users get help and your success team is alerted.' : 'Here’s a win-back plan for 6,420 customers who bought before but not in the last 90 days. It leads with what’s new, then an offer, then SMS only for people who never opened — matching your “SMS as fallback” preference.',
+          'Nothing goes live until you approve it. The workflow is created as a draft so you can test it with a sample contact first.'],
+        plan:{ title:'Proposed changes', items: health ? [
+          P('Create segment','Upcoming appointments · next 7 days','Contacts with an appointment_date in the next 7 days and SMS consent.','1,184 contacts','Customer App.dc.html?view=segments'),
+          P('Create workflow (draft)',name,'Trigger: Appointment is booked → Email confirmation → Wait until 1 day before → SMS reminder → Wait until 2 hours before → SMS.','Benchmark: reminders cut no-shows ~30%','Workflow Builder.dc.html?new=1'),
+          P('Write 3 messages','Confirmation email + 2 SMS reminders','All SMS include “Reply STOP to opt out”. No diagnosis or treatment in copy.','') ] : [
+          P('Create segment', saas?'Trials · not activated':'Lapsed buyers · 90 days', saas?'Trial started in last 14 days AND has not completed onboarding.':'Placed ≥1 order AND no order in 90 days AND subscribed to marketing.', saas?'342 contacts':'6,420 contacts · $552k lifetime value','Customer App.dc.html?view=segments'),
+          P('Create workflow (draft)',name, saas?'Trigger: Trial starts → Welcome → Wait 1 day → If activated: power tips, else: help email + notify success@acme.com → Wait 3 days → Trial ending.':'Trigger: Enters segment → “What’s new” email → Wait 3 days → If opened: 15% offer, else: SMS fallback → Wait 7 days → Last-chance email. Goal: Places an order.', saas?'Similar flows lift trial conversion 18–25%':'Est. 2.1–2.8% reactivation · ~$11–15k revenue','Workflow Builder.dc.html?new=1'),
+          P('Write 3 emails + 1 SMS','“Insiders, it’s been a while” and 3 more','Brand voice applied. Subjects 34–46 characters, no spam triggers. Offer capped at 15% per your discount guardrail.','') ] },
+        chips:['Make the offer free shipping instead','Add an A/B test on the first subject','Show me the email drafts'] };
+    }
+    if(kind==='deliv') return { steps:[['Checking SPF, DKIM and DMARC for mail.acme.com','3 records'],['Reading 7 days of bounces and complaints','384k sends'],['Comparing Gmail, Outlook and Yahoo placement','42 seed tests'],['Checking blocklists','0 listings']],
+      text:['You’re in good shape, with one thing to fix before high-volume sends. SPF and DKIM pass, complaint rate is 0.04% (Gmail’s limit is 0.3%), and you’re on no blocklists.','DMARC is set to p=none (monitor only), and Yahoo is placing 11% of your mail in spam. Moving to p=quarantine and suppressing 312 addresses that hard-bounced this month should lift your score from 94 to about 97.'],
+      table:{cols:['Check','Result','Status'], rows:[['SPF','Pass · include:spf.valasys.io','ok'],['DKIM','Pass · 2048-bit','ok'],['DMARC','p=none — not enforced','warn'],['Complaint rate','0.04%','ok'],['Hard bounces · 30d','312 (0.08%)','warn'],['Yahoo inbox placement','89%','warn']]},
+      plan:{title:'Proposed changes', items:[
+        P('Suppress contacts','312 hard-bounced addresses','They’ll be excluded from all sends. You can restore any of them from Suppressions.','Protects sender reputation','Customer App.dc.html?view=contacts'),
+        P('DNS change — you apply','Update DMARC to p=quarantine','I can’t change DNS for you. Record: v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc@acme.com — I’ll re-check automatically once it’s live.','Score 94 → ~97','Customer App.dc.html?view=deliverability'),
+        P('Create segment','Sunset · no opens in 180 days','Stop marketing to 3,880 contacts who haven’t opened in 6 months, after one re-permission email.','Typical +2–4 pts inbox placement','Customer App.dc.html?view=segments') ]},
+      chips:['Write the re-permission email','Schedule this check every Monday','Explain DMARC simply'] };
+    if(kind==='write'){ const base = ind==='health' ? ['Your appointment is coming up','Quick reminder from Acme Clinic','See you tomorrow, {{first_name}}','A note before your visit','Ready for tomorrow?'] : ['Gifts they’ll actually use','{{first_name}}, the gift guide is here','Sorted: gifts under $50','Wrap up your list early','Insiders get first pick'];
+      return { steps:[['Reading your last 90 days of subject lines','214 sends'],['Applying skills: Brand voice, Subject line scoring','2 skills'],['Scoring options against your audience','']],
+        text:['Five options, scored on your own open-rate history. Your audience responds best to short, benefit-first subjects and personalization — exclamation marks lowered your opens by about 6% this year.'],
+        table:{cols:['Subject','Length','Predicted opens','Notes'], rows:base.map((x,i)=>[x, String(x.length), (36.8-i*1.7).toFixed(1)+'%', i===0?'Best overall':i===1?'Personalized':i===4?'Uses your “insiders” term':'Clear and safe'])},
+        plan:{title:'Proposed change', items:[P('A/B test','Test the top 2 subjects on 20% of the audience','Winner chosen by opens after 4 hours, then sent to the remaining 80%.','Est. +1.5–2.5 pts opens','Customer App.dc.html?view=campaigns')]},
+        chips:['Make them more playful','Write the preview text too','Translate to Spanish'] }; }
+    if(kind==='segment') return { steps:[['Translating your request into rules',''],['Counting matching contacts','48,210 checked'],['Checking consent and suppressions','']],
+      text:[ind==='health'?'I found 2,940 patients whose last check-up was more than 12 months ago and who have email consent. 1,620 also have SMS consent.':'I found 2,180 VIP customers who are likely to buy again in the next 30 days: they buy every 40–70 days and their last order was 35–60 days ago.','Here are the rules — you can tweak them before I save the segment.'],
+      table:{cols:['Rule','Value'], rows: ind==='health'?[['Last visit','more than 12 months ago'],['Email consent','subscribed'],['Not in','Suppressions, deceased flag']]:[['Segment','VIP customers'],['Average days between orders','40–70'],['Days since last order','35–60'],['Email consent','subscribed']]},
+      plan:{title:'Proposed change', items:[P('Create segment', ind==='health'?'Overdue annual check-up':'VIPs due to reorder', 'Dynamic — updates as contacts change.', ind==='health'?'2,940 contacts':'2,180 contacts · avg order $124','Customer App.dc.html?view=segments')]},
+      chips:['Build a campaign for this segment','Exclude anyone emailed this week','How has this group engaged lately?'] };
+    if(kind==='audit') return { steps:[['Scanning campaigns, workflows and templates','63 items'],['Finding items untouched for 30+ days','9 found']],
+      text:['9 items haven’t been touched in over 30 days. Archiving keeps them restorable but out of your lists and reports. Nothing here is live.'],
+      table:{cols:['Item','Type','Last edited'], rows:[['Summer clearance v2','Campaign draft','Aug 2'],['Spring lookbook','Campaign draft','Apr 18'],['Trial ending (old)','Workflow draft','Jul 30'],['Referral program test','Campaign draft','Jun 11'],['Newsletter template — 2024','Template','Mar 5']]},
+      plan:{title:'Proposed change', items:[P('Archive','9 unused drafts and templates','Moved to Archive. Restore anytime from the filter menu.','')]},
+      chips:['Only archive campaigns','Show all 9 items','Do this every month'] };
+    if(kind==='analyze') return { steps:[['Pulling last 30 days of campaign results','8 campaigns'],[`Comparing to ${I} benchmarks`,''],['Breaking down by provider, device and send time','']],
+      text:['The teaser’s opens were fine (31.2% vs 29.8% benchmark) but clicks were weak: 1.1% vs 2.1%. Two things explain most of it.','First, the main button sat below a 900px hero image, so 62% of mobile readers never saw it. Second, it went out Friday at 6 PM — your audience clicks most Tuesday–Thursday around 7 PM.'],
+      table:{cols:['Campaign','Opens','Clicks','vs benchmark'], rows:[['Black Friday teaser','31.2%','1.1%','Clicks −48%'],['New arrivals — fall edit','34.6%','2.9%','Clicks +38%'],['Restock alert','41.0%','4.2%','Clicks +100%'],['Holiday gift guide (draft)','—','—','Not sent']]},
+      plan:{title:'Proposed changes', items:[P('Edit campaign','Move the button above the hero on “Black Friday VIP early access”','Keeps the same design, just reorders blocks for mobile.','Est. +0.6–0.9 pts clicks','Email Builder.dc.html'),P('Reschedule','Send it Tuesday 7:00 PM local time','Uses each contact’s time zone; quiet hours respected.','')]},
+      chips:['Resend to non-openers','Compare with last year','Why is Outlook lower?'] };
+    return null;
+  }
+  ask = async (q, opts) => {
+    q = (q||'').trim(); const st = this.state; if(!q || st.busy) return;
+    const mem = this.memV(); let cid = st.chatId, chats = st.chats;
+    if(!cid){ cid = this.uid(); chats = [{id:cid, title:q.length>48?q.slice(0,46)+'…':q, at:Date.now(), msgs:[]}, ...chats]; }
+    const um = {id:this.uid(), role:'user', text:q, ctx:st.ctx.map(c=>c.label)};
+    const am = {id:this.uid(), role:'agent', steps:[], text:[], status:'working', t0:Date.now()};
+    this._stick = true;
+    this.setState({chats:chats.map(c=>c.id===cid?{...c, at:Date.now(), msgs:[...c.msgs, um, am]}:c), chatId:cid, input:'', ctx:[], busy:true, section:'chat', openSteps:{...st.openSteps, [am.id]:true}});
+    const kind = opts && opts.kind || this.intent(q); let S = this.script(kind, q, mem);
+    if(!S){
+      let text = ['I can help with that. Tell me which campaign, segment or workflow you mean — or use @ Add context — and I’ll pull the numbers and propose changes for you to approve.'];
+      try { if(window.claude && window.claude.complete){ const r = await window.claude.complete(`You are the AI agent inside Valasys, an email/SMS marketing platform. Business: ${mem.about} Industry: ${this.IND[mem.ind]}. Brand voice: ${mem.voice}. Rules: ${mem.rules}. Answer the user in 2-4 short paragraphs of plain text, practical and specific; if they want something built, describe the plan. User: ${q}`); if(r && String(r).trim()) text = String(r).trim().split(/\n\s*\n/).slice(0,4); } } catch(e){}
+      S = { steps:[['Reading your workspace context',''],['Thinking it through','']], text, chips:['Build this for me','Show me the numbers'] };
+    }
+    this._stop = false;
+    S.steps.forEach((s,i)=>this.later(()=>{ if(this._stop) return; this.patchMsg(cid, am.id, m=>({...m, steps:[...m.steps, {label:s[0], meta:s[1]}]})); }, 450+i*520));
+    this.later(()=>{ if(this._stop) return; const auto = this.state.mode==='auto';
+      const plan = S.plan ? {...S.plan, items:S.plan.items.map(it=>({...it, status: auto && /draft|Create segment|Write|Archive/.test(it.kind) && !/DNS|Suppress/.test(it.kind) ? 'applied' : 'pending'}))} : null;
+      this.patchMsg(cid, am.id, m=>({...m, status:'done', ms:Date.now()-m.t0, text:S.text, table:S.table||null, plan, chips:S.chips||[]}));
+      this.setState(s=>({busy:false, openSteps:{...s.openSteps, [am.id]:false}}));
+      if(plan) plan.items.filter(i=>i.status==='applied').forEach(i=>this.log(i, 'Auto-applied (draft)'));
+    }, 450+S.steps.length*520+350);
+  };
+  log(it, how){ this.setState(s=>({activity:[{id:this.uid(), itemId:it.id, text:`${it.kind}: ${it.title}`, how, at:Date.now(), undone:false}, ...s.activity]})); }
+  setItem(cid, mid, iid, status){
+    let it0 = null;
+    this.setState(s=>({chats:s.chats.map(c=>c.id!==cid?c:{...c, msgs:c.msgs.map(m=>m.id!==mid||!m.plan?m:{...m, plan:{...m.plan, items:m.plan.items.map(i=>{ if(i.id!==iid) return i; it0 = i; return {...i, status}; })}})})}), ()=>{
+      if(it0 && status==='applied'){ this.log(it0, 'Approved by you'); this.toast(/DNS/.test(it0.kind) ? 'Got it — I’ll re-check DMARC every hour' : it0.kind+' done'); }
+      if(it0 && status==='skipped') this.toast('Skipped'); });
+  }
+  undo(a){
+    this.setState(s=>({activity:s.activity.map(x=>x.id===a.id?{...x, undone:true}:x), chats:s.chats.map(c=>({...c, msgs:c.msgs.map(m=>!m.plan?m:{...m, plan:{...m.plan, items:m.plan.items.map(i=>i.id===a.itemId?{...i, status:'undone'}:i)}})}))}));
+    this.toast('Undone — change reverted');
+  }
+  runRoutine(r){
+    const kind = /deliver/i.test(r.name+r.prompt) ? 'deliv' : /segment|hygiene|180/i.test(r.prompt) ? 'segment' : /draft/i.test(r.prompt) ? 'audit' : 'analyze';
+    this.setState({section:'chat', chatId:null}, ()=>this.ask('Routine · '+r.name+': '+r.prompt, {kind}));
+  }
+  renderVals(){
+    const st = this.state, mem = this.memV(), chat = this.curChat();
+    const seg = (on)=>`height:28px;padding:0 10px;border:0;border-radius:7px;cursor:pointer;font-size:12.5px;font-weight:${on?600:500};white-space:nowrap;${on?'background:#fff;color:oklch(0.20 0.015 260);box-shadow:0 1px 2px oklch(0.2 0.02 260 / 0.10);':'background:transparent;color:oklch(0.48 0.012 260);'}`;
+    const tab = (on)=>`height:40px;padding:0 10px;border:0;background:transparent;cursor:pointer;font-size:13px;font-weight:${on?600:500};border-bottom:2px solid ${on?'oklch(0.50 0.16 290)':'transparent'};color:${on?'oklch(0.22 0.015 260)':'oklch(0.52 0.012 260)'};margin-bottom:-1px;`;
+    const tog = (on)=>({track:`position:relative;display:block;width:34px;height:20px;border-radius:10px;background:${on?'oklch(0.50 0.16 290)':'oklch(0.86 0.005 250)'};`, knob:`position:absolute;top:2px;left:${on?16:2}px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px oklch(0.2 0.02 260 / 0.25);`});
+    const rel = (t)=>{ const m = Math.round((Date.now()-t)/6e4); if(m<1) return 'Just now'; if(m<60) return m+'m ago'; const h = Math.round(m/60); if(h<24) return h+'h ago'; return Math.round(h/24)+'d ago'; };
+    const allItems = []; st.chats.forEach(c=>c.msgs.forEach(m=>m.plan && m.plan.items.forEach(i=>allItems.push({c, m, i}))));
+    const pend = allItems.filter(x=>x.i.status==='pending');
+    const GLYPH = {seg:['◎','oklch(0.46 0.13 250)','oklch(0.55 0.13 250 / 0.10)'], flow:['⇢','oklch(0.46 0.15 290)','oklch(0.55 0.15 290 / 0.10)'], write:['✎','oklch(0.50 0.19 25)','oklch(0.56 0.20 25 / 0.09)'], dns:['⚑','oklch(0.50 0.12 65)','oklch(0.75 0.15 70 / 0.16)'], other:['✓','oklch(0.44 0.12 155)','oklch(0.62 0.14 155 / 0.12)']};
+    const gOf = (k)=> /segment/i.test(k)?'seg':/workflow/i.test(k)?'flow':/Write|Edit/i.test(k)?'write':/DNS|Suppress/i.test(k)?'dns':'other';
+    const msgs = chat ? chat.msgs.map(m=>{
+      if(m.role==='user') return { isUser:true, isAgent:false, text:m.text, ctx:m.ctx||[], hasCtx:!!(m.ctx&&m.ctx.length) };
+      const done = m.status==='done', open = st.openSteps[m.id]!==undefined ? st.openSteps[m.id] : !done;
+      const items = m.plan ? m.plan.items : [], pendN = items.filter(i=>i.status==='pending').length;
+      return { isUser:false, isAgent:true,
+        spinStyle: done ? 'display:block;width:14px;height:14px;border-radius:50%;background:oklch(0.62 0.14 155 / 0.16);box-shadow:inset 0 0 0 4px oklch(0.58 0.14 155);' : 'display:block;width:12px;height:12px;border-radius:50%;border:2px solid oklch(0.55 0.15 290 / 0.25);border-top-color:oklch(0.50 0.16 290);animation:spin .8s linear infinite;',
+        stepsLabel: done ? `Worked for ${Math.max(1,Math.round((m.ms||2000)/1000))}s · ${m.steps.length} steps` : (m.steps.length ? m.steps[m.steps.length-1].label+'…' : 'Thinking…'), stepsArrow: open ? '▴' : '▾', showSteps:open,
+        toggleSteps:()=>this.setState(s=>({openSteps:{...s.openSteps, [m.id]:!open}})),
+        steps:m.steps.map((s,i)=>({label:s.label, meta:s.meta, dot:`display:block;width:6px;height:6px;border-radius:50%;flex-shrink:0;background:${done||i<m.steps.length-1?'oklch(0.58 0.14 155)':'oklch(0.50 0.16 290)'};`})),
+        hasText:done && m.text.length>0, paras:m.text,
+        hasTable:done && !!m.table, cols:m.table ? m.table.cols.map((c,i)=>({label:c, style:`text-align:${i===0?'left':'left'};padding:9px 14px;font-size:11.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:oklch(0.48 0.012 260);white-space:nowrap;`})) : [],
+        rows:m.table ? m.table.rows.map(r=>({cells:r.map((v,i)=>{ const isSt = v==='ok'||v==='warn'; return { v: v==='ok'?'Pass':v==='warn'?'Review':v, style:`padding:9px 14px;font-size:13px;${i===0?'font-weight:500;color:oklch(0.22 0.015 260);':'color:oklch(0.38 0.012 260);'}${isSt?`font-weight:600;color:${v==='ok'?'oklch(0.44 0.13 155)':'oklch(0.50 0.12 65)'};`:''}${/−/.test(v)?'color:oklch(0.50 0.19 25);font-weight:500;':/\+\d/.test(v)?'color:oklch(0.44 0.13 155);font-weight:500;':''}` }; })})) : [],
+        hasPlan:done && !!m.plan, planTitle:m.plan?m.plan.title:'', planMeta: m.plan ? (pendN ? `${pendN} waiting for approval` : 'All handled') : '',
+        planPending:pendN>0, planNote: st.mode==='auto' ? 'Drafts were applied automatically. Live and destructive changes still need you.' : 'Nothing changes until you approve.', approveAllLabel:`Approve all (${pendN})`,
+        approveAll:()=>items.filter(i=>i.status==='pending').forEach(i=>this.setItem(chat.id, m.id, i.id, 'applied')),
+        rejectAll:()=>items.filter(i=>i.status==='pending').forEach(i=>this.setItem(chat.id, m.id, i.id, 'skipped')),
+        items:items.map(i=>{ const g = GLYPH[gOf(i.kind)], ok = i.status==='applied';
+          return { kind:i.kind, title:i.title, detail:i.detail, impact:i.impact, hasImpact:!!i.impact, glyph:g[0], iconStyle:`display:flex;align-items:center;justify-content:center;width:32px;height:32px;flex-shrink:0;border-radius:9px;font-size:15px;color:${g[1]};background:${g[2]};`,
+            pending:i.status==='pending', done:i.status!=='pending', stLabel: ok ? (/DNS/.test(i.kind)?'Watching':'Applied') : i.status==='undone' ? 'Undone' : 'Skipped',
+            stStyle:`display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;font-size:11.5px;font-weight:600;${ok?'color:oklch(0.42 0.13 155);background:oklch(0.62 0.14 155 / 0.12);':'color:oklch(0.48 0.012 260);background:oklch(0.95 0.004 250);'}`,
+            hasLink: ok && !!i.link, href:i.link||'#', linkLabel:'Open',
+            onApprove:()=>this.setItem(chat.id, m.id, i.id, 'applied'), onSkip:()=>this.setItem(chat.id, m.id, i.id, 'skipped') }; }),
+        hasChips:done && (m.chips||[]).length>0, chips:(m.chips||[]).map(c=>({label:c, onClick:()=>this.ask(c)})) };
+    }) : [];
+    const sec = st.section, pendN = pend.length;
+    const okIn = !!st.input.trim() && !st.busy;
+    const ROUT = this.routinesV(), SK = this.skillsV();
+    const setR = (fn)=>this.setState(s=>({routines:fn(s.routines||ROUT)})), setS = (fn)=>this.setState(s=>({skills:fn(s.skills||SK)})), setMem = (p)=>this.setState(s=>({mem:{...(s.mem||mem), ...p}}));
+    const recentDigest = ROUT.filter(r=>r.on && r.lastTone==='warn').concat(ROUT.filter(r=>r.on && /proposed/.test(r.last))).slice(0,2);
+    return {
+      industryLabel:this.IND[mem.ind],
+      modes:[['ask','Ask first','Every change waits for your approval'],['auto','Auto-apply drafts','Drafts are created automatically; sending, deleting and DNS still ask']].map(m=>({label:m[1], tip:m[2], style:seg(st.mode===m[0]), onClick:()=>{ this.setState({mode:m[0]}); this.toast(m[2]); }})),
+      newChat:this.newChat,
+      sections:[['chat','Chats',''],['routines','Routines',String(ROUT.filter(r=>r.on).length)],['skills','Skills',String(SK.filter(s=>s.on).length)],['memory','Memory','']].map(s=>({label:s[1], badge:s[2], badgeStyle: s[2] ? 'font-size:11.5px;color:oklch(0.58 0.010 260);' : 'display:none;', onClick:()=>this.setState({section:s[0]}),
+        style:`display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 10px;border:0;border-radius:8px;cursor:pointer;font-size:13px;font-weight:${sec===s[0]?600:500};${sec===s[0]?'background:oklch(0.55 0.15 290 / 0.09);color:oklch(0.36 0.12 290);':'background:transparent;color:oklch(0.32 0.015 260);'}`})),
+      recent:st.chats.slice(0,20).map(c=>({title:c.title, when:rel(c.at), onClick:()=>this.setState({section:'chat', chatId:c.id}), onDelete:()=>this.setState(s=>({chats:s.chats.filter(x=>x.id!==c.id), chatId:s.chatId===c.id?null:s.chatId})),
+        style:`display:block;width:100%;padding:8px 10px;border:0;border-radius:8px;cursor:pointer;text-align:left;background:${st.chatId===c.id&&sec==='chat'?'oklch(0.955 0.003 250)':'transparent'};`})),
+      isChat:sec==='chat', isRoutines:sec==='routines', isSkills:sec==='skills', isMemory:sec==='memory',
+      scrollRef:this.scrollRef, inputRef:this.inputRef, isEmpty:!chat, msgs,
+      hasDigest:recentDigest.length>0, digest:recentDigest.map(r=>({title:r.name, sub:r.last, dot:`display:block;width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${r.lastTone==='warn'?'oklch(0.72 0.15 70)':'oklch(0.55 0.15 290)'};`, onClick:()=>this.runRoutine(r)})),
+      starters:this.starters(mem.ind).map(s=>({cat:s[0], text:s[1], onClick:()=>this.ask(s[1])})),
+      input:st.input, onInput:(e)=>{ const v = e.target.value; this.setState({input:v, atOpen: /(^|\s)@$/.test(v) ? true : st.atOpen}); },
+      onKey:(e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); this.ask(st.input); } },
+      send:()=>this.ask(st.input), sendStyle:`display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;border:0;cursor:${okIn?'pointer':'default'};color:#fff;background:${okIn?'oklch(0.50 0.16 290)':'oklch(0.86 0.01 290)'};`,
+      busy:st.busy, stop:()=>{ this._stop = true; (this._t||[]).forEach(clearTimeout); this._t = []; const c = this.curChat(); const last = c && c.msgs[c.msgs.length-1]; if(last && last.status==='working') this.patchMsg(c.id, last.id, m=>({...m, status:'done', ms:Date.now()-m.t0, text:['Stopped. Ask again whenever you’re ready.']})); this.setState({busy:false}); },
+      composerNote: st.mode==='auto' ? 'Auto-applies drafts · asks before anything goes live' : 'Asks before every change',
+      hasCtx:st.ctx.length>0, ctxChips:st.ctx.map(c=>({label:c.label, onRemove:()=>this.setState({ctx:st.ctx.filter(x=>x!==c)})})),
+      atOpen:st.atOpen, toggleAt:()=>this.setState({atOpen:!st.atOpen}),
+      atGroups:[['Campaigns',[['Black Friday VIP early access','Draft'],['New arrivals — fall edit','Sent Oct 2'],['Holiday gift guide','Draft']]],['Segments',[['VIP customers','12,400'],['Engaged · last 90 days','18,640']]],['Workflows',[['Abandoned checkout','Active'],['Welcome series','Active']]],['Templates',[['Newsletter — monthly','Template']]]].map(g=>({name:g[0], items:g[1].map(i=>({label:i[0], meta:i[1], onClick:()=>this.setState({ctx: st.ctx.some(x=>x.label===i[0]) ? st.ctx : [...st.ctx, {label:i[0], type:g[0]}], atOpen:false, input:st.input.replace(/@$/,'')})}))})),
+      rTabs:[['pending', pendN ? `Waiting · ${pendN}` : 'Waiting'],['activity','Activity']].map(t=>({label:t[1], style:tab(st.rTab===t[0]), onClick:()=>this.setState({rTab:t[0]})})),
+      rIsPending:st.rTab==='pending', rIsActivity:st.rTab==='activity',
+      pending:pend.map(x=>({kind:x.i.kind, title:x.i.title, onOpen:()=>this.setState({section:'chat', chatId:x.c.id}), onApprove:()=>this.setItem(x.c.id, x.m.id, x.i.id, 'applied'), onSkip:()=>this.setItem(x.c.id, x.m.id, x.i.id, 'skipped')})), noPending:!pendN,
+      activity:(st.activity.length ? st.activity : [{id:'seed1', text:'Create segment: Lapsed buyers · 60 days', how:'Approved by Priya Shah', at:Date.now()-2*864e5, undone:false, seed:true},{id:'seed2', text:'Routine: Deliverability check ran', how:'Scheduled', at:Date.now()-5*36e5, undone:false, seed:true}]).map(a=>({text:a.text, meta:`${a.undone?'Undone · ':''}${a.how} · ${rel(a.at)}`, canUndo:!a.undone && !a.seed && Date.now()-a.at<864e5, onUndo:()=>this.undo(a), dot:`display:block;width:7px;height:7px;margin-top:5px;border-radius:50%;flex-shrink:0;background:${a.undone?'oklch(0.75 0.006 260)':'oklch(0.58 0.14 155)'};`})),
+      rtNewOpen:st.rtNewOpen, rtNewToggle:()=>this.setState({rtNewOpen:!st.rtNewOpen}), rtName:st.rtName, rtPrompt:st.rtPrompt, onRtName:(e)=>this.setState({rtName:e.target.value}), onRtPrompt:(e)=>this.setState({rtPrompt:e.target.value}),
+      rtFreqs:[['daily','Daily'],['weekly','Weekly'],['monthly','Monthly']].map(r=>({label:r[1], style:seg(st.rtFreq===r[0]), onClick:()=>this.setState({rtFreq:r[0]})})),
+      rtDests:[['chat','In app'],['email','Email'],['slack','Slack']].map(r=>({label:r[1], style:seg(st.rtDest===r[0]), onClick:()=>this.setState({rtDest:r[0]})})),
+      rtCreateStyle:`height:34px;padding:0 13px;border-radius:9px;font-size:13px;font-weight:600;${st.rtName.trim()&&st.rtPrompt.trim()?'cursor:pointer;border:1px solid oklch(0.45 0.16 290);background:oklch(0.50 0.16 290);color:#fff;':'cursor:not-allowed;border:1px solid oklch(0.91 0.004 250);background:oklch(0.955 0.003 250);color:oklch(0.62 0.010 260);'}`,
+      rtCreate:()=>{ if(!st.rtName.trim() || !st.rtPrompt.trim()) return; setR(L=>[{id:this.uid(), name:st.rtName.trim(), prompt:st.rtPrompt.trim(), freq:st.rtFreq, when:{daily:'Every day · 9:00 AM', weekly:'Mondays · 9:00 AM', monthly:'1st of month · 9:00 AM'}[st.rtFreq], dest:st.rtDest, on:true, last:'Not run yet', lastTone:''}, ...L]); this.setState({rtNewOpen:false, rtName:'', rtPrompt:''}); this.toast('Routine created — first run at the next scheduled time'); },
+      routines:ROUT.map(r=>({...r, dest:{chat:'In app', email:'Email', slack:'Slack'}[r.dest], ...tog(r.on), lastStyle:`margin:6px 0 0;font-size:12px;font-weight:500;color:${r.lastTone==='warn'?'oklch(0.50 0.12 65)':'oklch(0.55 0.012 260)'};`,
+        onToggle:()=>setR(L=>L.map(x=>x.id===r.id?{...x, on:!x.on, last: x.on ? 'Paused' : 'Scheduled'}:x)), onRun:()=>this.runRoutine(r)})),
+      skNewOpen:st.skNewOpen, skNewToggle:()=>this.setState({skNewOpen:!st.skNewOpen}), skName:st.skName, skBody:st.skBody, onSkName:(e)=>this.setState({skName:e.target.value}), onSkBody:(e)=>this.setState({skBody:e.target.value}),
+      skCreateStyle:`height:34px;padding:0 13px;border-radius:9px;font-size:13px;font-weight:600;${st.skName.trim()&&st.skBody.trim()?'cursor:pointer;border:1px solid oklch(0.45 0.16 290);background:oklch(0.50 0.16 290);color:#fff;':'cursor:not-allowed;border:1px solid oklch(0.91 0.004 250);background:oklch(0.955 0.003 250);color:oklch(0.62 0.010 260);'}`,
+      skCreate:()=>{ if(!st.skName.trim() || !st.skBody.trim()) return; setS(L=>[...L, {id:this.uid(), name:st.skName.trim(), body:st.skBody.trim(), on:true, uses:0}]); this.setState({skNewOpen:false, skName:'', skBody:''}); this.toast('Skill saved — the agent will apply it from now on'); },
+      skills:SK.map(s=>({...s, ...tog(s.on), meta: s.on ? `Used ${s.uses} times` : 'Off', onToggle:()=>setS(L=>L.map(x=>x.id===s.id?{...x, on:!x.on}:x))})),
+      industries:Object.entries(this.IND).map(([k,v])=>({label:v, onClick:()=>setMem({ind:k}), style:`height:30px;padding:0 11px;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:500;${mem.ind===k?'border:1px solid oklch(0.50 0.16 290);background:oklch(0.55 0.15 290 / 0.08);color:oklch(0.38 0.14 290);':'border:1px solid oklch(0.91 0.004 250);background:#fff;color:oklch(0.32 0.015 260);'}`})),
+      memFields:[['about','About the business'],['voice','Brand voice'],['audience','Audience'],['rules','Rules the agent must follow']].map(f=>({label:f[1], value:mem[f[0]], onChange:(e)=>setMem({[f[0]]:e.target.value})})),
+      learned:mem.learned.map((l,i)=>({text:l[0], when:rel(l[1]), onForget:()=>{ setMem({learned:mem.learned.filter((_,j)=>j!==i)}); this.toast('Forgotten'); }})),
+      hasToast:!!st.toast, toast:st.toast||'',
+    };
+  }
+}
+</script>
+</body>
+</html>

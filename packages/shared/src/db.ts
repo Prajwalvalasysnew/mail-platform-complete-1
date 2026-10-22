@@ -26,9 +26,21 @@ function envInt(name: string, fallback: number): number {
   return n;
 }
 
+function observeConnectionErrors(pool: Pool): Pool {
+  // pg emits connection-level errors even when no query is outstanding
+  // (including idle-in-transaction termination). Without an observer, Node's
+  // EventEmitter treats them as uncaught exceptions and kills the service.
+  // Query promises still reject normally; do not replay transactions here.
+  const report = (error: Error & { code?: string }) =>
+    console.warn('[database] connection error', { code: error.code ?? 'connection_closed' });
+  pool.on('error', report); // idle clients are removed by pg-pool itself
+  pool.on('connect', client => client.on('error', report)); // checked-out clients
+  return pool;
+}
+
 export function getPool(): Pool {
   if (!_pool) {
-    _pool = new Pool({
+    _pool = observeConnectionErrors(new Pool({
       connectionString: getConnectionString(),
       // All tunables are env-overridable so each service (API vs worker) can
       // size its pool independently; defaults match the previous hardcoded
@@ -43,7 +55,7 @@ export function getPool(): Pool {
       statement_timeout: envInt('PG_STATEMENT_TIMEOUT_MS', 30_000),
       idle_in_transaction_session_timeout: envInt('PG_IDLE_TX_TIMEOUT_MS', 60_000),
       application_name: process.env.PG_APPLICATION_NAME ?? process.env.SERVICE_NAME ?? 'mail-platform',
-    });
+    }));
   }
   return _pool;
 }
@@ -99,14 +111,14 @@ export function getReadDb(): Kysely<Database> {
   const url = process.env.DATABASE_REPLICA_URL;
   if (!url) return db;
   if (!_dbRead) {
-    _replicaPool = new Pool({
+    _replicaPool = observeConnectionErrors(new Pool({
       connectionString: url,
       max: envInt('PGPOOL_REPLICA_MAX', 10),
       idleTimeoutMillis: envInt('PGPOOL_IDLE_TIMEOUT_MS', 30_000),
       connectionTimeoutMillis: envInt('PGPOOL_CONNECT_TIMEOUT_MS', 5_000),
       statement_timeout: envInt('PG_STATEMENT_TIMEOUT_MS', 30_000),
       application_name: `${process.env.PG_APPLICATION_NAME ?? process.env.SERVICE_NAME ?? 'mail-platform'}-read`,
-    });
+    }));
     _dbRead = new Kysely<Database>({ dialect: new PostgresDialect({ pool: _replicaPool }) });
   }
   return _dbRead;

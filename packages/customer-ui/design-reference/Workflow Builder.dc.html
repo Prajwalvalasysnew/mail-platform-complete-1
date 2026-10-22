@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<title>Workflow Builder — Valasys</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"></link>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"></link>
+<style>
+html,body{margin:0;height:100%;font-family:'Geist',system-ui,sans-serif;color:oklch(0.21 0.015 260);background:oklch(0.968 0.003 250);}
+a{color:oklch(0.50 0.19 25);} a:hover{color:oklch(0.42 0.19 25);}
+input,select,textarea,button{font-family:inherit;}
+@keyframes popIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+@keyframes slideIn{from{opacity:0;transform:translateX(16px);}to{opacity:1;transform:none;}}
+@keyframes pulse{0%{opacity:.45}50%{opacity:1}100%{opacity:.45}}
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;height:100vh;width:100%;overflow:hidden;">
+  <header style="display:flex;align-items:center;gap:10px;height:58px;flex-shrink:0;padding:0 14px;border-bottom:1px solid oklch(0.91 0.004 250);background:#fff;">
+    <a href="Customer App.dc.html?view=automations" title="Back to automations" style="display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;border:1px solid oklch(0.91 0.004 250);color:oklch(0.35 0.012 260);text-decoration:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+    </a>
+    <div style="display:flex;flex-direction:column;min-width:200px;flex:1 1 200px;max-width:420px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input value="{{ name }}" onChange="{{ onName }}" style="flex:1;min-width:0;height:26px;padding:0 6px;margin-left:-6px;border:1px solid transparent;border-radius:6px;background:transparent;font-size:15px;font-weight:600;letter-spacing:-.01em;outline:0;color:oklch(0.21 0.015 260);" style-hover="border-color:oklch(0.91 0.004 250);" style-focus="border-color:oklch(0.56 0.20 25);background:#fff;"></input>
+        <span style="{{ statusPill }}">{{ status }}</span>
+      </div>
+      <span style="font-size:12px;color:oklch(0.55 0.012 260);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ subText }}</span>
+    </div>
+    <div style="flex:0 1 auto;margin-left:auto;"></div>
+    <button onClick="{{ undo }}" title="Undo (⌘Z)" style="{{ undoStyle }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg></button>
+    <button onClick="{{ redo }}" title="Redo (⇧⌘Z)" style="{{ redoStyle }}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"></path><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"></path></svg></button>
+    <span style="width:1px;height:22px;background:oklch(0.91 0.004 250);margin:0 2px;"></span>
+    <button onClick="{{ openGallery }}" style="flex-shrink:0;height:34px;padding:0 11px;border-radius:9px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap;color:oklch(0.30 0.015 260);">Templates</button>
+    <button onClick="{{ showIssues }}" style="{{ issuesBtnStyle }}"><span style="{{ issuesDot }}"></span>{{ issuesLabel }}</button>
+    <button onClick="{{ openTest }}" style="flex-shrink:0;height:34px;padding:0 11px;border-radius:9px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap;color:oklch(0.30 0.015 260);">Test run</button>
+    <button onClick="{{ toggleAi }}" title="AI assistant" style="{{ aiBtnStyle }}">✦ AI</button>
+    <button onClick="{{ primary }}" style="{{ primaryStyle }}">{{ primaryLabel }}</button>
+  </header>
+
+  <sc-if value="{{ isLive }}" hint-placeholder-val="">
+    <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;padding:9px 16px;background:oklch(0.62 0.14 155 / 0.10);border-bottom:1px solid oklch(0.62 0.14 155 / 0.22);font-size:12.5px;color:oklch(0.36 0.10 155);">
+      <span style="width:7px;height:7px;border-radius:50%;background:oklch(0.58 0.14 155);"></span>
+      <span style="flex:1;"><b style="font-weight:600;">Live.</b> {{ liveNote }}</span>
+    </div>
+  </sc-if>
+
+  <div style="position:relative;flex:1;display:flex;min-height:0;">
+    <aside style="width:236px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid oklch(0.91 0.004 250);background:#fff;min-height:0;">
+      <div style="padding:14px 14px 10px;">
+        <p style="margin:0;font-size:14px;font-weight:600;">Steps</p>
+        <p style="margin:3px 0 10px;font-size:12px;color:oklch(0.55 0.012 260);">Drag onto the canvas, or click to add</p>
+        <div style="position:relative;display:flex;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="position:absolute;left:10px;top:10px;color:oklch(0.60 0.010 260);"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+          <input value="{{ palQ }}" onChange="{{ onPalQ }}" placeholder="Search steps" style="flex:1;min-width:0;height:34px;padding:0 10px 0 30px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);background:oklch(0.98 0.002 250);font-size:13px;outline:0;color:oklch(0.21 0.015 260);" style-focus="border-color:oklch(0.56 0.20 25);background:#fff;"></input>
+        </div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:0 10px 12px;min-height:0;">
+        <sc-for list="{{ palette }}" as="g" hint-placeholder-count="4">
+          <p style="margin:0;padding:12px 4px 6px;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:oklch(0.58 0.010 260);">{{ g.group }}</p>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <sc-for list="{{ g.items }}" as="m" hint-placeholder-count="2">
+              <div draggable="true" onDragStart="{{ m.onDragStart }}" onDragEnd="{{ m.onDragEnd }}" onClick="{{ m.onClick }}" title="{{ m.tip }}" style="display:flex;align-items:center;gap:10px;padding:8px 9px;border-radius:10px;border:1px solid oklch(0.92 0.004 250);background:#fff;cursor:grab;user-select:none;" style-hover="border-color:oklch(0.80 0.03 25);box-shadow:0 4px 12px -6px oklch(0.2 0.02 260 / 0.22);">
+                <span style="{{ m.iconStyle }}">{{ m.icon }}</span>
+                <span style="flex:1;min-width:0;"><span style="display:block;font-size:13px;font-weight:500;color:oklch(0.24 0.015 260);">{{ m.label }}</span><span style="display:block;font-size:11.5px;color:oklch(0.56 0.012 260);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ m.desc }}</span></span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;color:oklch(0.78 0.006 260);"><circle cx="9" cy="6" r="1.6"></circle><circle cx="15" cy="6" r="1.6"></circle><circle cx="9" cy="12" r="1.6"></circle><circle cx="15" cy="12" r="1.6"></circle><circle cx="9" cy="18" r="1.6"></circle><circle cx="15" cy="18" r="1.6"></circle></svg>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+      <div style="padding:11px 14px;border-top:1px solid oklch(0.94 0.003 250);font-size:11.5px;line-height:1.5;color:oklch(0.55 0.012 260);">Drag from a step’s bottom dot to connect. Drop a step onto another to insert it after.</div>
+    </aside>
+
+    <div ref="{{ canvasRef }}" onPointerDown="{{ onCanvasDown }}" onDragOver="{{ onDragOver }}" onDrop="{{ onDrop }}" style="{{ canvasStyle }}">
+      <div style="{{ worldStyle }}">
+        {{ edgesEl }}
+        <sc-for list="{{ nodesV }}" as="n" hint-placeholder-count="4">
+          <div style="{{ n.posStyle }}">
+            <div onPointerDown="{{ n.onDown }}" style="{{ n.cardStyle }}">
+              <div style="display:flex;align-items:center;gap:10px;height:100%;">
+                <span style="{{ n.iconStyle }}">{{ n.icon }}</span>
+                <div style="flex:1;min-width:0;">
+                  <p style="{{ n.kindStyle }}">{{ n.kind }}</p>
+                  <p style="margin:2px 0 0;font-size:13.5px;font-weight:600;color:oklch(0.22 0.015 260);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ n.title }}</p>
+                  <p style="margin:2px 0 0;font-size:12px;color:oklch(0.52 0.012 260);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ n.sub }}</p>
+                </div>
+                <sc-if value="{{ n.hasIssue }}" hint-placeholder-val=""><span style="{{ n.issueStyle }}">{{ n.issueCount }}</span></sc-if>
+              </div>
+              <sc-if value="{{ n.hasIn }}" hint-placeholder-val=""><span style="{{ n.inStyle }}"></span></sc-if>
+              <sc-for list="{{ n.outs }}" as="p" hint-placeholder-count="1">
+                <span onPointerDown="{{ p.onDown }}" title="Drag to connect" style="{{ p.style }}"></span>
+                <sc-if value="{{ p.hasLabel }}" hint-placeholder-val=""><span style="{{ p.labelStyle }}">{{ p.label }}</span></sc-if>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+        <sc-if value="{{ hasEdgeBar }}" hint-placeholder-val="">
+          <div onPointerDown="{{ stop }}" style="{{ edgeBarStyle }}">
+            <button onClick="{{ edgeAdd }}" title="Insert a step here" style="width:28px;height:28px;border:0;border-radius:7px;background:transparent;cursor:pointer;font-size:16px;color:oklch(0.30 0.015 260);" style-hover="background:oklch(0.955 0.003 250);">+</button>
+            <span style="width:1px;height:18px;background:oklch(0.91 0.004 250);"></span>
+            <button onClick="{{ edgeDel }}" title="Remove connection" style="width:28px;height:28px;border:0;border-radius:7px;background:transparent;cursor:pointer;font-size:16px;color:oklch(0.50 0.19 25);" style-hover="background:oklch(0.56 0.20 25 / 0.07);">×</button>
+            <sc-if value="{{ edgeMenuOpen }}" hint-placeholder-val="">
+              <div style="position:absolute;top:38px;left:50%;transform:translateX(-50%);z-index:20;width:250px;border-radius:12px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 16px 40px -12px oklch(0.2 0.02 260 / 0.28);padding:6px;animation:popIn .14s ease-out;">
+                <sc-for list="{{ edgeMenu }}" as="g" hint-placeholder-count="4">
+                  <p style="margin:0;padding:8px 10px 4px;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:oklch(0.60 0.010 260);">{{ g.group }}</p>
+                  <sc-for list="{{ g.items }}" as="m" hint-placeholder-count="2">
+                    <button onClick="{{ m.onClick }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:8px;background:transparent;cursor:pointer;text-align:left;" style-hover="background:oklch(0.965 0.003 250);">
+                      <span style="{{ m.iconStyle }}">{{ m.icon }}</span>
+                      <span style="font-size:13px;font-weight:500;color:oklch(0.24 0.015 260);">{{ m.label }}</span>
+                    </button>
+                  </sc-for>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+      </div>
+
+      <sc-if value="{{ hasLinkMenu }}" hint-placeholder-val="">
+        <div onPointerDown="{{ stop }}" style="{{ linkMenuStyle }}">
+          <p style="margin:0;padding:8px 10px 2px;font-size:12px;font-weight:600;color:oklch(0.30 0.015 260);">Add and connect a step</p>
+          <sc-for list="{{ linkMenu }}" as="g" hint-placeholder-count="4">
+            <p style="margin:0;padding:8px 10px 4px;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:oklch(0.60 0.010 260);">{{ g.group }}</p>
+            <sc-for list="{{ g.items }}" as="m" hint-placeholder-count="2">
+              <button onClick="{{ m.onClick }}" style="display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border:0;border-radius:8px;background:transparent;cursor:pointer;text-align:left;" style-hover="background:oklch(0.965 0.003 250);">
+                <span style="{{ m.iconStyle }}">{{ m.icon }}</span>
+                <span style="font-size:13px;font-weight:500;color:oklch(0.24 0.015 260);">{{ m.label }}</span>
+              </button>
+            </sc-for>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isLinking }}" hint-placeholder-val="">
+        <div style="position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:12;padding:8px 14px;border-radius:10px;background:oklch(0.22 0.015 260);color:#fff;font-size:12.5px;font-weight:500;pointer-events:none;box-shadow:0 8px 24px -8px oklch(0.2 0.02 260 / 0.4);">Release on a step to connect · on empty space to add one</div>
+      </sc-if>
+      <sc-if value="{{ isEmpty }}" hint-placeholder-val="">
+        <div style="position:absolute;left:50%;top:58%;transform:translate(-50%,-50%);z-index:5;width:340px;padding:20px;border-radius:14px;border:1px dashed oklch(0.82 0.005 250);background:oklch(1 0 0 / 0.85);text-align:center;">
+          <p style="margin:0;font-size:14px;font-weight:600;">Build your workflow</p>
+          <p style="margin:6px 0 14px;font-size:12.5px;line-height:1.5;color:oklch(0.50 0.012 260);">Drag steps from the left and connect them, start from an industry template, or describe it to AI.</p>
+          <div style="display:flex;justify-content:center;gap:8px;">
+            <button onPointerDown="{{ stop }}" onClick="{{ openGallery }}" style="height:34px;padding:0 13px;border-radius:9px;border:1px solid oklch(0.50 0.20 25);background:oklch(0.56 0.20 25);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">Browse templates</button>
+            <button onPointerDown="{{ stop }}" onClick="{{ toggleAi }}" style="height:34px;padding:0 13px;border-radius:9px;border:1px solid oklch(0.55 0.15 290 / 0.30);background:#fff;cursor:pointer;font-size:13px;font-weight:600;color:oklch(0.44 0.15 290);">✦ Describe it</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <div onPointerDown="{{ stop }}" style="position:absolute;left:14px;bottom:14px;z-index:10;display:flex;align-items:center;gap:2px;padding:3px;border-radius:10px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 4px 12px -4px oklch(0.2 0.02 260 / 0.15);">
+        <button onClick="{{ zoomOut }}" title="Zoom out" style="width:30px;height:28px;border:0;border-radius:7px;background:transparent;cursor:pointer;font-size:16px;color:oklch(0.35 0.012 260);" style-hover="background:oklch(0.955 0.003 250);">−</button>
+        <button onClick="{{ zoomReset }}" title="Reset to 100%" style="min-width:48px;height:28px;border:0;border-radius:7px;background:transparent;cursor:pointer;font-size:12px;font-weight:500;font-variant-numeric:tabular-nums;color:oklch(0.35 0.012 260);" style-hover="background:oklch(0.955 0.003 250);">{{ zoomLabel }}</button>
+        <button onClick="{{ zoomIn }}" title="Zoom in" style="width:30px;height:28px;border:0;border-radius:7px;background:transparent;cursor:pointer;font-size:16px;color:oklch(0.35 0.012 260);" style-hover="background:oklch(0.955 0.003 250);">+</button>
+        <span style="width:1px;height:18px;background:oklch(0.91 0.004 250);margin:0 2px;"></span>
+        <button onClick="{{ fit }}" title="Fit to screen" style="height:28px;padding:0 9px;border:0;border-radius:7px;background:transparent;cursor:pointer;font-size:12px;font-weight:500;color:oklch(0.35 0.012 260);" style-hover="background:oklch(0.955 0.003 250);">Fit</button>
+        <button onClick="{{ tidyUp }}" title="Arrange steps neatly" style="height:28px;padding:0 9px;border:0;border-radius:7px;background:transparent;cursor:pointer;font-size:12px;font-weight:500;color:oklch(0.35 0.012 260);" style-hover="background:oklch(0.955 0.003 250);">Tidy up</button>
+      </div>
+    </div>
+
+    <aside style="width:340px;flex-shrink:0;display:flex;flex-direction:column;border-left:1px solid oklch(0.91 0.004 250);background:#fff;min-height:0;">
+      <sc-if value="{{ hasSel }}" hint-placeholder-val="">
+        <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid oklch(0.94 0.003 250);">
+          <span style="{{ sel.iconStyle }}">{{ sel.icon }}</span>
+          <div style="flex:1;min-width:0;">
+            <p style="margin:0;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:oklch(0.55 0.012 260);">{{ sel.kind }}</p>
+            <p style="margin:2px 0 0;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ sel.title }}</p>
+          </div>
+          <sc-if value="{{ sel.canEdit }}" hint-placeholder-val="">
+            <button onClick="{{ sel.onDuplicate }}" title="Duplicate step" style="width:30px;height:30px;border-radius:7px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;color:oklch(0.35 0.012 260);display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path></svg></button>
+            <button onClick="{{ sel.onDelete }}" title="Delete step" style="width:30px;height:30px;border-radius:7px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;color:oklch(0.50 0.19 25);display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path></svg></button>
+          </sc-if>
+          <button onClick="{{ deselect }}" title="Close" style="width:30px;height:30px;border-radius:7px;border:0;background:transparent;cursor:pointer;font-size:17px;color:oklch(0.50 0.012 260);">×</button>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px;">
+          <sc-for list="{{ sel.issues }}" as="i" hint-placeholder-count="0">
+            <div style="{{ i.style }}"><span style="{{ i.dot }}"></span><span style="flex:1;">{{ i.text }}</span></div>
+          </sc-for>
+          <sc-for list="{{ sel.fields }}" as="f" hint-placeholder-count="3">
+            <div style="display:flex;flex-direction:column;gap:7px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <span style="font-size:13px;font-weight:500;">{{ f.label }}</span>
+                <sc-if value="{{ f.hasAi }}" hint-placeholder-val="">
+                  <button onClick="{{ f.onAi }}" style="height:24px;padding:0 8px;border-radius:6px;border:1px solid oklch(0.55 0.15 290 / 0.28);background:#fff;cursor:pointer;font-size:11.5px;font-weight:600;color:oklch(0.46 0.15 290);">{{ f.aiLabel }}</button>
+                </sc-if>
+                <sc-if value="{{ f.hasCount }}" hint-placeholder-val=""><span style="{{ f.countStyle }}">{{ f.count }}</span></sc-if>
+              </div>
+              <sc-if value="{{ f.isInput }}" hint-placeholder-val="">
+                <input value="{{ f.value }}" onChange="{{ f.onChange }}" placeholder="{{ f.ph }}" style="height:38px;padding:0 11px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);font-size:13.5px;outline:0;color:oklch(0.21 0.015 260);" style-focus="border-color:oklch(0.56 0.20 25);box-shadow:0 0 0 3px oklch(0.56 0.20 25 / 0.12);"></input>
+              </sc-if>
+              <sc-if value="{{ f.isText }}" hint-placeholder-val="">
+                <textarea value="{{ f.value }}" onChange="{{ f.onChange }}" rows="4" placeholder="{{ f.ph }}" style="padding:10px 11px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);font-size:13.5px;line-height:1.5;outline:0;resize:vertical;color:oklch(0.21 0.015 260);" style-focus="border-color:oklch(0.56 0.20 25);"></textarea>
+              </sc-if>
+              <sc-if value="{{ f.isSelect }}" hint-placeholder-val="">
+                <div style="position:relative;">
+                  <button onClick="{{ f.dd.toggle }}" style="{{ f.dd.btnStyle }}">
+                    <span style="flex:1;min-width:0;padding:8px 0;"><span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ f.dd.label }}</span><sc-if value="{{ f.dd.hasSub }}" hint-placeholder-val=""><span style="display:block;margin-top:1px;font-size:11.5px;color:oklch(0.56 0.012 260);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ f.dd.sub }}</span></sc-if></span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:oklch(0.55 0.012 260);"><path d="m7 10 5 5 5-5"></path></svg>
+                  </button>
+                  <sc-if value="{{ f.dd.open }}" hint-placeholder-val="">
+                    <div onClick="{{ f.dd.close }}" style="position:fixed;inset:0;z-index:40;"></div>
+                    <div style="position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:41;display:flex;flex-direction:column;max-height:320px;border-radius:12px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 16px 40px -12px oklch(0.2 0.02 260 / 0.28);overflow:hidden;animation:popIn .12s ease-out;">
+                      <sc-if value="{{ f.dd.searchable }}" hint-placeholder-val="">
+                        <div style="padding:8px;border-bottom:1px solid oklch(0.95 0.003 250);"><input autoFocus="{{ true }}" value="{{ ddQ }}" onChange="{{ onDdQ }}" placeholder="Search…" style="width:100%;box-sizing:border-box;height:32px;padding:0 10px;border-radius:8px;border:1px solid oklch(0.91 0.004 250);background:oklch(0.98 0.002 250);font-size:13px;outline:0;color:oklch(0.21 0.015 260);"></input></div>
+                      </sc-if>
+                      <div style="flex:1;overflow-y:auto;padding:4px;">
+                        <sc-for list="{{ f.dd.items }}" as="o" hint-placeholder-count="4">
+                          <sc-if value="{{ o.isHead }}" hint-placeholder-val=""><p style="margin:0;padding:8px 10px 3px;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:oklch(0.60 0.010 260);">{{ o.l }}</p></sc-if>
+                          <sc-if value="{{ o.isOpt }}" hint-placeholder-val="{{ true }}">
+                            <button onClick="{{ o.onClick }}" style="{{ o.style }}" style-hover="background:oklch(0.965 0.003 250);">
+                              <span style="flex:1;min-width:0;"><span style="{{ o.lStyle }}">{{ o.l }}</span><sc-if value="{{ o.hasD }}" hint-placeholder-val=""><span style="display:block;margin-top:2px;font-size:11.5px;line-height:1.4;color:oklch(0.55 0.012 260);">{{ o.d }}</span></sc-if></span>
+                              <span style="{{ o.checkStyle }}">✓</span>
+                            </button>
+                          </sc-if>
+                        </sc-for>
+                        <sc-if value="{{ f.dd.empty }}" hint-placeholder-val=""><p style="margin:0;padding:14px;text-align:center;font-size:12.5px;color:oklch(0.55 0.012 260);">No matches</p></sc-if>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+              <sc-if value="{{ f.isSeg }}" hint-placeholder-val="">
+                <div style="display:flex;gap:3px;padding:3px;border-radius:10px;background:oklch(0.955 0.003 250);">
+                  <sc-for list="{{ f.options }}" as="o" hint-placeholder-count="3"><button onClick="{{ o.onClick }}" style="{{ o.style }}">{{ o.l }}</button></sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{ f.isAmount }}" hint-placeholder-val="">
+                <div style="display:flex;gap:8px;">
+                  <input type="number" min="1" value="{{ f.value }}" onChange="{{ f.onChange }}" style="width:84px;height:38px;padding:0 11px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);font-size:13.5px;outline:0;font-variant-numeric:tabular-nums;color:oklch(0.21 0.015 260);"></input>
+                  <div style="flex:1;display:flex;gap:3px;padding:3px;border-radius:10px;background:oklch(0.955 0.003 250);">
+                    <sc-for list="{{ f.options }}" as="o" hint-placeholder-count="3"><button onClick="{{ o.onClick }}" style="{{ o.style }}">{{ o.l }}</button></sc-for>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ f.isLink }}" hint-placeholder-val="">
+                <a href="{{ f.href }}" style="display:flex;align-items:center;justify-content:center;height:36px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);background:#fff;font-size:13px;font-weight:500;text-decoration:none;color:oklch(0.28 0.015 260);">{{ f.value }}</a>
+              </sc-if>
+              <sc-if value="{{ f.hasHint }}" hint-placeholder-val=""><p style="margin:0;font-size:12px;line-height:1.5;color:oklch(0.55 0.012 260);">{{ f.hint }}</p></sc-if>
+            </div>
+          </sc-for>
+          <sc-if value="{{ sel.hasStats }}" hint-placeholder-val="">
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+              <sc-for list="{{ sel.stats }}" as="s" hint-placeholder-count="3">
+                <div style="padding:10px;border-radius:9px;background:oklch(0.975 0.002 250);"><p style="margin:0;font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;">{{ s.v }}</p><p style="margin:2px 0 0;font-size:11px;color:oklch(0.55 0.012 260);">{{ s.k }}</p></div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ noSel }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;gap:2px;padding:0 12px;border-bottom:1px solid oklch(0.94 0.003 250);">
+          <sc-for list="{{ pTabs }}" as="t" hint-placeholder-count="2"><button onClick="{{ t.onClick }}" style="{{ t.style }}">{{ t.label }}</button></sc-for>
+        </div>
+        <div style="flex:1;overflow-y:auto;">
+          <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;flex-direction:column;">
+              <sc-for list="{{ settings }}" as="g" hint-placeholder-count="4">
+                <div style="padding:16px;border-bottom:1px solid oklch(0.95 0.003 250);display:flex;flex-direction:column;gap:10px;">
+                  <p style="margin:0;font-size:13.5px;font-weight:600;">{{ g.title }}</p>
+                  <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="2">
+                    <div style="display:flex;flex-direction:column;gap:6px;">
+                      <sc-if value="{{ r.isToggle }}" hint-placeholder-val="">
+                        <button onClick="{{ r.onClick }}" style="display:flex;align-items:flex-start;gap:10px;padding:0;border:0;background:transparent;cursor:pointer;text-align:left;">
+                          <span style="{{ r.track }}"><span style="{{ r.knob }}"></span></span>
+                          <span style="flex:1;"><span style="display:block;font-size:13px;font-weight:500;color:oklch(0.24 0.015 260);">{{ r.label }}</span><span style="display:block;margin-top:2px;font-size:12px;line-height:1.45;color:oklch(0.55 0.012 260);">{{ r.hint }}</span></span>
+                        </button>
+                      </sc-if>
+                      <sc-if value="{{ r.isSelect }}" hint-placeholder-val="">
+                        <span style="font-size:12.5px;font-weight:500;color:oklch(0.40 0.012 260);">{{ r.label }}</span>
+                        <div style="position:relative;">
+                  <button onClick="{{ r.dd.toggle }}" style="{{ r.dd.btnStyle }}">
+                    <span style="flex:1;min-width:0;padding:8px 0;"><span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ r.dd.label }}</span><sc-if value="{{ r.dd.hasSub }}" hint-placeholder-val=""><span style="display:block;margin-top:1px;font-size:11.5px;color:oklch(0.56 0.012 260);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ r.dd.sub }}</span></sc-if></span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:oklch(0.55 0.012 260);"><path d="m7 10 5 5 5-5"></path></svg>
+                  </button>
+                  <sc-if value="{{ r.dd.open }}" hint-placeholder-val="">
+                    <div onClick="{{ r.dd.close }}" style="position:fixed;inset:0;z-index:40;"></div>
+                    <div style="position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:41;display:flex;flex-direction:column;max-height:320px;border-radius:12px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 16px 40px -12px oklch(0.2 0.02 260 / 0.28);overflow:hidden;animation:popIn .12s ease-out;">
+                      <sc-if value="{{ r.dd.searchable }}" hint-placeholder-val="">
+                        <div style="padding:8px;border-bottom:1px solid oklch(0.95 0.003 250);"><input autoFocus="{{ true }}" value="{{ ddQ }}" onChange="{{ onDdQ }}" placeholder="Search…" style="width:100%;box-sizing:border-box;height:32px;padding:0 10px;border-radius:8px;border:1px solid oklch(0.91 0.004 250);background:oklch(0.98 0.002 250);font-size:13px;outline:0;color:oklch(0.21 0.015 260);"></input></div>
+                      </sc-if>
+                      <div style="flex:1;overflow-y:auto;padding:4px;">
+                        <sc-for list="{{ r.dd.items }}" as="o" hint-placeholder-count="4">
+                          <sc-if value="{{ o.isHead }}" hint-placeholder-val=""><p style="margin:0;padding:8px 10px 3px;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:oklch(0.60 0.010 260);">{{ o.l }}</p></sc-if>
+                          <sc-if value="{{ o.isOpt }}" hint-placeholder-val="{{ true }}">
+                            <button onClick="{{ o.onClick }}" style="{{ o.style }}" style-hover="background:oklch(0.965 0.003 250);">
+                              <span style="flex:1;min-width:0;"><span style="{{ o.lStyle }}">{{ o.l }}</span><sc-if value="{{ o.hasD }}" hint-placeholder-val=""><span style="display:block;margin-top:2px;font-size:11.5px;line-height:1.4;color:oklch(0.55 0.012 260);">{{ o.d }}</span></sc-if></span>
+                              <span style="{{ o.checkStyle }}">✓</span>
+                            </button>
+                          </sc-if>
+                        </sc-for>
+                        <sc-if value="{{ r.dd.empty }}" hint-placeholder-val=""><p style="margin:0;padding:14px;text-align:center;font-size:12.5px;color:oklch(0.55 0.012 260);">No matches</p></sc-if>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+                        <sc-if value="{{ r.hasHint }}" hint-placeholder-val=""><span style="font-size:12px;line-height:1.45;color:oklch(0.55 0.012 260);">{{ r.hint }}</span></sc-if>
+                      </sc-if>
+                      <sc-if value="{{ r.isPair }}" hint-placeholder-val="">
+                        <div style="display:flex;align-items:center;gap:8px;padding-left:44px;">
+                          <input type="time" value="{{ r.a }}" onChange="{{ r.onA }}" style="height:34px;padding:0 8px;border-radius:8px;border:1px solid oklch(0.90 0.004 250);font-size:13px;outline:0;color:oklch(0.21 0.015 260);"></input>
+                          <span style="font-size:12.5px;color:oklch(0.55 0.012 260);">to</span>
+                          <input type="time" value="{{ r.b }}" onChange="{{ r.onB }}" style="height:34px;padding:0 8px;border-radius:8px;border:1px solid oklch(0.90 0.004 250);font-size:13px;outline:0;color:oklch(0.21 0.015 260);"></input>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ r.isNum }}" hint-placeholder-val="">
+                        <div style="display:flex;align-items:center;gap:8px;padding-left:44px;font-size:12.5px;color:oklch(0.45 0.012 260);">
+                          <span>Max</span>
+                          <input type="number" min="1" value="{{ r.value }}" onChange="{{ r.onChange }}" style="width:60px;height:32px;padding:0 8px;border-radius:8px;border:1px solid oklch(0.90 0.004 250);font-size:13px;outline:0;color:oklch(0.21 0.015 260);"></input>
+                          <span>{{ r.suffix }}</span>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ isIssues }}" hint-placeholder-val="">
+            <div style="display:flex;flex-direction:column;gap:8px;padding:14px;">
+              <p style="margin:0 0 4px;font-size:13px;color:oklch(0.45 0.012 260);">{{ issuesSummary }}</p>
+              <sc-for list="{{ issueList }}" as="i" hint-placeholder-count="3">
+                <button onClick="{{ i.onClick }}" style="display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border-radius:10px;border:1px solid oklch(0.92 0.004 250);background:#fff;cursor:pointer;text-align:left;" style-hover="border-color:oklch(0.84 0.006 250);">
+                  <span style="{{ i.dot }}"></span>
+                  <span style="flex:1;"><span style="display:block;font-size:13px;font-weight:500;color:oklch(0.24 0.015 260);">{{ i.text }}</span><span style="display:block;margin-top:2px;font-size:12px;color:oklch(0.55 0.012 260);">{{ i.where }}</span></span>
+                </button>
+              </sc-for>
+              <sc-if value="{{ noIssues }}" hint-placeholder-val="">
+                <div style="padding:24px 14px;border-radius:12px;border:1px dashed oklch(0.86 0.005 250);text-align:center;">
+                  <p style="margin:0;font-size:13.5px;font-weight:600;">No issues found</p>
+                  <p style="margin:5px 0 0;font-size:12.5px;color:oklch(0.52 0.012 260);">Run a test with a sample contact before going live.</p>
+                </div>
+              </sc-if>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+    </aside>
+
+    <sc-if value="{{ aiOpen }}" hint-placeholder-val="">
+      <aside style="position:absolute;top:0;right:0;bottom:0;z-index:30;width:370px;display:flex;flex-direction:column;border-left:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:-16px 0 40px -20px oklch(0.2 0.02 260 / 0.3);animation:slideIn .18s ease-out;">
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid oklch(0.94 0.003 250);">
+          <span style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:oklch(0.55 0.15 290 / 0.10);color:oklch(0.46 0.16 290);font-size:14px;">✦</span>
+          <p style="margin:0;flex:1;font-size:14px;font-weight:600;">AI assistant</p>
+          <button onClick="{{ toggleAi }}" title="Close" style="width:28px;height:28px;border-radius:7px;border:0;background:transparent;cursor:pointer;font-size:17px;color:oklch(0.50 0.012 260);">×</button>
+        </div>
+        <div id="wf-ai-chat" style="flex:1;min-height:0;display:flex;flex-direction:column;"></div>
+      </aside>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{ isGallery }}" hint-placeholder-val="">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;z-index:80;background:oklch(0.2 0.02 260 / 0.38);"></div>
+    <div style="position:fixed;top:32px;bottom:32px;left:50%;transform:translateX(-50%);z-index:81;width:1000px;max-width:calc(100vw - 32px);display:flex;flex-direction:column;border-radius:16px;background:#fff;box-shadow:0 24px 60px -12px oklch(0.2 0.02 260 / 0.4);overflow:hidden;animation:popIn .16s ease-out;">
+      <div style="display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid oklch(0.93 0.004 250);">
+        <div style="flex:1;">
+          <p style="margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em;">Start a workflow</p>
+          <p style="margin:3px 0 0;font-size:13px;color:oklch(0.52 0.012 260);">Proven journeys for your industry. Every one is editable after you pick it.</p>
+        </div>
+        <button onClick="{{ startBlank }}" style="height:36px;padding:0 13px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:13px;font-weight:500;color:oklch(0.28 0.015 260);">Start from scratch</button>
+        <button onClick="{{ galleryAi }}" style="height:36px;padding:0 13px;border-radius:9px;border:1px solid oklch(0.55 0.15 290 / 0.30);background:oklch(0.55 0.15 290 / 0.06);cursor:pointer;font-size:13px;font-weight:600;color:oklch(0.44 0.15 290);">✦ Describe it</button>
+        <button onClick="{{ closeModal }}" style="width:36px;height:36px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:17px;color:oklch(0.35 0.012 260);">×</button>
+      </div>
+      <div style="flex:1;display:flex;min-height:0;">
+        <div style="width:220px;flex-shrink:0;padding:12px;border-right:1px solid oklch(0.94 0.003 250);overflow-y:auto;display:flex;flex-direction:column;gap:2px;">
+          <sc-for list="{{ industries }}" as="i" hint-placeholder-count="8">
+            <button onClick="{{ i.onClick }}" style="{{ i.style }}"><span style="flex:1;">{{ i.label }}</span><span style="font-size:11.5px;color:oklch(0.60 0.010 260);">{{ i.count }}</span></button>
+          </sc-for>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;align-content:start;">
+          <sc-for list="{{ recipes }}" as="r" hint-placeholder-count="6">
+            <button onClick="{{ r.onClick }}" style="display:flex;flex-direction:column;gap:8px;padding:16px;border-radius:12px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;text-align:left;" style-hover="border-color:oklch(0.56 0.20 25 / 0.5);box-shadow:0 6px 18px -10px oklch(0.2 0.02 260 / 0.25);">
+              <span style="font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:oklch(0.55 0.012 260);">{{ r.industry }}</span>
+              <span style="font-size:14px;font-weight:600;color:oklch(0.22 0.015 260);">{{ r.name }}</span>
+              <span style="font-size:12.5px;line-height:1.5;color:oklch(0.48 0.012 260);">{{ r.desc }}</span>
+              <span style="display:flex;flex-wrap:wrap;gap:5px;margin-top:2px;">
+                <sc-for list="{{ r.chips }}" as="c" hint-placeholder-count="3"><span style="height:22px;padding:0 7px;display:flex;align-items:center;border-radius:6px;background:oklch(0.96 0.003 250);font-size:11.5px;color:oklch(0.40 0.012 260);">{{ c }}</span></sc-for>
+              </span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isTest }}" hint-placeholder-val="">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;z-index:80;background:oklch(0.2 0.02 260 / 0.38);"></div>
+    <div style="position:fixed;top:40px;bottom:40px;left:50%;transform:translateX(-50%);z-index:81;width:760px;max-width:calc(100vw - 32px);display:flex;flex-direction:column;border-radius:16px;background:#fff;box-shadow:0 24px 60px -12px oklch(0.2 0.02 260 / 0.4);overflow:hidden;animation:popIn .16s ease-out;">
+      <div style="display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid oklch(0.93 0.004 250);">
+        <div style="flex:1;">
+          <p style="margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em;">Test run</p>
+          <p style="margin:3px 0 0;font-size:13px;color:oklch(0.52 0.012 260);">See exactly what a contact would get and when. Nothing is sent.</p>
+        </div>
+        <button onClick="{{ closeModal }}" style="width:36px;height:36px;border-radius:9px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:17px;color:oklch(0.35 0.012 260);">×</button>
+      </div>
+      <div style="display:flex;gap:8px;padding:14px 22px;border-bottom:1px solid oklch(0.95 0.003 250);flex-wrap:wrap;">
+        <sc-for list="{{ personas }}" as="p" hint-placeholder-count="3">
+          <button onClick="{{ p.onClick }}" style="{{ p.style }}"><span style="display:block;font-size:13px;font-weight:600;">{{ p.name }}</span><span style="display:block;margin-top:2px;font-size:12px;color:oklch(0.52 0.012 260);">{{ p.desc }}</span></button>
+        </sc-for>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:18px 22px;">
+        <p style="margin:0 0 14px;font-size:13px;font-weight:500;color:oklch(0.35 0.012 260);">{{ simSummary }}</p>
+        <div style="display:flex;flex-direction:column;">
+          <sc-for list="{{ sim }}" as="e" hint-placeholder-count="5">
+            <div style="display:flex;gap:14px;">
+              <div style="width:118px;flex-shrink:0;padding-top:1px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:oklch(0.50 0.012 260);">{{ e.when }}</div>
+              <div style="display:flex;flex-direction:column;align-items:center;">
+                <span style="{{ e.dot }}"></span>
+                <span style="flex:1;width:1.5px;min-height:18px;background:oklch(0.90 0.004 250);"></span>
+              </div>
+              <div style="flex:1;padding-bottom:16px;">
+                <p style="margin:0;font-size:13.5px;font-weight:600;color:oklch(0.22 0.015 260);">{{ e.title }}</p>
+                <sc-if value="{{ e.hasNote }}" hint-placeholder-val=""><p style="margin:2px 0 0;font-size:12.5px;line-height:1.5;color:oklch(0.50 0.012 260);">{{ e.note }}</p></sc-if>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isActivate }}" hint-placeholder-val="">
+    <div onClick="{{ closeModal }}" style="position:fixed;inset:0;z-index:80;background:oklch(0.2 0.02 260 / 0.38);"></div>
+    <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:81;width:460px;max-width:calc(100vw - 32px);border-radius:16px;background:#fff;box-shadow:0 24px 60px -12px oklch(0.2 0.02 260 / 0.4);animation:popIn .16s ease-out;">
+      <div style="padding:22px 22px 4px;">
+        <p style="margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em;">Activate “{{ name }}”?</p>
+        <p style="margin:6px 0 0;font-size:13px;line-height:1.5;color:oklch(0.52 0.012 260);">Choose who can enter. You can pause any time — contacts already in the workflow will wait where they are.</p>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;padding:14px 22px;">
+        <sc-for list="{{ actOpts }}" as="o" hint-placeholder-count="2">
+          <button onClick="{{ o.onClick }}" style="{{ o.style }}"><span style="{{ o.radio }}"></span><span style="flex:1;"><span style="display:block;font-size:13.5px;font-weight:500;color:oklch(0.22 0.015 260);">{{ o.label }}</span><span style="display:block;margin-top:2px;font-size:12px;color:oklch(0.52 0.012 260);">{{ o.hint }}</span></span></button>
+        </sc-for>
+        <sc-if value="{{ actWarn }}" hint-placeholder-val="">
+          <p style="margin:2px 0 0;font-size:12.5px;line-height:1.5;color:oklch(0.48 0.12 65);">{{ actWarn }}</p>
+        </sc-if>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding:14px 22px;border-top:1px solid oklch(0.93 0.004 250);">
+        <button onClick="{{ closeModal }}" style="height:38px;padding:0 15px;border-radius:10px;border:1px solid oklch(0.90 0.004 250);background:#fff;cursor:pointer;font-size:13.5px;font-weight:500;color:oklch(0.28 0.015 260);">Cancel</button>
+        <button onClick="{{ confirmActivate }}" style="height:38px;padding:0 16px;border-radius:10px;border:1px solid oklch(0.50 0.14 155);background:oklch(0.56 0.14 155);color:#fff;cursor:pointer;font-size:13.5px;font-weight:600;">Activate</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ hasToast }}" hint-placeholder-val="">
+    <div style="position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:90;display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:10px;background:oklch(0.22 0.015 260);color:#fff;font-size:13px;font-weight:500;box-shadow:0 10px 30px -8px oklch(0.2 0.02 260 / 0.4);animation:popIn .16s ease-out;">
+      <span>{{ toast }}</span>
+      <sc-if value="{{ toastUndo }}" hint-placeholder-val=""><button onClick="{{ undo }}" style="border:0;background:transparent;cursor:pointer;font-size:13px;font-weight:600;color:oklch(0.82 0.08 25);">Undo</button></sc-if>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  KEY = 'vb-wf-autos-v1';
+  state = { wfs:null, curId:null, sel:null, addAt:null, zoom:1, pan:{x:300,y:40}, selEdge:null, link:null, linkHover:null, linkMenu:null, dd:null, ddQ:'', palQ:'', panning:false, pTab:'settings', past:[], future:[], savedAt:null,
+    aiOpen:false, aiTab:'build', aiPrompt:'', aiBusy:false, subjBusy:null, modal:null, galInd:'All', persona:'maya', actMode:'new', toast:null, toastUndo:false };
+
+  KIND = {
+    trigger:['Trigger','zap','oklch(0.46 0.13 155)','oklch(0.62 0.14 155 / 0.12)'],
+    email:['Email','mail','oklch(0.50 0.19 25)','oklch(0.56 0.20 25 / 0.09)'],
+    sms:['SMS','phone','oklch(0.46 0.14 250)','oklch(0.55 0.13 250 / 0.10)'],
+    wait:['Wait','clock','oklch(0.50 0.12 65)','oklch(0.75 0.15 70 / 0.16)'],
+    branch:['If / else','branch','oklch(0.46 0.15 290)','oklch(0.55 0.15 290 / 0.10)'],
+    split:['A/B split','split','oklch(0.46 0.14 250)','oklch(0.55 0.13 250 / 0.10)'],
+    filter:['Filter','filter','oklch(0.46 0.15 290)','oklch(0.55 0.15 290 / 0.10)'],
+    update:['Update contact','tag','oklch(0.44 0.12 155)','oklch(0.62 0.14 155 / 0.12)'],
+    webhook:['Webhook','code','oklch(0.38 0.015 260)','oklch(0.94 0.004 250)'],
+    notify:['Notify team','bell','oklch(0.45 0.10 200)','oklch(0.62 0.10 200 / 0.12)'],
+  };
+  PATHS = { zap:'M13 2 3 14h9l-1 8 10-12h-9l1-8z', mail:'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM22 6l-10 7L2 6', phone:'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM11 18h2',
+    clock:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2', branch:'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9', split:'M16 3h5v5M8 3H3v5M21 3l-7 7M3 3l7 7M12 22v-8',
+    filter:'M22 3H2l8 9.46V19l4 2v-8.54L22 3z', tag:'M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01', code:'m16 18 6-6-6-6M8 6l-6 6 6 6', bell:'M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0' };
+  ico(name, size){ return React.createElement('svg',{width:size||16,height:size||16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.8,strokeLinecap:'round',strokeLinejoin:'round',style:{display:'block'}}, React.createElement('path',{d:this.PATHS[name]})); }
+
+  TRIG = [['subscribed','Contact subscribes to a list','Audience'],['signup','Contact signs up','Audience'],['form','Form is submitted','Audience'],['tag','Tag is added','Audience'],['inactive','No opens in 90 days','Audience'],['date','Date-based (birthday, renewal)','Audience'],
+    ['order','Order is placed','Commerce'],['shipped','Order is shipped','Commerce'],['cart','Checkout is abandoned','Commerce'],['browse','Product page viewed','Commerce'],
+    ['trial','Trial starts','SaaS'],['trial_end','Trial ends in 3 days','SaaS'],['payfail','Payment fails','SaaS'],['score','Lead score reaches 50','B2B'],['webinar','Registers for a webinar','B2B'],
+    ['appt','Appointment is booked','Healthcare'],['visit','Visit is completed','Healthcare'],['booking','Booking is confirmed','Travel'],['stay_out','Guest checks out','Travel'],
+    ['enroll','Enrolls in a course','Education'],['app','Application is started','Education'],['kyc','Account opened, verification incomplete','Finance'],['donation','Donation is made','Nonprofit'],['listing','Saved search has a new listing','Real estate'],['event','Custom API event','Developer']];
+  DATED = ['appt','booking','webinar','date'];
+  GOALS = [['none','No goal'],['order','Places an order'],['convert','Upgrades to paid'],['paid','Payment succeeds'],['book','Books an appointment'],['reply','Replies or books a meeting'],['submit','Submits the application'],['kyc_done','Completes verification'],['donate','Makes a donation'],['click','Clicks any email']];
+  CONDS = [['opened','Opened the previous email'],['clicked','Clicked the previous email'],['purchased','Has placed an order'],['activated','Completed onboarding'],['vip','Is in the VIP segment'],['score','Lead score is 50 or more'],['sms','Has SMS consent'],['tag','Has a tag']];
+  TEMPLATES = ['welcome-1','welcome-2','welcome-offer','cart-1','cart-2','review-ask','cross-sell','vip-early','winback-1','winback-2','trial-1','trial-2','trial-help','trial-ending','dunning-1','dunning-2','lead-1','lead-2','lead-3','webinar-confirm','webinar-reminder','webinar-recap','webinar-missed','course-1','course-2','course-nudge','course-mid','app-1','app-2','appt-confirm','visit-feedback','recall','kyc-1','kyc-2','renew-30','renew-7','booking-confirm','pre-arrival','post-stay','donor-thanks','donor-impact','donor-monthly','listing-alert','sub-renew','browse-1','followup'];
+  DEF_SET = { reentry:'once', goal:'none', quiet:true, qFrom:'21:00', qTo:'08:00', tz:'contact', cap:true, capN:3 };
+
+  uid(){ return 'n'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+  mk = {
+    E:(subject, template)=>({t:'email', subject, template:template||'', preheader:''}),
+    S:(text)=>({t:'sms', text}),
+    W:(amount, unit)=>({t:'wait', mode:'duration', amount, unit}),
+    Wt:(time)=>({t:'wait', mode:'time', time, amount:1, unit:'days'}),
+    We:(max)=>({t:'wait', mode:'event', event:'opened', max, amount:1, unit:'days'}),
+    Wb:(amount, unit)=>({t:'wait', mode:'before', amount, unit}),
+    B:(cond, yes, no)=>({t:'branch', cond, tag:'', paths:[{label:'Yes', steps:yes||[]},{label:'No', steps:no||[]}]}),
+    Sp:(a, b)=>({t:'split', pct:50, paths:[{label:'Path A', steps:a||[]},{label:'Path B', steps:b||[]}]}),
+    F:(rule)=>({t:'filter', rule}),
+    U:(action, value)=>({t:'update', action, value}),
+    H:(url)=>({t:'webhook', url, method:'POST'}),
+    N:(to, msg)=>({t:'notify', to, msg}),
+  };
+  ids(steps){ return (steps||[]).map(s=>({...s, id:this.uid(), ...(s.paths?{paths:s.paths.map(p=>({...p, steps:this.ids(p.steps)}))}:{})})); }
+  recipes(){
+    const {E,S,W,Wt,We,Wb,B,Sp,F,U,H,N} = this.mk, STOP = ' Reply STOP to opt out.';
+    return [
+      ['E-commerce','Abandoned checkout','Timed reminder, then SMS for people who didn’t open. Buyers exit automatically.','cart','order',()=>[W(1,'hours'),E('You left something behind','cart-1'),We(1),B('opened',[E('Your cart is waiting — 10% off inside','cart-2')],[S('Acme: your cart is saved at acme.com/cart.'+STOP)])]],
+      ['E-commerce','Welcome & first purchase','Introduce the brand, show best sellers, then a first-order offer.','subscribed','order',()=>[E('Welcome to Acme','welcome-1'),W(2,'days'),E('Our best sellers','welcome-2'),W(3,'days'),E('15% off your first order','welcome-offer')]],
+      ['E-commerce','Post-purchase review & cross-sell','Ask for a review, then recommend by segment.','shipped','none',()=>[W(5,'days'),E('How’s your order?','review-ask'),W(7,'days'),B('vip',[E('Early access for VIPs','vip-early')],[E('Goes great with your order','cross-sell')])]],
+      ['E-commerce','Browse abandonment','Nudge shoppers who viewed but didn’t add to cart.','browse','order',()=>[W(2,'hours'),E('Still have your eye on this?','browse-1')]],
+      ['SaaS','Trial onboarding','Different paths for activated and stuck trial users. Success team gets alerted.','trial','convert',()=>[E('Welcome — let’s get you set up','trial-1'),W(1,'days'),B('activated',[E('3 power features to try next','trial-2')],[E('Need a hand getting started?','trial-help'),N('success@acme.com','Trial user stuck in setup')]),W(3,'days'),E('Your trial ends soon','trial-ending')]],
+      ['SaaS','Failed payment recovery','Email, then SMS, then alert billing before the account churns.','payfail','paid',()=>[E('Your payment didn’t go through','dunning-1'),W(3,'days'),E('Update your card to keep access','dunning-2'),Wt('10:00'),S('Acme: your payment failed. Update at acme.com/billing.'+STOP),W(4,'days'),N('billing@acme.com','Account at risk — payment still failing')]],
+      ['B2B','Lead nurture to sales','Educate new leads; hand hot ones to sales automatically.','form','reply',()=>[E('Here’s the guide you asked for','lead-1'),W(3,'days'),E('How teams like yours use Acme','lead-2'),W(4,'days'),B('score',[N('sales@acme.com','Hot lead — reach out today'),U('add_tag','sales-ready')],[E('A quick case study','lead-3')])]],
+      ['B2B','Webinar reminders & follow-up','Reminders before the event, recap or recording after.','webinar','none',()=>[E('You’re registered','webinar-confirm'),Wb(1,'days'),E('Tomorrow: see you there','webinar-reminder'),Wb(1,'hours'),S('Starting in 1 hour: acme.com/live.'+STOP),W(1,'days'),B('clicked',[E('Slides and recording','webinar-recap')],[E('Sorry we missed you — watch the recording','webinar-missed')])]],
+      ['Healthcare','Appointment reminders','Confirmation, then SMS reminders a day and 2 hours before. No health details in messages.','appt','none',()=>[E('Your appointment is confirmed','appt-confirm'),Wb(1,'days'),S('Reminder: your appointment at Acme Clinic is tomorrow. Reply C to confirm.'+STOP),Wb(2,'hours'),S('See you soon at Acme Clinic.'+STOP)]],
+      ['Healthcare','Post-visit feedback & recall','Feedback after a visit, recall reminder months later.','visit','book',()=>[W(2,'days'),E('How was your visit?','visit-feedback'),W(150,'days'),E('Time to book your next check-up','recall')]],
+      ['Finance','Verification completion','Help new account holders finish identity checks.','kyc','kyc_done',()=>[E('Finish verifying your identity','kyc-1'),W(2,'days'),E('You’re one step away','kyc-2'),W(3,'days'),N('support@acme.com','Verification stalled — offer help')]],
+      ['Finance','Renewal reminders','30-day and 7-day notices before a renewal date.','date','none',()=>[Wb(30,'days'),E('Your policy renews next month','renew-30'),Wb(7,'days'),E('Your renewal is in 7 days','renew-7')]],
+      ['Education','Course onboarding','Welcome learners and nudge anyone who hasn’t started.','enroll','none',()=>[E('Welcome to the course','course-1'),W(2,'days'),B('activated',[E('Keep going: lesson 2','course-2')],[E('Your first lesson is waiting','course-nudge')]),W(7,'days'),E('You’re halfway there','course-mid')]],
+      ['Education','Application reminders','Get started applicants over the finish line before the deadline.','app','submit',()=>[W(1,'days'),E('Finish your application','app-1'),W(3,'days'),E('The deadline is coming up','app-2')]],
+      ['Travel','Pre-arrival','Confirmation, prep tips, and a check-in SMS the day before.','booking','none',()=>[E('Your booking is confirmed','booking-confirm'),Wb(3,'days'),E('Getting ready for your stay','pre-arrival'),Wb(1,'days'),S('Check-in opens at 3pm tomorrow.'+STOP)]],
+      ['Travel','Post-stay review','Thank guests and ask engaged ones for a review.','stay_out','none',()=>[W(1,'days'),E('Thanks for staying with us','post-stay'),W(2,'days'),F('opened'),E('Share your experience','review-ask')]],
+      ['Nonprofit','Donor welcome','Thank, show impact, then invite engaged donors to give monthly.','donation','none',()=>[E('Thank you for your gift','donor-thanks'),W(7,'days'),E('Here’s the impact you made','donor-impact'),W(30,'days'),B('opened',[E('Become a monthly supporter','donor-monthly')],[])]],
+      ['Real estate','New listing alerts','Send matches and alert the agent when a buyer engages.','listing','none',()=>[E('A new listing matches your search','listing-alert'),W(2,'days'),B('clicked',[N('agent@acme.com','Buyer clicked a listing — follow up')],[])]],
+      ['Media','Subscription renewal','Remind subscribers before renewal; SMS to non-openers.','date','none',()=>[Wb(14,'days'),E('Your subscription renews soon','sub-renew'),Wb(3,'days'),B('opened',[],[S('Your Acme subscription renews in 3 days.'+STOP)])]],
+      ['Any industry','Win-back & sunset','Re-engage inactive contacts, then tag the rest for suppression.','inactive','click',()=>[E('We miss you','winback-1'),We(7),B('opened',[U('add_tag','re-engaged')],[E('One last thing before you go','winback-2'),W(14,'days'),F('opened')])]],
+    ];
+  }
+  seed(){
+    const {E,W,F,B} = this.mk, wf = (id,name,tkey,status,stats,steps,goal)=>({id, name, tkey, trigger:this.tLabel(tkey), status, ...stats, settings:{...this.DEF_SET, goal:goal||'none'}, steps:this.ids(steps)});
+    const st = (s, sent, open, click)=>({...s, sent, open, click});
+    return [
+      wf('a1','Welcome series','subscribed','Active',{entered:4812,sent:12904,open:58.2,conv:9.4,rev:21480},[st(E('Welcome to Acme','welcome-1'),4812,62.1,18.4),W(2,'days'),st(E('Get the most out of Acme','welcome-2'),4520,55.8,12.2),W(3,'days'),F('purchased'),st(E('15% off your first order','welcome-offer'),3572,49.3,10.6)],'order'),
+      wf('a2','Abandoned checkout','cart','Active',{entered:1203,sent:2406,open:47.1,conv:5.3,rev:12480},[W(1,'hours'),st(E('You left something behind','cart-1'),1203,51.2,14.8),W(1,'days'),st(E('Still thinking it over?','cart-2'),1203,43.0,9.1)],'order'),
+      wf('a3','Win-back','inactive','Paused',{entered:2940,sent:5880,open:21.4,conv:1.8,rev:3210},[st(E('We miss you','winback-1'),2940,23.6,4.1),W(7,'days'),B('opened',[],[st(E('One last thing before you go','winback-2'),2940,19.2,3.0)])]),
+      wf('a4','Post-purchase review','order','Active',{entered:3410,sent:3410,open:52.7,conv:14.1,rev:0},[W(5,'days'),st(E('How’s your order?','review-ask'),3410,52.7,14.1)]),
+      wf('a5','Trial ending reminder','signup','Draft',{entered:0,sent:0,open:0,conv:0,rev:0},[W(11,'days'),E('Your trial ends in 3 days','trial-ending')]),
+    ];
+  }
+  tLabel(k){ return (this.TRIG.find(t=>t[0]===k)||[,'Custom API event'])[1]; }
+  tKeyOf(label){ return (this.TRIG.find(t=>t[1]===label)||['event'])[0]; }
+  norm(w){
+    const fix = (s)=>{ const n = {...s, id:s.id||this.uid()};
+      if(n.t==='filter' && n.rule && !this.CONDS.some(c=>c[0]===n.rule)) n.rule = /open/i.test(n.rule)?'opened':/order/i.test(n.rule)?'purchased':'opened';
+      if(n.t==='wait' && !n.mode) n.mode = 'duration';
+      if(n.t==='email' && n.template==null) n.template = '';
+      if(n.paths) n.paths = n.paths.map(p=>({...p, steps:(p.steps||[]).map(fix)}));
+      return n; };
+    const tkey = w.tkey || this.tKeyOf(w.trigger);
+    const o = { entered:0, sent:0, open:0, conv:0, rev:0, ...w, tkey, trigger:this.tLabel(tkey), settings:{...this.DEF_SET, ...(w.settings||{})}, steps:(w.steps||[]).map(fix) };
+    if(!o.graph || !Array.isArray(o.graph.nodes) || !o.graph.nodes.some(n=>n.id==='trigger')) o.graph = this.treeToGraph(o.steps);
+    return this.syncSteps(o);
+  }
+
+  componentDidMount(){
+    let wfs = null;
+    try { wfs = JSON.parse(localStorage.getItem(this.KEY)||'null'); } catch(e){}
+    if(!Array.isArray(wfs) || !wfs.length) wfs = this.seed();
+    wfs = wfs.map(w=>this.norm(w));
+    const q = new URLSearchParams(location.search);
+    let cur = q.get('id'), modal = null;
+    if(q.get('new')){ const w = this.norm({id:'a'+Date.now(), name:'Untitled workflow', tkey:'subscribed', status:'Draft', steps:[]}); wfs = [w, ...wfs]; cur = w.id; modal = 'gallery'; }
+    if(!wfs.some(w=>w.id===cur)) cur = wfs[0].id;
+    this.setState({wfs, curId:cur, modal, savedAt:new Date()}, ()=>{ this.persist(); let n = 0; const tf = ()=>{ const el = this.canvasRef.current; if(el && el.getBoundingClientRect().width>0) this.fit(); else if(n++<60) setTimeout(tf, 80); }; tf(); });
+    if(window.ResizeObserver){ const tro = ()=>{ const el = this.canvasRef.current; if(!el) return setTimeout(tro, 100); let lastW = 0; this._ro = new ResizeObserver((en)=>{ const wd = en[0].contentRect.width; if(wd>0 && (lastW===0 || Math.abs(wd-lastW)>40)){ lastW = wd; this.fit(); } }); this._ro.observe(el); }; tro(); }
+    window.addEventListener('pointermove', this.onMove); window.addEventListener('pointerup', this.onUp);
+    const tryWheel = ()=>{ const el = this.canvasRef.current; if(el){ el.addEventListener('wheel', this.onWheel, {passive:false}); this._wheelEl = el; } else setTimeout(tryWheel, 100); }; tryWheel();
+    this.onKey = (e)=>{
+      const tag = (e.target.tagName||'').toLowerCase(), typing = ['input','textarea','select'].includes(tag);
+      if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='z' && !typing){ e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); }
+      if((e.key==='Delete'||e.key==='Backspace') && !typing){ if(this.state.selEdge){ e.preventDefault(); this.delEdge(this.state.selEdge); } else if(this.state.sel && this.state.sel!=='trigger'){ e.preventDefault(); this.del(this.state.sel); } }
+      if(e.key==='Escape'){ if(this.state.dd) this.setState({dd:null}); else if(this.state.modal) this.setState({modal:null}); else this.setState({sel:null, selEdge:null, addAt:null, linkMenu:null}); }
+    };
+    window.addEventListener('keydown', this.onKey);
+  }
+  componentWillUnmount(){ if(this._ro) this._ro.disconnect(); window.removeEventListener('keydown', this.onKey); window.removeEventListener('pointermove', this.onMove); window.removeEventListener('pointerup', this.onUp); if(this._wheelEl) this._wheelEl.removeEventListener('wheel', this.onWheel); clearTimeout(this.tT); clearTimeout(this.pT); }
+  persist(){ clearTimeout(this.pT); this.pT = setTimeout(()=>{ try{ localStorage.setItem(this.KEY, JSON.stringify(this.state.wfs)); }catch(e){} this.setState({savedAt:new Date()}); }, 350); }
+  toast(m, undo){ clearTimeout(this.tT); this.setState({toast:m, toastUndo:!!undo}); this.tT = setTimeout(()=>this.setState({toast:null}), 3000); }
+  cur(){ return (this.state.wfs||[]).find(w=>w.id===this.state.curId); }
+  change(fn, opts){
+    const w = this.cur(); if(!w) return;
+    const now = Date.now(), merge = opts && opts.merge && this._lastKey===opts.merge && now-this._lastT<900;
+    this._lastKey = opts && opts.merge; this._lastT = now;
+    const next = this.syncSteps(fn(JSON.parse(JSON.stringify(w))));
+    this.setState(s=>({ wfs:s.wfs.map(x=>x.id===w.id?next:x), past: merge ? s.past : [...s.past.slice(-60), JSON.stringify(w)], future: merge ? s.future : [] }), ()=>this.persist());
+  }
+  undo = () => { const st = this.state, w = this.cur(); if(!w || !st.past.length) return; const prev = JSON.parse(st.past[st.past.length-1]); this._lastKey = null;
+    this.setState(s=>({ wfs:s.wfs.map(x=>x.id===w.id?prev:x), past:s.past.slice(0,-1), future:[JSON.stringify(w), ...s.future], toast:null }), ()=>this.persist()); };
+  redo = () => { const st = this.state, w = this.cur(); if(!w || !st.future.length) return; const nx = JSON.parse(st.future[0]); this._lastKey = null;
+    this.setState(s=>({ wfs:s.wfs.map(x=>x.id===w.id?nx:x), future:s.future.slice(1), past:[...s.past, JSON.stringify(w)] }), ()=>this.persist()); };
+  W = 260; H = 78; STEP = 150; GAP = 300;
+  canvasRef = React.createRef();
+  ports(n){ return n.t==='branch' ? [['yes','Yes',0.28],['no','No',0.72]] : n.t==='split' ? [['a','A',0.28],['b','B',0.72]] : [['out','',0.5]]; }
+  getNode(w, id){ return w.graph.nodes.find(n=>n.id===id); }
+  syncSteps(w){ w.steps = w.graph.nodes.filter(n=>n.t!=='trigger').map(({x,y,...r})=>r); w.trigger = this.tLabel(w.tkey); return w; }
+  reach(w){ const seen = new Set(['trigger']), q = ['trigger']; while(q.length){ const id = q.shift(); w.graph.edges.forEach(e=>{ if(e.from===id && !seen.has(e.to)){ seen.add(e.to); q.push(e.to); } }); } return seen; }
+  downstream(w, id){ const seen = new Set(), q = [id]; while(q.length){ const x = q.shift(); if(seen.has(x)) continue; seen.add(x); w.graph.edges.forEach(e=>{ if(e.from===x) q.push(e.to); }); } return seen; }
+  createsCycle(w, from, to){ return this.downstream(w, to).has(from); }
+  newNode(t){ const b = {
+      email:{t, subject:'', template:'', preheader:''}, sms:{t, text:''}, wait:{t, mode:'duration', amount:1, unit:'days', time:'09:00', event:'opened', max:3},
+      branch:{t, cond:'opened', tag:''}, split:{t, pct:50}, filter:{t, rule:'opened'}, update:{t, action:'add_tag', value:''}, webhook:{t, url:'https://', method:'POST'}, notify:{t, to:'', msg:''} }[t];
+    return {...b, id:this.uid()}; }
+  treeToGraph(steps){
+    const g = {nodes:[{id:'trigger', t:'trigger', x:0, y:0}], edges:[]};
+    const place = (list, tails)=>{ for(const s of list){ const {paths, ...rest} = s; const n = {...rest, id:rest.id||this.uid(), x:0, y:0}; g.nodes.push(n);
+        tails.forEach(t=>g.edges.push({id:this.uid(), from:t.from, port:t.port, to:n.id}));
+        if(paths){ const ps = s.t==='branch'?['yes','no']:['a','b']; let out = []; paths.forEach((p,pi)=>{ out = out.concat(place(p.steps||[], [{from:n.id, port:ps[pi]}])); }); tails = out; }
+        else tails = [{from:n.id, port:'out'}]; }
+      return tails; };
+    place(steps||[], [{from:'trigger', port:'out'}]);
+    return this.tidy({graph:g}).graph;
+  }
+  tidy(w){
+    const N = w.graph.nodes, E = w.graph.edges, depth = {trigger:0};
+    for(let k=0;k<=N.length;k++){ let ch = false; E.forEach(e=>{ if(depth[e.from]!=null){ const d = depth[e.from]+1; if(depth[e.to]==null || depth[e.to]<d){ depth[e.to] = d; ch = true; } } }); if(!ch) break; }
+    const levels = {}; N.forEach(n=>{ const d = depth[n.id]; if(d!=null) (levels[d] = levels[d]||[]).push(n); });
+    const pos = {};
+    Object.keys(levels).map(Number).sort((a,b)=>a-b).forEach(d=>{
+      const arr = levels[d];
+      arr.forEach(n=>{ const ps = E.filter(e=>e.to===n.id && pos[e.from]!=null);
+        n._k = ps.length ? ps.reduce((a,e)=>{ const p = N.find(m=>m.id===e.from); const off = (this.ports(p).find(q=>q[0]===e.port)||[0,0,0.5])[2]-0.5; return a + pos[e.from] + off*this.GAP*1.4; },0)/ps.length : 0; });
+      arr.sort((a,b)=>a._k-b._k);
+      const xs = arr.map(n=>n._k); for(let i=1;i<xs.length;i++) if(xs[i]-xs[i-1] < this.GAP) xs[i] = xs[i-1]+this.GAP;
+      const drift = xs.reduce((a,b)=>a+b,0)/xs.length - arr.reduce((a,n)=>a+n._k,0)/arr.length;
+      arr.forEach((n,i)=>{ pos[n.id] = xs[i]-drift; n.x = Math.round(pos[n.id]-this.W/2); n.y = d*this.STEP; delete n._k; });
+    });
+    const xsAll = Object.values(pos); let ux = (xsAll.length ? Math.max(...xsAll) : 0) + this.GAP, uy = 0;
+    N.filter(n=>depth[n.id]==null).forEach(n=>{ n.x = Math.round(ux-this.W/2); n.y = uy; uy += this.STEP; });
+    return w;
+  }
+  insertAfter(w, fromId, port, nodes){
+    const from = this.getNode(w, fromId); if(!from) return w;
+    const old = w.graph.edges.find(e=>e.from===fromId && e.port===port);
+    const off = (this.ports(from).find(p=>p[0]===port)||[0,0,0.5])[2]-0.5;
+    const x = Math.round(from.x + off*this.GAP*1.4), baseY = from.y + this.STEP;
+    if(old){ const down = this.downstream(w, old.to); w.graph.nodes.forEach(n=>{ if(down.has(n.id)) n.y += nodes.length*this.STEP; }); w.graph.edges = w.graph.edges.filter(e=>e!==old); }
+    let prev = {from:fromId, port};
+    nodes.forEach((nn,i)=>{ const n = {...nn, id:nn.id||this.uid(), x, y:baseY+i*this.STEP}; w.graph.nodes.push(n); w.graph.edges.push({id:this.uid(), from:prev.from, port:prev.port, to:n.id}); prev = {from:n.id, port:this.ports(n)[0][0]}; });
+    if(old) w.graph.edges.push({id:this.uid(), from:prev.from, port:prev.port, to:old.to});
+    return w;
+  }
+  freePort(w, n){ const ps = this.ports(n).map(p=>p[0]); return ps.find(p=>!w.graph.edges.some(e=>e.from===n.id && e.port===p)) || ps[0]; }
+  connect(from, port, to){
+    const w = this.cur(); if(!w || to===from) return;
+    if(to==='trigger') return this.toast('The trigger is always the first step — it can’t have incoming connections');
+    if(this.createsCycle(w, from, to)) return this.toast('That would create a loop — contacts could get stuck');
+    if(w.graph.edges.some(e=>e.from===from && e.port===port && e.to===to)) return;
+    const replaced = w.graph.edges.some(e=>e.from===from && e.port===port);
+    this.change(x=>{ x.graph.edges = x.graph.edges.filter(e=>!(e.from===from && e.port===port)); x.graph.edges.push({id:this.uid(), from, port, to}); return x; });
+    this.toast(replaced ? 'Connection moved' : 'Connected', true);
+  }
+  addNodeAt(t, x, y, link){
+    const n = {...this.newNode(t), x:Math.round(x/10)*10, y:Math.round(y/10)*10};
+    this.change(w=>{ w.graph.nodes.push(n); if(link){ w.graph.edges = w.graph.edges.filter(e=>!(e.from===link.from && e.port===link.port)); w.graph.edges.push({id:this.uid(), from:link.from, port:link.port, to:n.id}); } return w; });
+    this.setState({sel:n.id, selEdge:null, linkMenu:null, addAt:null, pTab:'settings'});
+    return n;
+  }
+  addAfterSelected(t){
+    const w = this.cur(); if(!w) return;
+    const reach = this.reach(w);
+    let anchor = this.state.sel && this.getNode(w, this.state.sel);
+    if(!anchor){ const ends = w.graph.nodes.filter(n=>reach.has(n.id) && this.ports(n).some(p=>!w.graph.edges.some(e=>e.from===n.id && e.port===p[0]))); anchor = ends.sort((a,b)=>b.y-a.y)[0] || this.getNode(w,'trigger'); }
+    const n = this.newNode(t), port = this.freePort(w, anchor);
+    this.change(x=>this.insertAfter(x, anchor.id, port, [n]));
+    this.setState({sel:n.id, selEdge:null, addAt:null});
+  }
+  setNode(id, patch, mk){ this.change(w=>{ const n = this.getNode(w, id); if(n) Object.assign(n, patch); return w; }, mk?{merge:id+mk}:null); }
+  del(id){
+    if(id==='trigger') return;
+    this.change(w=>{ const ins = w.graph.edges.filter(e=>e.to===id), outs = w.graph.edges.filter(e=>e.from===id);
+      w.graph.nodes = w.graph.nodes.filter(n=>n.id!==id); w.graph.edges = w.graph.edges.filter(e=>e.from!==id && e.to!==id);
+      if(ins.length===1 && outs.length===1 && !this.createsCycle(w, ins[0].from, outs[0].to)) w.graph.edges.push({id:this.uid(), from:ins[0].from, port:ins[0].port, to:outs[0].to});
+      return w; });
+    this.setState({sel:null}); this.toast('Step deleted — connections were rejoined', true);
+  }
+  delEdge(id){ this.change(w=>{ w.graph.edges = w.graph.edges.filter(e=>e.id!==id); return w; }); this.setState({selEdge:null, addAt:null}); this.toast('Connection removed', true); }
+  dup(id){ const w = this.cur(), n = w && this.getNode(w, id); if(!n || n.t==='trigger') return; const c = {...JSON.parse(JSON.stringify(n)), id:this.uid(), x:n.x+40, y:n.y+40};
+    this.change(x=>{ x.graph.nodes.push(c); return x; }); this.setState({sel:c.id}); this.toast('Duplicated — connect it where it belongs'); }
+  setSet(patch){ this.change(w=>{ w.settings = {...w.settings, ...patch}; return w; }); }
+  applyRecipe(r){ const g = this.treeToGraph(this.ids(r[5]()));
+    this.change(w=>({...w, name: /^Untitled/.test(w.name) ? r[1] : w.name, tkey:r[3], industry:r[0], graph:g, settings:{...w.settings, goal:r[4]}}));
+    this.setState({modal:null, sel:null, selEdge:null}); setTimeout(this.fit, 30); this.toast('Template applied — review each step', true); }
+  toWorld(cx, cy){ const r = this.canvasRef.current.getBoundingClientRect(), st = this.state; return {x:(cx-r.left-st.pan.x)/st.zoom, y:(cy-r.top-st.pan.y)/st.zoom}; }
+  nodeAt(p){ const w = this.cur(); return w && w.graph.nodes.slice().reverse().find(n=>p.x>=n.x-10 && p.x<=n.x+this.W+10 && p.y>=n.y-14 && p.y<=n.y+this.H+10); }
+  fit = () => {
+    const w = this.cur(), el = this.canvasRef.current; if(!w || !el) return;
+    const r = el.getBoundingClientRect(), N = w.graph.nodes; if(!N.length || !r.width) return;
+    const minX = Math.min(...N.map(n=>n.x)), maxX = Math.max(...N.map(n=>n.x+this.W)), minY = Math.min(...N.map(n=>n.y)), maxY = Math.max(...N.map(n=>n.y+this.H+30));
+    const z = Math.max(0.4, Math.min(1, (r.width-100)/(maxX-minX||1), (r.height-100)/(maxY-minY||1)));
+    this.setState({zoom:+z.toFixed(2), pan:{x:Math.round((r.width-(maxX-minX)*z)/2 - minX*z), y:Math.round(Math.max(40, (r.height-(maxY-minY)*z)/2) - minY*z)}});
+  };
+  zoomAt(z, cx, cy){ const st = this.state, wx = (cx-st.pan.x)/st.zoom, wy = (cy-st.pan.y)/st.zoom; this.setState({zoom:+z.toFixed(2), pan:{x:cx-wx*z, y:cy-wy*z}}); }
+  onWheel = (e) => { e.preventDefault(); const st = this.state, r = this.canvasRef.current.getBoundingClientRect();
+    if(e.ctrlKey || e.metaKey) this.zoomAt(Math.max(0.4, Math.min(1.6, st.zoom*Math.exp(-e.deltaY*0.01))), e.clientX-r.left, e.clientY-r.top);
+    else this.setState({pan:{x:st.pan.x-e.deltaX, y:st.pan.y-e.deltaY}}); };
+  onCanvasDown = (e) => { if(e.button!==0) return; this._drag = {kind:'pan', sx:e.clientX, sy:e.clientY, px:this.state.pan.x, py:this.state.pan.y, moved:false}; this.setState({panning:true}); };
+  nodeDown = (id) => (e) => { if(e.button!==0) return; e.stopPropagation(); const w = this.cur(), n = this.getNode(w, id);
+    this._drag = {kind:'node', id, sx:e.clientX, sy:e.clientY, ox:n.x, oy:n.y, moved:false, snap:JSON.stringify(w)}; };
+  portDown = (id, port) => (e) => { if(e.button!==0) return; e.stopPropagation(); e.preventDefault(); const w = this.cur(), n = this.getNode(w, id), p = this.ports(n).find(q=>q[0]===port);
+    const x1 = n.x + p[2]*this.W, y1 = n.y + this.H; this._drag = {kind:'link', from:id, port};
+    this.setState({link:{x1, y1, x2:x1, y2:y1+40}, sel:null, selEdge:null, linkMenu:null, addAt:null}); };
+  onMove = (e) => { const d = this._drag; if(!d) return;
+    if(d.kind==='pan'){ const dx = e.clientX-d.sx, dy = e.clientY-d.sy; if(Math.abs(dx)+Math.abs(dy)>3) d.moved = true; if(d.moved) this.setState({pan:{x:d.px+dx, y:d.py+dy}}); }
+    else if(d.kind==='node'){ const z = this.state.zoom, dx = (e.clientX-d.sx)/z, dy = (e.clientY-d.sy)/z; if(!d.moved && Math.abs(dx)+Math.abs(dy)<4) return; d.moved = true;
+      const nx = Math.round((d.ox+dx)/10)*10, ny = Math.round((d.oy+dy)/10)*10;
+      this.setState(s=>({wfs:s.wfs.map(w=>w.id!==s.curId ? w : {...w, graph:{...w.graph, nodes:w.graph.nodes.map(n=>n.id===d.id?{...n, x:nx, y:ny}:n)}})})); }
+    else if(d.kind==='link'){ const p = this.toWorld(e.clientX, e.clientY), t = this.nodeAt(p); this.setState(s=>({link:{...s.link, x2:p.x, y2:p.y}, linkHover: t && t.id!==d.from && t.id!=='trigger' ? t.id : null})); } };
+  onUp = (e) => { const d = this._drag; if(!d) return; this._drag = null;
+    if(d.kind==='pan'){ this.setState({panning:false}); if(!d.moved) this.setState({sel:null, selEdge:null, addAt:null, linkMenu:null}); }
+    else if(d.kind==='node'){ if(d.moved){ this._lastKey = null; this.setState(s=>({past:[...s.past.slice(-60), d.snap], future:[]}), ()=>this.persist()); } else this.setState({sel:d.id, selEdge:null, linkMenu:null, addAt:null}); }
+    else if(d.kind==='link'){ const p = this.toWorld(e.clientX, e.clientY), t = this.nodeAt(p); this.setState({link:null, linkHover:null});
+      if(t && t.id!==d.from) this.connect(d.from, d.port, t.id);
+      else if(!t){ const r = this.canvasRef.current.getBoundingClientRect(); this.setState({linkMenu:{sx:Math.min(e.clientX-r.left, r.width-270), sy:Math.min(e.clientY-r.top, r.height-360), wx:p.x, wy:p.y, from:d.from, port:d.port}}); } } };
+  onDrop = (e) => { e.preventDefault(); const t = this._pal || (e.dataTransfer && e.dataTransfer.getData('text/plain')); this._pal = null; if(!t || !this.KIND[t]) return;
+    const w = this.cur(), p = this.toWorld(e.clientX, e.clientY), target = this.nodeAt(p);
+    if(target){ const n = this.newNode(t); this.change(x=>this.insertAfter(x, target.id, this.freePort(x, target), [n])); this.setState({sel:n.id, selEdge:null}); return this.toast('Inserted after “'+this.label(target, w)[0]+'”', true); }
+    const near = w.graph.nodes.filter(n=>n.y+this.H < p.y && p.y-(n.y+this.H) < 260 && Math.abs((n.x+this.W/2)-p.x) < 220 && this.ports(n).some(q=>!w.graph.edges.some(ed=>ed.from===n.id && ed.port===q[0]))).sort((a,b)=>b.y-a.y)[0];
+    const n = this.addNodeAt(t, p.x-this.W/2, p.y-this.H/2, near ? {from:near.id, port:this.freePort(w, near)} : null);
+    this.toast(near ? 'Added and connected' : 'Added — drag from a step’s bottom dot to connect it', true); };
+
+  cl(k){ return (this.CONDS.find(c=>c[0]===k)||[,k])[1]; }
+  unitTxt(a,u){ return a+' '+(Number(a)===1?u.replace(/s$/,''):u); }
+  t12(t){ const [h,m] = String(t||'09:00').split(':').map(Number); return ((h%12)||12)+':'+String(m||0).padStart(2,'0')+' '+(h<12?'AM':'PM'); }
+  dateWord(k){ return {appt:'the appointment', booking:'check-in', webinar:'the webinar', date:'the date'}[k] || 'the date'; }
+  label(s, w){
+    if(s.t==='email') return [s.subject||'Untitled email', s.template ? s.template : 'No design chosen'];
+    if(s.t==='sms') { const n = (s.text||'').length; return [s.text ? s.text.slice(0,48) : 'Empty message', `${n} chars · ${Math.max(1,Math.ceil(n/160))} segment${n>160?'s':''}`]; }
+    if(s.t==='wait') return s.mode==='time' ? ['Until '+this.t12(s.time), 'Next time it’s '+this.t12(s.time)+' in their time zone'] : s.mode==='event' ? ['Until they open', 'Or continue after '+this.unitTxt(s.max||3,'days')] : s.mode==='before' ? [this.unitTxt(s.amount,s.unit)+' before', 'Relative to '+this.dateWord(w.tkey)] : [this.unitTxt(s.amount,s.unit), 'Then continue'];
+    if(s.t==='branch') return [s.cond==='tag' ? 'Has tag “'+(s.tag||'…')+'”' : this.cl(s.cond), 'Yes / No'];
+    if(s.t==='split') return ['Split test', s.pct+'% / '+(100-s.pct)+'%'];
+    if(s.t==='filter') return [this.cl(s.rule), 'Everyone else exits'];
+    if(s.t==='update') return [{add_tag:'Add tag',remove_tag:'Remove tag',stage:'Set lifecycle stage'}[s.action]+(s.value?' “'+s.value+'”':''), 'Contact profile'];
+    if(s.t==='webhook') return [s.method+' '+(s.url||'').replace(/^https?:\/\//,''), 'Retries 3× on failure'];
+    if(s.t==='notify') return [s.to || 'No recipient', s.msg || 'Internal alert'];
+    return ['',''];
+  }
+  validate(w){
+    const out = [], P = (id, level, text, where)=>out.push({id, level, text, where});
+    const G = w.graph, reach = this.reach(w), nx = (id, port)=>{ const e = G.edges.find(e=>e.from===id && e.port===port); return e && this.getNode(w, e.to); };
+    let msgs = 0, days = 0;
+    G.nodes.forEach(s=>{ if(s.t==='trigger') return; const L = this.label(s, w)[0], where = (this.KIND[s.t]||[''])[0]+' · '+L;
+      if(!reach.has(s.id)) { P(s.id,'warn','Not connected — this step never runs', where); return; }
+      if(s.t==='email'){ msgs++; if(!(s.subject||'').trim()) P(s.id,'error','Add a subject line',where); if(!s.template) P(s.id,'error','Choose an email design',where); if((s.subject||'').length>70) P(s.id,'warn','Subject is long — may be cut off on mobile',where);
+        if(/diagnos|prescription|test result|lab result|pregnan|hiv\b|therapy session/i.test(s.subject||'')) P(s.id,'warn','Keep health details out of subject lines (privacy)',where); }
+      if(s.t==='sms'){ msgs++; if(!(s.text||'').trim()) P(s.id,'error','Write the SMS message',where); else if(!/\bstop\b/i.test(s.text)) P(s.id,'error','Add “Reply STOP to opt out” — required for SMS',where); if((s.text||'').length>160) P(s.id,'warn',`Message is ${Math.ceil(s.text.length/160)} SMS segments — costs more`,where); }
+      if(s.t==='wait'){ if((s.mode==='duration'||s.mode==='before') && !(Number(s.amount)>0)) P(s.id,'error','Wait must be at least 1',where); if(s.mode==='event' && !(Number(s.max)>0)) P(s.id,'error','Set a maximum wait so nobody gets stuck',where);
+        if(s.mode==='before' && !this.DATED.includes(w.tkey)) P(s.id,'error','“Before date” needs a dated trigger (appointment, booking, webinar, renewal)',where);
+        if(s.mode==='duration') days += (Number(s.amount)||0)*({minutes:1/1440,hours:1/24,days:1}[s.unit]||1); }
+      if(s.t==='branch'){ if(s.cond==='tag' && !(s.tag||'').trim()) P(s.id,'error','Name the tag to check',where); const y = nx(s.id,'yes'), n = nx(s.id,'no');
+        if(!y && !n) P(s.id,'error','Connect at least one path',where); else if(!y || !n) P(s.id,'warn',`Nothing on the “${!y?'Yes':'No'}” path — those contacts exit here`,where); }
+      if(s.t==='split' && (!nx(s.id,'a') || !nx(s.id,'b'))) P(s.id,'warn','Connect both paths to compare them',where);
+      if(s.t==='filter' && !nx(s.id,'out')) P(s.id,'warn','A filter with nothing after it has no effect',where);
+      if(s.t==='update' && !(s.value||'').trim()) P(s.id,'error','Enter a value',where);
+      if(s.t==='webhook' && !/^https:\/\/[^\s/]+\.[^\s]+/.test(s.url||'')) P(s.id,'error','Enter a valid https:// URL',where);
+      if(s.t==='notify' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.to||'')) P(s.id,'error','Enter a valid email to notify',where);
+      if((s.t==='email'||s.t==='sms') && G.edges.some(e=>e.to===s.id && ['email','sms'].includes((this.getNode(w,e.from)||{}).t))) P(s.id,'warn','Sent right after another message — add a wait',where);
+    });
+    const S = w.settings, first = nx('trigger','out');
+    if(!first) P('trigger','error','Connect the trigger to the first step','Trigger');
+    else if(['cart','browse'].includes(w.tkey) && ['email','sms'].includes(first.t)) P('trigger','warn','Add a short wait first — instant messages feel intrusive','Trigger');
+    if(!msgs) P('trigger','error','Add at least one connected email or SMS','Trigger');
+    if(['cart','browse','order','subscribed','trial','payfail','form','kyc','app'].includes(w.tkey) && S.goal==='none') P('settings','warn','Set a goal so people who convert exit automatically','Settings · Goal');
+    if(G.nodes.some(n=>n.t==='sms' && reach.has(n.id)) && !S.quiet) P('settings','warn','Turn on quiet hours — late-night SMS drives complaints and can break TCPA rules','Settings · Sending');
+    if(!S.cap) P('settings','warn','Frequency cap is off — contacts in several workflows could get too many emails','Settings · Sending');
+    if(S.reentry==='every' && ['subscribed','signup','trial','enroll','kyc'].includes(w.tkey)) P('settings','warn','Re-entry “every time” could send this series to someone twice','Settings · Entry');
+    if(days>120) P('settings','warn',`Waits add up to ${Math.round(days)} days — check the copy will still be relevant`,'Settings');
+    return out;
+  }
+  suggestions(w, issues){
+    const S = w.settings, out = [], G = w.graph;
+    const goalFor = {cart:'order',browse:'order',subscribed:'order',order:'order',trial:'convert',payfail:'paid',form:'reply',kyc:'kyc_done',app:'submit',donation:'donate'}[w.tkey];
+    if(S.goal==='none' && goalFor) out.push({title:`Set the goal to “${(this.GOALS.find(g=>g[0]===goalFor)||[])[1]}”`, why:'People who convert leave the workflow right away, so they don’t get irrelevant reminders.', apply:()=>this.setSet({goal:goalFor})});
+    if(!S.quiet) out.push({title:'Turn on quiet hours (9 PM – 8 AM)', why:'Messages that would land overnight wait until morning in each contact’s time zone.', apply:()=>this.setSet({quiet:true})});
+    if(!S.cap) out.push({title:'Cap at 3 emails per 7 days', why:'Protects people who are in several workflows at once from over-mailing.', apply:()=>this.setSet({cap:true, capN:3})});
+    if(issues.some(i=>/short wait first/.test(i.text))) out.push({title:'Add a 1-hour wait before the first message', why:'Gives shoppers time to finish on their own — instant reminders feel creepy.', apply:()=>this.change(x=>this.insertAfter(x,'trigger','out',[{...this.newNode('wait'), amount:1, unit:'hours'}]))});
+    if(issues.some(i=>/STOP/.test(i.text))) out.push({title:'Add opt-out text to every SMS', why:'“Reply STOP to opt out” is required by carriers and TCPA.', apply:()=>this.change(x=>{ x.graph.nodes.forEach(n=>{ if(n.t==='sms' && !/\bstop\b/i.test(n.text||'')) n.text = (n.text||'').trim()+' Reply STOP to opt out.'; }); return x; })});
+    if(issues.some(i=>/right after another message/.test(i.text))) out.push({title:'Space out back-to-back messages', why:'Adds a 1-day wait between messages that would send at the same moment.', apply:()=>this.change(x=>{ x.graph.edges.filter(e=>['email','sms'].includes((this.getNode(x,e.from)||{}).t) && ['email','sms'].includes((this.getNode(x,e.to)||{}).t)).forEach(e=>this.insertAfter(x, e.from, e.port, [this.newNode('wait')])); return x; })});
+    if(issues.some(i=>/never runs/.test(i.text))) out.push({title:'Remove steps that aren’t connected', why:'Unconnected steps never run and make the workflow harder to read.', apply:()=>this.change(x=>{ const r = this.reach(x); x.graph.nodes = x.graph.nodes.filter(n=>r.has(n.id)); x.graph.edges = x.graph.edges.filter(e=>r.has(e.from)&&r.has(e.to)); return x; })});
+    const firstEmail = G.nodes.find(n=>n.t==='email' && this.reach(w).has(n.id));
+    if(firstEmail && !G.nodes.some(n=>n.t==='branch')) out.push({title:'Follow up with people who don’t open', why:'Waits up to 3 days for an open; non-openers get a different message, openers continue as before.', apply:()=>this.change(x=>{
+      const wait = {...this.newNode('wait'), mode:'event', max:3}, br = {...this.newNode('branch'), cond:'opened'}, fu = {...this.newNode('email'), subject:'Quick follow-up', template:'followup'};
+      this.insertAfter(x, firstEmail.id, 'out', [wait, br]); const b = this.getNode(x, br.id); fu.x = b.x + 220; fu.y = b.y + this.STEP; x.graph.nodes.push(fu); x.graph.edges.push({id:this.uid(), from:br.id, port:'no', to:fu.id});
+      const nxt = x.graph.edges.find(e=>e.from===br.id && e.port==='yes'); if(nxt) x.graph.edges.push({id:this.uid(), from:fu.id, port:'out', to:nxt.to}); return x; })});
+    return out;
+  }
+  simulate(w, pk){
+    const P = { maya:{name:'Maya', opens:true, clicks:true, buys:true, sms:true, vip:true, activated:true, score:72, path:'a'},
+      leo:{name:'Leo', opens:true, clicks:false, buys:false, sms:false, vip:false, activated:false, score:30, path:'b'},
+      ana:{name:'Ana', opens:false, clicks:false, buys:false, sms:true, vip:false, activated:false, score:8, path:'a'} }[pk];
+    const S = w.settings, ev = [], sends = [], G = w.graph; let t = new Date(2026,9,13,15,12), msgN = 0, exited = false, lastOpen = false, lastClick = false;
+    const evDate = new Date(2026,9,20,10,0);
+    const fmt = (d)=>d.toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric'})+' · '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+    const push = (title, note, kind)=>ev.push({when:fmt(t), title, note:note||'', kind:kind||'ok'});
+    const hm = (s)=>{ const [h,m] = String(s).split(':').map(Number); return h*60+(m||0); };
+    const inQuiet = (d)=>{ const m = d.getHours()*60+d.getMinutes(), a = hm(S.qFrom), b = hm(S.qTo); return a>b ? (m>=a || m<b) : (m>=a && m<b); };
+    const toMorning = ()=>{ const d = new Date(t), b = hm(S.qTo); if(d.getHours()*60+d.getMinutes() >= hm(S.qFrom)) d.setDate(d.getDate()+1); d.setHours(Math.floor(b/60), b%60, 0, 0); t = d; };
+    const evalC = (c)=>({opened:lastOpen, clicked:lastClick, purchased:false, activated:P.activated, vip:P.vip, score:P.score>=50, sms:P.sms, tag:false})[c];
+    const next = (id, port)=>{ const e = G.edges.find(e=>e.from===id && e.port===port); return e ? this.getNode(w, e.to) : null; };
+    const ms = {minutes:6e4, hours:36e5, days:864e5};
+    push('Entered the workflow', w.trigger, 'start');
+    let s = next('trigger','out'), guard = 0;
+    while(s && !exited && guard++ < 80){ let port = 'out';
+      if(s.t==='email' || s.t==='sms'){
+        if(s.t==='sms' && !P.sms) push('SMS skipped', 'No SMS consent on file — moved to the next step', 'skip');
+        else { let note = ''; if(S.quiet && inQuiet(t)){ toMorning(); note = 'Held for quiet hours. '; }
+          const wk = sends.filter(d=>t-d < 7*864e5).length;
+          if(S.cap && wk >= S.capN) push((s.t==='sms'?'SMS':'Email')+' skipped', `Frequency cap reached (${S.capN} in 7 days)`, 'skip');
+          else { sends.push(new Date(t)); msgN++; lastOpen = s.t==='email' ? P.opens : true; lastClick = P.clicks;
+            push(s.t==='email' ? 'Email: '+(s.subject||'Untitled') : 'SMS sent', note + (s.t==='email' ? (P.opens ? (P.clicks?'Opened and clicked':'Opened, didn’t click') : 'Not opened') : (s.text||'').slice(0,80)), 'msg');
+            if(S.goal!=='none' && P.buys && msgN>=2){ t = new Date(t.getTime()+5*36e5); push('Goal reached — exited', (this.GOALS.find(g=>g[0]===S.goal)||[])[1]+'. No further messages.', 'exit'); exited = true; break; } } }
+      } else if(s.t==='wait'){
+        if(s.mode==='duration'){ t = new Date(t.getTime()+(Number(s.amount)||0)*ms[s.unit]); push('Waited '+this.unitTxt(s.amount,s.unit), '', 'wait'); }
+        else if(s.mode==='time'){ const [h,m] = (s.time||'09:00').split(':').map(Number); const d = new Date(t); d.setHours(h,m||0,0,0); if(d<=t) d.setDate(d.getDate()+1); t = d; push('Waited until '+this.t12(s.time), '', 'wait'); }
+        else if(s.mode==='event'){ if(lastOpen){ t = new Date(t.getTime()+6*36e5); push('Opened — continued', 'After about 6 hours', 'wait'); } else { t = new Date(t.getTime()+(Number(s.max)||3)*864e5); push('No open — continued', 'After '+this.unitTxt(s.max||3,'days'), 'wait'); } }
+        else { const target = new Date(evDate.getTime()-(Number(s.amount)||0)*ms[s.unit]); if(target>t){ t = target; push('Waited until '+this.unitTxt(s.amount,s.unit)+' before '+this.dateWord(w.tkey), 'Event date: Tue, Oct 20 · 10:00 AM', 'wait'); } else push('Already past that point', 'Continued immediately', 'skip'); }
+      } else if(s.t==='branch'){ const yes = s.cond==='tag' ? false : evalC(s.cond); port = yes?'yes':'no'; push('Took the “'+(yes?'Yes':'No')+'” path', this.cl(s.cond)+(s.cond==='tag'?' “'+s.tag+'”':''), 'logic'); }
+      else if(s.t==='split'){ port = P.path; push('Split: path '+port.toUpperCase(), s.pct+'% / '+(100-s.pct)+'% random split', 'logic'); }
+      else if(s.t==='filter'){ if(!evalC(s.rule)){ push('Didn’t match filter — exited', this.cl(s.rule), 'exit'); exited = true; break; } push('Passed filter', this.cl(s.rule), 'logic'); }
+      else if(s.t==='update') push('Contact updated', this.label(s,w)[0], 'logic');
+      else if(s.t==='webhook') push('Webhook called', this.label(s,w)[0]+' · 200 OK', 'logic');
+      else if(s.t==='notify') push('Team notified', (s.to||'—')+(s.msg?' — '+s.msg:''), 'logic');
+      s = next(s.id, port);
+    }
+    if(!exited) push('Finished the workflow', '', 'exit');
+    return { ev, msgs: ev.filter(e=>e.kind==='msg').length, name:P.name };
+  }
+  aiBuild = async () => {
+    const st = this.state; if(st.aiBusy || !st.aiPrompt.trim()) return;
+    this.setState({aiBusy:true});
+    const p = st.aiPrompt.toLowerCase(), R = this.recipes(), words = p.split(/\W+/).filter(x=>x.length>3);
+    let best = R[0], bs = -1;
+    R.forEach(r=>{ const hay = (r[0]+' '+r[1]+' '+r[2]+' '+this.tLabel(r[3])).toLowerCase(); const sc = words.reduce((a,x)=>a+(hay.includes(x)?1:0),0) + (/sms|text/.test(p) && JSON.stringify(r[5]()).includes('"sms"') ? 1 : 0); if(sc>bs){ bs = sc; best = r; } });
+    let built = null;
+    try {
+      if(window.claude && window.claude.complete){
+        const raw = await window.claude.complete(`Design a marketing automation workflow. Brief: ${st.aiPrompt}\nReturn ONLY minified JSON: {"name":"...","trigger":one of ${JSON.stringify(this.TRIG.map(t=>t[0]))},"goal":one of ${JSON.stringify(this.GOALS.map(g=>g[0]))},"steps":[...]}.\nStep types: {"t":"email","subject":"...","template":"followup"} | {"t":"sms","text":"... Reply STOP to opt out."} | {"t":"wait","mode":"duration","amount":2,"unit":"days"} | {"t":"wait","mode":"before","amount":1,"unit":"days"} (only for appt/booking/webinar/date triggers) | {"t":"branch","cond":one of ${JSON.stringify(this.CONDS.filter(c=>c[0]!=='tag').map(c=>c[0]))},"paths":[{"label":"Yes","steps":[]},{"label":"No","steps":[]}]} | {"t":"notify","to":"team@acme.com","msg":"..."}. Max 8 top-level steps, no branches inside branches, always a wait between messages.`);
+        const j = JSON.parse(String(raw).slice(String(raw).indexOf('{'), String(raw).lastIndexOf('}')+1));
+        const ok = (s, depth)=> s && this.KIND[s.t] && s.t!=='trigger' && (!s.paths || (depth===0 && Array.isArray(s.paths) && s.paths.length===2 && s.paths.every(pp=>Array.isArray(pp.steps) && pp.steps.every(x=>ok(x,1)))));
+        if(j && Array.isArray(j.steps) && j.steps.length && j.steps.every(s=>ok(s,0)) && this.TRIG.some(t=>t[0]===j.trigger)){
+          const clean = (s)=>({...this.newNode(s.t), ...s, id:this.uid(), ...(s.paths?{paths:s.paths.map(pp=>({label:pp.label||'Path', steps:pp.steps.map(clean)}))}:{})});
+          built = { name:j.name||'AI workflow', tkey:j.trigger, goal:this.GOALS.some(g=>g[0]===j.goal)?j.goal:'none', steps:j.steps.map(clean) };
+        }
+      } else await new Promise(r=>setTimeout(r, 900));
+    } catch(e) {}
+    if(!built) built = { name:best[1], tkey:best[3], goal:best[4], steps:this.ids(best[5]()) };
+    const g = this.treeToGraph(built.steps);
+    this.change(w=>({...w, name: /^Untitled/.test(w.name) || w.status==='Draft' ? built.name : w.name, tkey:built.tkey, graph:g, settings:{...w.settings, goal:built.goal}}));
+    this.setState({aiBusy:false, sel:null, selEdge:null, modal:null}); setTimeout(this.fit, 30);
+    this.toast('Workflow drafted — check Issues and run a test', true);
+  };
+  aiSubject = async (id) => {
+    const w = this.cur(), n = w && this.getNode(w, id); if(!n || this.state.subjBusy) return;
+    this.setState({subjBusy:id});
+    const cur = n.subject || '', base = cur || w.name;
+    const local = [`{{first_name}}, ${base.charAt(0).toLowerCase()+base.slice(1)}`, `${base} — quick reminder`, `Don’t miss this: ${base.toLowerCase()}`];
+    let out = local[(this._sc = ((this._sc||0)+1)%3)];
+    try { if(window.claude && window.claude.complete){ const x = await window.claude.complete(`Write one email subject line under 50 characters for step "${cur}" in a workflow named "${w.name}" (trigger: ${w.trigger}). Return only the subject, no quotes.`); const y = String(x).split('\n')[0].replace(/^["“]|["”]$/g,'').trim(); if(y && y.length<90 && !/could you|i'?d be happy/i.test(y)) out = y; } else await new Promise(r=>setTimeout(r,600)); } catch(e){}
+    this.setNode(id, {subject:out}); this.setState({subjBusy:null});
+  };
+  dd(key, value, opts, onPick, o){
+    o = o||{}; const st = this.state, open = st.dd===key, q = open ? st.ddQ.trim().toLowerCase() : '', cur = opts.find(x=>x[0]===value);
+    const items = []; let lastG = null; const gOrd = {}; opts.forEach((x,i)=>{ if(x[3] && gOrd[x[3]]==null) gOrd[x[3]] = i; });
+    opts = opts.map((x,i)=>[x,i]).sort((a,b)=>((a[0][3]!=null?gOrd[a[0][3]]:-1)-(b[0][3]!=null?gOrd[b[0][3]]:-1)) || a[1]-b[1]).map(p=>p[0]);
+    opts.filter(x=>!q || (x[1]+' '+(x[2]||'')+' '+(x[3]||'')).toLowerCase().includes(q)).forEach(x=>{
+      if(x[3] && x[3]!==lastG){ items.push({isHead:true, isOpt:false, l:x[3]}); lastG = x[3]; }
+      const on = x[0]===value;
+      items.push({isHead:false, isOpt:true, l:x[1], d:x[2]||'', hasD:!!x[2], onClick:()=>{ this.setState({dd:null, ddQ:''}); if(!on) onPick(x[0]); },
+        style:`display:flex;align-items:flex-start;gap:10px;width:100%;padding:8px 10px;border:0;border-radius:8px;cursor:pointer;text-align:left;background:${on?'oklch(0.56 0.20 25 / 0.07)':'transparent'};`,
+        lStyle:`display:block;font-size:13px;font-weight:${on?600:500};color:oklch(0.24 0.015 260);`,
+        checkStyle:`flex-shrink:0;margin-top:1px;font-size:13px;font-weight:700;color:oklch(0.52 0.19 25);visibility:${on?'visible':'hidden'};`}); });
+    return { open, label: cur ? cur[1] : (o.ph||'Choose…'), sub: cur && o.showSub ? (cur[2]||'') : '', hasSub: !!(cur && o.showSub && cur[2]), searchable: opts.length>7, items, empty:!items.length,
+      toggle:(e)=>{ if(e && e.stopPropagation) e.stopPropagation(); this.setState({dd: open?null:key, ddQ:''}); }, close:()=>this.setState({dd:null, ddQ:''}),
+      btnStyle:`display:flex;align-items:center;gap:8px;width:100%;min-height:38px;padding:0 10px 0 12px;border-radius:9px;cursor:pointer;text-align:left;font-size:13.5px;color:${cur?'oklch(0.21 0.015 260)':'oklch(0.58 0.010 260)'};background:#fff;${open?'border:1px solid oklch(0.56 0.20 25);box-shadow:0 0 0 3px oklch(0.56 0.20 25 / 0.12);':'border:1px solid oklch(0.90 0.004 250);'}` };
+  }
+  bez(a, b){ const dy = Math.max(40, Math.abs(b.y-a.y)/2); return { d:`M${a.x},${a.y} C${a.x},${a.y+dy} ${b.x},${b.y-dy} ${b.x},${b.y}`, mid:{x:(a.x+3*a.x+3*b.x+b.x)/8, y:(a.y+3*(a.y+dy)+3*(b.y-dy)+b.y)/8} }; }
+  portPt(n, port){ const p = this.ports(n).find(q=>q[0]===port)||[0,0,0.5]; return {x:n.x+p[2]*this.W, y:n.y+this.H}; }
+  edgesEl(w){
+    const st = this.state, h = React.createElement, kids = [], N = {}; w.graph.nodes.forEach(n=>N[n.id]=n);
+    w.graph.edges.forEach(e=>{ const a = N[e.from], b = N[e.to]; if(!a || !b) return;
+      const p1 = this.portPt(a, e.port), p2 = {x:b.x+this.W/2, y:b.y-2}, {d} = this.bez(p1, p2), on = st.selEdge===e.id;
+      const col = on ? 'oklch(0.56 0.20 25)' : e.port==='yes' ? 'oklch(0.60 0.13 155)' : e.port==='no' ? 'oklch(0.66 0.012 260)' : 'oklch(0.72 0.008 260)';
+      kids.push(h('path',{key:e.id+'h', d, fill:'none', stroke:'transparent', strokeWidth:16, style:{pointerEvents:'stroke', cursor:'pointer'}, onPointerDown:(ev)=>ev.stopPropagation(), onClick:(ev)=>{ ev.stopPropagation(); this.setState({selEdge:e.id, sel:null, addAt:null, linkMenu:null}); }}));
+      kids.push(h('path',{key:e.id, d, fill:'none', stroke:col, strokeWidth:on?2.6:1.8, style:{pointerEvents:'none'}}));
+      kids.push(h('path',{key:e.id+'a', d:`M${p2.x-5},${p2.y-7} L${p2.x},${p2.y} L${p2.x+5},${p2.y-7}`, fill:'none', stroke:col, strokeWidth:1.8, strokeLinecap:'round', strokeLinejoin:'round', style:{pointerEvents:'none'}}));
+    });
+    if(st.link){ const {d} = this.bez({x:st.link.x1, y:st.link.y1}, {x:st.link.x2, y:st.link.y2}); kids.push(h('path',{key:'tmp', d, fill:'none', stroke:'oklch(0.56 0.20 25)', strokeWidth:2, strokeDasharray:'6 5', style:{pointerEvents:'none'}})); }
+    return h('svg',{width:20000, height:20000, style:{position:'absolute', left:-10000, top:-10000, overflow:'visible', pointerEvents:'none'}}, h('g',{transform:'translate(10000,10000)'}, ...kids));
+  }
+  renderVals(){
+    const st = this.state, w = this.cur();
+    if(!w) return { name:'', status:'', subText:'', statusPill:'', issuesLabel:'', primaryLabel:'', zoomLabel:'100%', nodesV:[], palette:[], edgesEl:null, sel:{fields:[], issues:[], stats:[]}, settings:[], pTabs:[], aiTabs:[], noSel:true, isSettings:true, canvasRef:this.canvasRef };
+    const K = this.KIND, S = w.settings, G = w.graph, issues = this.validate(w), reach = this.reach(w);
+    const errs = issues.filter(i=>i.level==='error'), warns = issues.filter(i=>i.level==='warn');
+    const byId = (id)=>issues.filter(i=>i.id===id), live = w.status==='Active';
+    const iconBox = (t, sz)=>`display:flex;align-items:center;justify-content:center;width:${sz}px;height:${sz}px;border-radius:9px;flex-shrink:0;color:${K[t][2]};background:${K[t][3]};`;
+    const MENU = [['Messages',[['email','Send email','Design or pick a template'],['sms','Send SMS','Only to contacts with consent']]],['Timing',[['wait','Wait','Delay, time of day, or until an event']]],['Logic',[['branch','If / else','Split by behavior or data'],['split','A/B split','Test two paths'],['filter','Filter','Let only some contacts continue']]],['Actions',[['update','Update contact','Tag or change a field'],['notify','Notify team','Email an internal alert'],['webhook','Webhook','Send data to another system']]]];
+    const menu = (pick)=>MENU.map(g=>({group:g[0], items:g[1].map(m=>({label:m[1], desc:m[2], icon:this.ico(K[m[0]][1],15), iconStyle:iconBox(m[0],28), onClick:(e)=>{ e.stopPropagation(); pick(m[0]); }}))}));
+    const pq = st.palQ.trim().toLowerCase();
+    const palette = MENU.map(g=>({group:g[0], items:g[1].filter(m=>!pq || (m[1]+' '+m[2]+' '+g[0]).toLowerCase().includes(pq)).map(m=>({label:m[1], desc:m[2], tip:'Drag onto the canvas, or click to add after the selected step', icon:this.ico(K[m[0]][1],15), iconStyle:iconBox(m[0],30),
+      onDragStart:(e)=>{ this._pal = m[0]; try{ e.dataTransfer.setData('text/plain', m[0]); e.dataTransfer.effectAllowed = 'copy'; }catch(_){} }, onDragEnd:()=>{ this._pal = null; },
+      onClick:()=>this.addAfterSelected(m[0]) }))})).filter(g=>g.items.length);
+    const nodesV = G.nodes.map(n=>{ const isT = n.t==='trigger', L = isT ? [w.trigger, S.reentry==='once'?'Enters once':S.reentry==='30d'?'Can re-enter after 30 days':'Enters every time'] : this.label(n, w);
+      const on = st.sel===n.id, iss = byId(n.id), err = iss.some(i=>i.level==='error'), lost = !isT && !reach.has(n.id), hov = st.linkHover===n.id;
+      const sub = live && n.sent ? `${n.sent.toLocaleString('en-US')} sent · ${n.open.toFixed(1)}% opened` : live && isT && w.entered ? `${w.entered.toLocaleString('en-US')} entered · ${w.conv.toFixed(1)}% converted` : L[1];
+      const outs = this.ports(n).map(p=>{ const used = G.edges.some(e=>e.from===n.id && e.port===p[0]), col = p[0]==='yes'?'oklch(0.58 0.14 155)':p[0]==='no'?'oklch(0.60 0.012 260)':'oklch(0.56 0.20 25)';
+        return { onDown:this.portDown(n.id, p[0]), hasLabel:!!p[1], label:p[1],
+          style:`position:absolute;left:${p[2]*100}%;bottom:-8px;transform:translateX(-50%);width:16px;height:16px;box-sizing:border-box;border-radius:50%;cursor:crosshair;z-index:2;border:2px solid ${col};background:${used?col:'#fff'};box-shadow:0 0 0 3px oklch(1 0 0 / 0.9);`,
+          labelStyle:`position:absolute;left:calc(${p[2]*100}% + 12px);bottom:-22px;font-size:11px;font-weight:600;pointer-events:none;color:${col};` }; });
+      return { id:n.id, kind:K[n.t][0], title:L[0], sub, icon:this.ico(K[n.t][1],16), iconStyle:iconBox(n.t,32),
+        kindStyle:`margin:0;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:${isT?'oklch(0.50 0.10 155)':'oklch(0.55 0.012 260)'};`,
+        posStyle:`position:absolute;left:${n.x}px;top:${n.y}px;width:${this.W}px;`,
+        cardStyle:`position:relative;box-sizing:border-box;height:${this.H}px;padding:0 14px;border-radius:14px;background:#fff;cursor:${this._drag&&this._drag.id===n.id&&this._drag.moved?'grabbing':'grab'};user-select:none;touch-action:none;${lost?'opacity:.72;':''}${on?'border:1.5px solid oklch(0.56 0.20 25);box-shadow:0 0 0 4px oklch(0.56 0.20 25 / 0.14), 0 8px 20px -10px oklch(0.2 0.02 260 / 0.3);':hov?'border:1.5px solid oklch(0.56 0.20 25);box-shadow:0 0 0 6px oklch(0.56 0.20 25 / 0.12);':err?'border:1.5px solid oklch(0.62 0.18 25 / 0.6);box-shadow:0 1px 3px oklch(0.2 0.02 260 / 0.08);':lost?'border:1.5px dashed oklch(0.78 0.006 250);':'border:1px solid oklch(0.89 0.004 250);box-shadow:0 1px 3px oklch(0.2 0.02 260 / 0.07);'}`,
+        hasIssue:iss.length>0, issueCount:String(iss.length), issueStyle:`display:flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;border-radius:10px;font-size:11px;font-weight:700;color:#fff;background:${err?'oklch(0.58 0.20 25)':'oklch(0.72 0.15 70)'};`,
+        hasIn:!isT, inStyle:`position:absolute;left:50%;top:-7px;transform:translateX(-50%);width:12px;height:12px;box-sizing:border-box;border-radius:50%;pointer-events:none;border:2px solid ${hov?'oklch(0.56 0.20 25)':'oklch(0.74 0.008 260)'};background:${hov?'oklch(0.56 0.20 25)':'#fff'};`,
+        outs, onDown:this.nodeDown(n.id) }; });
+    const se = st.selEdge && G.edges.find(e=>e.id===st.selEdge);
+    let edgeBarStyle = '', hasEdgeBar = false;
+    if(se){ const a = this.getNode(w, se.from), b = this.getNode(w, se.to); if(a && b){ const m = this.bez(this.portPt(a, se.port), {x:b.x+this.W/2, y:b.y}).mid; hasEdgeBar = true;
+      edgeBarStyle = `position:absolute;left:${m.x}px;top:${m.y}px;transform:translate(-50%,-50%);z-index:15;display:flex;align-items:center;gap:2px;padding:3px;border-radius:10px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 8px 20px -8px oklch(0.2 0.02 260 / 0.3);`; } }
+    const tab = (on, c)=>`height:40px;padding:0 10px;border:0;background:transparent;cursor:pointer;font-size:13px;font-weight:${on?600:500};border-bottom:2px solid ${on?(c||'oklch(0.56 0.20 25)'):'transparent'};color:${on?'oklch(0.22 0.015 260)':'oklch(0.52 0.012 260)'};margin-bottom:-1px;`;
+    const seg = (on)=>`flex:1;height:30px;padding:0 10px;border:0;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:${on?600:500};white-space:nowrap;${on?'background:#fff;color:oklch(0.20 0.015 260);box-shadow:0 1px 2px oklch(0.2 0.02 260 / 0.10);':'background:transparent;color:oklch(0.48 0.012 260);'}`;
+    const track = (on)=>`position:relative;display:block;width:34px;height:20px;flex-shrink:0;margin-top:1px;border-radius:10px;transition:background .15s;background:${on?'oklch(0.56 0.20 25)':'oklch(0.86 0.005 250)'};`;
+    const knob = (on)=>`position:absolute;top:2px;left:${on?16:2}px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px oklch(0.2 0.02 260 / 0.25);transition:left .15s;`;
+    const F = {
+      input:(label, value, onChange, o)=>({label, value:value??'', onChange, isInput:true, ph:(o&&o.ph)||'', hint:(o&&o.hint)||'', hasHint:!!(o&&o.hint), hasAi:!!(o&&o.ai), onAi:o&&o.ai, aiLabel:(o&&o.aiLabel)||'✦ Suggest', hasCount:false}),
+      text:(label, value, onChange, o)=>({label, value:value??'', onChange, isText:true, ph:(o&&o.ph)||'', hint:(o&&o.hint)||'', hasHint:!!(o&&o.hint), hasCount:!!(o&&o.count), count:(o&&o.count)||'', countStyle:`font-size:11.5px;color:${o&&o.countBad?'oklch(0.50 0.19 25)':'oklch(0.60 0.010 260)'};`}),
+      select:(key, label, value, opts, onPick, hint, o)=>({label, isSelect:true, dd:this.dd(key, value, opts, onPick, o), hint:hint||'', hasHint:!!hint}),
+      seg:(label, value, opts, onPick, hint)=>({label, isSeg:true, options:opts.map(o=>({l:o[1], style:seg(value===o[0]), onClick:()=>onPick(o[0])})), hint:hint||'', hasHint:!!hint}),
+      amount:(label, value, onChange, unit, onUnit, units, hint)=>({label, value, onChange, isAmount:true, options:(units||['minutes','hours','days']).map(u=>({l:u.charAt(0).toUpperCase()+u.slice(1), style:seg(unit===u), onClick:()=>onUnit(u)})), hint:hint||'', hasHint:!!hint}),
+      link:(label, text, href, hint)=>({label, value:text, href, isLink:true, hint:hint||'', hasHint:!!hint}),
+    };
+    const condOpts = this.CONDS.map(c=>[c[0], c[1], {opened:'Uses the most recent email',clicked:'Uses the most recent email',purchased:'From your store integration',activated:'Custom event: onboarding_complete',vip:'Segment membership',score:'From lead scoring',sms:'Consent captured at signup or by keyword',tag:'Any tag on the contact'}[c[0]], ['opened','clicked'].includes(c[0])?'Engagement':['purchased','activated','score'].includes(c[0])?'Behavior':'Profile']);
+    let selV = null;
+    if(st.sel==='trigger'){
+      selV = { kind:'Trigger', title:w.trigger, icon:this.ico('zap',16), iconStyle:iconBox('trigger',32), canEdit:false, stats:[], hasStats:false,
+        fields:[ F.select('trig','Start when', w.tkey, this.TRIG.map(t=>[t[0], t[1], this.DATED.includes(t[0])?'Includes a date — supports “before date” waits':'', t[2]]), (k)=>this.change(x=>({...x, tkey:k})), this.DATED.includes(w.tkey) ? 'This trigger includes a date, so you can use “Wait · Before date” steps.' : ''),
+          F.select('aud','Who can enter', S.audience||'all', [['all','Everyone who triggers it'],['subscribed','Subscribed contacts only','Skips anyone who has unsubscribed from marketing'],['vip','VIP segment only'],['notbuyer','Hasn’t purchased yet']], (v)=>this.setSet({audience:v})),
+          F.select('reentry','Re-entry', S.reentry, [['once','Only once, ever','Best for welcome and onboarding'],['30d','Again after 30 days','Good for carts and browse'],['every','Every time it triggers','For transactional reminders']], (v)=>this.setSet({reentry:v}), 'Nobody is ever in this workflow twice at the same time.', {showSub:true}) ] };
+    } else if(st.sel){
+      const s = this.getNode(w, st.sel);
+      if(s){ const L = this.label(s, w), set = (p, mk)=>this.setNode(s.id, p, mk), fields = [];
+        if(s.t==='email'){
+          fields.push(F.input('Subject line', s.subject, (e)=>set({subject:e.target.value},'subj'), {ph:'What’s in it for them?', ai:()=>this.aiSubject(s.id), aiLabel: st.subjBusy===s.id?'Writing…':'✦ Suggest'}));
+          fields.push(F.input('Preview text', s.preheader, (e)=>set({preheader:e.target.value},'pre'), {ph:'Shown after the subject in the inbox'}));
+          fields.push(F.select('tpl'+s.id,'Design', s.template, this.TEMPLATES.map(t=>[t, t, '', /^(cart|browse|cross|review|vip)/.test(t)?'E-commerce':/^(trial|dunning)/.test(t)?'SaaS':/^(lead|webinar)/.test(t)?'B2B':/^(appt|visit|recall)/.test(t)?'Healthcare':/^(course|app-)/.test(t)?'Education':/^(kyc|renew)/.test(t)?'Finance':/^(booking|pre-|post-stay)/.test(t)?'Travel':/^donor/.test(t)?'Nonprofit':'General']), (v)=>set({template:v}), '', {ph:'Choose a design…'}));
+          fields.push(F.link('', s.template ? 'Edit design in email builder' : 'Create a new design', 'Email Builder.dc.html', 'Unsubscribe link and postal address are added automatically.'));
+        } else if(s.t==='sms'){
+          const n = (s.text||'').length;
+          fields.push(F.text('Message', s.text, (e)=>set({text:e.target.value},'txt'), {ph:'Keep it short. Include “Reply STOP to opt out.”', count:`${n} / 160`, countBad:n>160, hint:'Only sent to contacts with SMS consent, and never during quiet hours.'}));
+        } else if(s.t==='wait'){
+          fields.push(F.select('wmode'+s.id,'Wait type', s.mode, [['duration','Delay','Wait a fixed amount of time'],['time','Time of day','Continue at a set time in their time zone'],['event','Until they open','Continue on open, or after a maximum'],['before','Before a date','Relative to the trigger’s date']], (m)=>set({mode:m}), '', {showSub:true}));
+          if(s.mode==='duration') fields.push(F.amount('Wait for', s.amount, (e)=>set({amount:Math.max(0,parseInt(e.target.value,10)||0)},'amt'), s.unit, (u)=>set({unit:u})));
+          if(s.mode==='time') fields.push(F.input('Continue at', s.time, (e)=>set({time:e.target.value},'time'), {ph:'09:00', hint:'24-hour time. Uses each contact’s time zone when known.'}));
+          if(s.mode==='event') fields.push(F.amount('Wait at most', s.max, (e)=>set({max:Math.max(0,parseInt(e.target.value,10)||0)},'max'), 'days', ()=>{}, ['days'], 'Continues as soon as they open the previous email — or after this long, so nobody gets stuck.'));
+          if(s.mode==='before') fields.push(F.amount('Send this long before '+this.dateWord(w.tkey), s.amount, (e)=>set({amount:Math.max(0,parseInt(e.target.value,10)||0)},'amt'), s.unit, (u)=>set({unit:u}), null, 'If that moment has already passed, the contact moves on immediately.'));
+        } else if(s.t==='branch'){
+          fields.push(F.select('cond'+s.id,'Check whether the contact…', s.cond, condOpts, (v)=>set({cond:v}), 'Matching contacts follow the green Yes dot. Connect each dot to the next step.', {showSub:true}));
+          if(s.cond==='tag') fields.push(F.input('Tag', s.tag, (e)=>set({tag:e.target.value},'tag'), {ph:'e.g. vip'}));
+        } else if(s.t==='split'){
+          fields.push(F.seg('Traffic split', String(s.pct), [['50','50 / 50'],['70','70 / 30'],['90','90 / 10']], (v)=>set({pct:Number(v)}), 'Contacts are assigned randomly and stay on their path.'));
+        } else if(s.t==='filter'){
+          fields.push(F.select('rule'+s.id,'Only continue if the contact…', s.rule, condOpts.filter(c=>c[0]!=='tag'), (v)=>set({rule:v}), 'Everyone else exits the workflow here.', {showSub:true}));
+        } else if(s.t==='update'){
+          fields.push(F.select('act'+s.id,'Action', s.action, [['add_tag','Add a tag'],['remove_tag','Remove a tag'],['stage','Set lifecycle stage']], (v)=>set({action:v})));
+          fields.push(F.input(s.action==='stage'?'Stage':'Tag', s.value, (e)=>set({value:e.target.value},'val'), {ph: s.action==='stage'?'e.g. customer':'e.g. re-engaged'}));
+        } else if(s.t==='webhook'){
+          fields.push(F.input('URL', s.url, (e)=>set({url:e.target.value},'url'), {ph:'https://'}));
+          fields.push(F.seg('Method', s.method, [['POST','POST'],['PUT','PUT']], (m)=>set({method:m}), 'Sends the contact and event as signed JSON. Retries 3 times with backoff; failures appear in Logs.'));
+        } else if(s.t==='notify'){
+          fields.push(F.input('Send alert to', s.to, (e)=>set({to:e.target.value},'to'), {ph:'team@acme.com'}));
+          fields.push(F.text('Message', s.msg, (e)=>set({msg:e.target.value},'msg'), {ph:'What should the team do?'}));
+        }
+        const ss = live && s.sent ? [{k:'Sent',v:s.sent.toLocaleString('en-US')},{k:'Opened',v:s.open.toFixed(1)+'%'},{k:'Clicked',v:s.click.toFixed(1)+'%'}] : [];
+        selV = { kind:K[s.t][0], title:L[0], icon:this.ico(K[s.t][1],16), iconStyle:iconBox(s.t,32), canEdit:true, fields, stats:ss, hasStats:ss.length>0, onDelete:()=>this.del(s.id), onDuplicate:()=>this.dup(s.id) };
+      }
+    }
+    if(selV) selV.issues = byId(st.sel).map(i=>({text:i.text, style:`display:flex;gap:9px;align-items:flex-start;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.45;${i.level==='error'?'background:oklch(0.56 0.20 25 / 0.07);color:oklch(0.42 0.16 25);':'background:oklch(0.75 0.15 70 / 0.12);color:oklch(0.42 0.10 65);'}`, dot:`display:block;width:7px;height:7px;margin-top:5px;border-radius:50%;flex-shrink:0;background:${i.level==='error'?'oklch(0.58 0.20 25)':'oklch(0.72 0.15 70)'};`}));
+    const settings = [
+      { title:'Goal', rows:[ {isSelect:true, label:'Exit when the contact…', dd:this.dd('goal', S.goal, this.GOALS.map(g=>[g[0], g[1]]), (v)=>this.setSet({goal:v})), hasHint:true, hint:'Converted contacts leave right away and count toward the conversion rate.'} ]},
+      { title:'Sending rules', rows:[
+        {isToggle:true, label:'Quiet hours', hint:'Hold messages that would arrive overnight until the morning.', track:track(S.quiet), knob:knob(S.quiet), onClick:()=>this.setSet({quiet:!S.quiet})},
+        ...(S.quiet?[{isPair:true, a:S.qFrom, b:S.qTo, onA:(e)=>this.setSet({qFrom:e.target.value}), onB:(e)=>this.setSet({qTo:e.target.value})}]:[]),
+        {isSelect:true, label:'Time zone', dd:this.dd('tz', S.tz, [['contact','Each contact’s time zone','Falls back to Pacific Time when unknown'],['workspace','Workspace time zone','Pacific Time (PT)']], (v)=>this.setSet({tz:v}), {showSub:true}), hasHint:false, hint:''},
+        {isToggle:true, label:'Frequency cap', hint:'Applies across all workflows and campaigns.', track:track(S.cap), knob:knob(S.cap), onClick:()=>this.setSet({cap:!S.cap})},
+        ...(S.cap?[{isNum:true, value:S.capN, suffix:'emails per 7 days', onChange:(e)=>this.setSet({capN:Math.max(1,parseInt(e.target.value,10)||1)})}]:[]) ]},
+      { title:'Compliance', rows:[
+        {isToggle:true, label:'Exit when they unsubscribe', hint:'Always on. Unsubscribed contacts leave every workflow immediately.', track:track(true), knob:knob(true), onClick:()=>this.toast('Required — this can’t be turned off')},
+        {isToggle:true, label:'SMS only with consent', hint:'Always on. Contacts without SMS consent skip SMS steps and continue.', track:track(true), knob:knob(true), onClick:()=>this.toast('Required by TCPA — this can’t be turned off')} ]},
+    ];
+    const issueList = issues.slice().sort((a,b)=>(a.level==='error'?0:1)-(b.level==='error'?0:1)).map(i=>({ text:i.text, where:i.where,
+      dot:`display:block;width:8px;height:8px;margin-top:5px;border-radius:50%;flex-shrink:0;background:${i.level==='error'?'oklch(0.58 0.20 25)':'oklch(0.72 0.15 70)'};`,
+      onClick:()=>{ if(i.id==='settings') this.setState({sel:null, pTab:'settings'}); else this.setState({sel:i.id, selEdge:null}); } }));
+    const sugg = this.suggestions(w, issues), sim = st.modal==='test' ? this.simulate(w, st.persona) : null;
+    const dotK = {start:'oklch(0.58 0.14 155)', msg:'oklch(0.56 0.20 25)', wait:'oklch(0.72 0.15 70)', logic:'oklch(0.52 0.15 290)', skip:'oklch(0.75 0.006 260)', exit:'oklch(0.30 0.015 260)'};
+    const R = this.recipes(), inds = ['All', ...Array.from(new Set(R.map(r=>r[0])))];
+    const savedTxt = st.savedAt ? 'Autosaved '+st.savedAt.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) : '';
+    const canAct = !errs.length, okAi = !!st.aiPrompt.trim() && !st.aiBusy;
+    const iconBtn = (on)=>`flex-shrink:0;display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:${on?'pointer':'default'};color:${on?'oklch(0.30 0.015 260)':'oklch(0.78 0.006 260)'};`;
+    const z = st.zoom, cw = this.canvasRef.current ? this.canvasRef.current.clientWidth : 800;
+    return {
+      canvasRef:this.canvasRef, edgesEl:this.edgesEl(w), nodesV, palette, palQ:st.palQ, onPalQ:(e)=>this.setState({palQ:e.target.value}),
+      canvasStyle:`position:relative;flex:1;min-width:0;overflow:hidden;touch-action:none;cursor:${st.panning?'grabbing':st.link?'crosshair':'default'};background-color:oklch(0.968 0.003 250);background-image:radial-gradient(oklch(0.84 0.004 250) ${Math.max(0.8, z)}px, transparent ${Math.max(0.8, z)}px);background-size:${20*z}px ${20*z}px;background-position:${st.pan.x}px ${st.pan.y}px;`,
+      worldStyle:`position:absolute;left:0;top:0;width:1px;height:1px;transform:translate(${st.pan.x}px,${st.pan.y}px) scale(${z});transform-origin:0 0;`,
+      onCanvasDown:this.onCanvasDown, onDragOver:(e)=>{ e.preventDefault(); try{ e.dataTransfer.dropEffect = 'copy'; }catch(_){} }, onDrop:this.onDrop,
+      hasEdgeBar, edgeBarStyle, edgeMenuOpen:st.addAt==='edge', edgeAdd:(e)=>{ e.stopPropagation(); this.setState({addAt: st.addAt==='edge'?null:'edge'}); }, edgeDel:(e)=>{ e.stopPropagation(); se && this.delEdge(se.id); },
+      edgeMenu: se ? menu((t)=>{ const n = this.newNode(t); this.change(x=>this.insertAfter(x, se.from, se.port, [n])); this.setState({addAt:null, selEdge:null, sel:n.id}); }) : [],
+      hasLinkMenu:!!st.linkMenu, linkMenuStyle: st.linkMenu ? `position:absolute;left:${st.linkMenu.sx}px;top:${st.linkMenu.sy}px;z-index:25;width:250px;max-height:360px;overflow-y:auto;border-radius:12px;border:1px solid oklch(0.91 0.004 250);background:#fff;box-shadow:0 16px 40px -12px oklch(0.2 0.02 260 / 0.3);padding:6px;animation:popIn .14s ease-out;` : '',
+      linkMenu: st.linkMenu ? menu((t)=>{ const L = st.linkMenu; this.addNodeAt(t, L.wx-this.W/2, L.wy, {from:L.from, port:L.port}); }) : [],
+      isLinking:!!st.link, isEmpty: G.nodes.length===1,
+      name:w.name, onName:(e)=>this.change(x=>({...x, name:e.target.value}), {merge:'name'}),
+      status:w.status, statusPill:`display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;font-size:11.5px;font-weight:600;${live?'color:oklch(0.40 0.12 155);background:oklch(0.62 0.14 155 / 0.13);':w.status==='Paused'?'color:oklch(0.48 0.11 65);background:oklch(0.75 0.15 70 / 0.16);':'color:oklch(0.45 0.012 260);background:oklch(0.95 0.004 250);'}`,
+      subText:`${G.nodes.length-1} steps · ${w.trigger} · ${savedTxt}`,
+      undo:this.undo, redo:this.redo, undoStyle:iconBtn(st.past.length>0), redoStyle:iconBtn(st.future.length>0),
+      openGallery:()=>this.setState({modal:'gallery'}), openTest:()=>this.setState({modal:'test'}),
+      showIssues:()=>this.setState({sel:null, selEdge:null, pTab:'issues'}),
+      issuesLabel: errs.length ? `${errs.length} to fix` : warns.length ? `${warns.length} suggestion${warns.length>1?'s':''}` : 'No issues',
+      issuesDot:`display:block;width:7px;height:7px;border-radius:50%;background:${errs.length?'oklch(0.58 0.20 25)':warns.length?'oklch(0.72 0.15 70)':'oklch(0.58 0.14 155)'};`,
+      issuesBtnStyle:'flex-shrink:0;white-space:nowrap;display:flex;align-items:center;gap:7px;height:34px;padding:0 12px;border-radius:9px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;font-size:13px;font-weight:500;color:oklch(0.30 0.015 260);',
+      toggleAi:()=>this.setState({aiOpen:!st.aiOpen}),
+      aiBtnStyle:`flex-shrink:0;white-space:nowrap;height:34px;padding:0 12px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:600;${st.aiOpen?'border:1px solid oklch(0.50 0.16 290);background:oklch(0.55 0.15 290 / 0.12);color:oklch(0.40 0.16 290);':'border:1px solid oklch(0.91 0.004 250);background:#fff;color:oklch(0.44 0.15 290);'}`,
+      primaryLabel: live ? 'Pause' : 'Activate',
+      primaryStyle: live ? 'flex-shrink:0;height:34px;padding:0 15px;border-radius:9px;border:1px solid oklch(0.91 0.004 250);background:#fff;cursor:pointer;font-size:13px;font-weight:600;color:oklch(0.30 0.015 260);' : `flex-shrink:0;height:34px;padding:0 15px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;${canAct?'border:1px solid oklch(0.50 0.20 25);background:oklch(0.56 0.20 25);color:#fff;':'border:1px solid oklch(0.91 0.004 250);background:oklch(0.955 0.003 250);color:oklch(0.60 0.010 260);'}`,
+      primary:()=>{ if(live){ this.change(x=>({...x, status:'Paused'})); this.toast('Paused — contacts wait where they are', true); return; }
+        if(!canAct){ this.setState({sel:null, selEdge:null, pTab:'issues'}); return this.toast(`Fix ${errs.length} issue${errs.length>1?'s':''} before activating`); }
+        this.setState({modal:'activate', actMode:'new'}); },
+      isLive:live, liveNote:'Edits apply when contacts reach the changed step. If you delete a step, contacts waiting there move to the next one.',
+      deselect:()=>this.setState({sel:null, selEdge:null, addAt:null}), stop:(e)=>e.stopPropagation(),
+      zoomLabel:Math.round(z*100)+'%',
+      zoomIn:()=>this.zoomAt(Math.min(1.6, z+0.1), cw/2, 260), zoomOut:()=>this.zoomAt(Math.max(0.4, z-0.1), cw/2, 260), zoomReset:()=>this.zoomAt(1, cw/2, 260),
+      fit:this.fit, tidyUp:()=>{ this.change(x=>this.tidy(x)); setTimeout(this.fit, 30); this.toast('Arranged', true); },
+      hasSel:!!selV, noSel:!selV, sel:selV||{fields:[], issues:[], stats:[]},
+      ddQ:st.ddQ, onDdQ:(e)=>this.setState({ddQ:e.target.value}),
+      pTabs:[['settings','Settings'],['issues', issues.length?`Issues · ${issues.length}`:'Issues']].map(t=>({label:t[1], style:tab(st.pTab===t[0]), onClick:()=>this.setState({pTab:t[0]})})),
+      isSettings:st.pTab==='settings', isIssues:st.pTab==='issues', settings, issueList, noIssues:!issues.length,
+      issuesSummary: errs.length ? `${errs.length} must be fixed before this can go live${warns.length?`, plus ${warns.length} suggestion${warns.length>1?'s':''}`:''}.` : warns.length ? 'Ready to activate. These are recommendations.' : 'Everything checks out.',
+      aiOpen:st.aiOpen,
+      aiTabs:[['build','Build'],['review', sugg.length?`Review · ${sugg.length}`:'Review']].map(t=>({label:t[1], style:tab(st.aiTab===t[0],'oklch(0.50 0.16 290)'), onClick:()=>this.setState({aiTab:t[0]})})),
+      aiIsBuild:st.aiTab==='build', aiIsReview:st.aiTab==='review',
+      aiPrompt:st.aiPrompt, onAiPrompt:(e)=>this.setState({aiPrompt:e.target.value}),
+      aiExamples:['Abandoned cart with SMS fallback','Appointment reminders for a clinic','Trial onboarding for SaaS','Donor welcome series','Webinar reminders'].map(x=>({label:x, onClick:()=>this.setState({aiPrompt:x})})),
+      aiBuild:this.aiBuild, aiBuildLabel: st.aiBusy ? 'Designing…' : '✦ Draft workflow',
+      aiBuildStyle:`width:100%;height:40px;border-radius:10px;font-size:13.5px;font-weight:600;${okAi?'cursor:pointer;border:1px solid oklch(0.45 0.16 290);background:oklch(0.50 0.16 290);color:#fff;':'cursor:default;border:1px solid oklch(0.91 0.004 250);background:oklch(0.955 0.003 250);color:oklch(0.62 0.010 260);'}`,
+      aiReviewHead:'Checked against deliverability, compliance and conversion best practice for this trigger.',
+      suggestions:sugg.map(s=>({title:s.title, why:s.why, apply:()=>{ s.apply(); this.toast('Applied', true); }})), noSuggestions:!sugg.length,
+      isGallery:st.modal==='gallery', isTest:st.modal==='test', isActivate:st.modal==='activate', closeModal:()=>this.setState({modal:null}),
+      startBlank:()=>this.setState({modal:null, sel:'trigger'}), galleryAi:()=>this.setState({modal:null, aiOpen:true, aiTab:'build'}),
+      industries:inds.map(i=>({label:i, count:String(i==='All'?R.length:R.filter(r=>r[0]===i).length), onClick:()=>this.setState({galInd:i}),
+        style:`display:flex;align-items:center;gap:8px;width:100%;height:36px;padding:0 10px;border:0;border-radius:8px;cursor:pointer;text-align:left;font-size:13px;font-weight:${st.galInd===i?600:500};${st.galInd===i?'background:oklch(0.56 0.20 25 / 0.08);color:oklch(0.40 0.17 25);':'background:transparent;color:oklch(0.32 0.015 260);'}`})),
+      recipes:R.filter(r=>st.galInd==='All'||r[0]===st.galInd).map(r=>{ const flat = JSON.stringify(r[5]());
+        const chips = [this.tLabel(r[3]), (flat.match(/"t":"email"/g)||[]).length+' emails', ...(flat.includes('"sms"')?['SMS']:[]), ...(flat.includes('"branch"')?['Branching']:[])];
+        return { industry:r[0], name:r[1], desc:r[2], chips, onClick:()=>this.applyRecipe(r) }; }),
+      personas:[['maya','Maya','Opens, clicks and buys'],['leo','Leo','Opens, never clicks · no SMS consent'],['ana','Ana','Never opens']].map(p=>({name:p[1], desc:p[2], onClick:()=>this.setState({persona:p[0]}),
+        style:`flex:1;min-width:150px;padding:10px 12px;border-radius:10px;cursor:pointer;text-align:left;${st.persona===p[0]?'border:1.5px solid oklch(0.56 0.20 25);background:oklch(0.56 0.20 25 / 0.04);':'border:1px solid oklch(0.91 0.004 250);background:#fff;'}`})),
+      simSummary: sim ? `${sim.name} receives ${sim.msgs} message${sim.msgs===1?'':'s'}. Times include waits, quiet hours (${S.quiet?'on':'off'}) and the frequency cap (${S.cap?S.capN+' / 7 days':'off'}).` : '',
+      sim: sim ? sim.ev.map(e=>({when:e.when, title:e.title, note:e.note, hasNote:!!e.note, dot:`display:block;width:11px;height:11px;margin-top:3px;border-radius:50%;flex-shrink:0;background:${dotK[e.kind]};box-shadow:0 0 0 3px #fff;`})) : [],
+      actOpts:[['new','New contacts only','Starts with the next contact who triggers it.'],['existing','Also contacts who already qualify','About 1,240 contacts match now. They start at step 1, following quiet hours.']].map(o=>({label:o[1], hint:o[2], onClick:()=>this.setState({actMode:o[0]}),
+        style:`display:flex;align-items:flex-start;gap:12px;width:100%;padding:12px;border-radius:10px;cursor:pointer;text-align:left;${st.actMode===o[0]?'border:1.5px solid oklch(0.56 0.20 25);background:oklch(0.56 0.20 25 / 0.04);':'border:1px solid oklch(0.91 0.004 250);background:#fff;'}`,
+        radio:`display:block;width:16px;height:16px;margin-top:2px;border-radius:50%;flex-shrink:0;box-sizing:border-box;${st.actMode===o[0]?'border:5px solid oklch(0.56 0.20 25);':'border:1.5px solid oklch(0.80 0.005 250);'}`})),
+      actWarn: warns.length ? `${warns.length} recommendation${warns.length>1?'s':''} still open — you can activate anyway, or review them first.` : '',
+      confirmActivate:()=>{ this.change(x=>({...x, status:'Active'})); this.setState({modal:null}); this.toast(st.actMode==='existing' ? 'Live — 1,240 contacts queued' : 'Live — waiting for the next contact'); },
+      hasToast:!!st.toast, toast:st.toast||'', toastUndo:st.toastUndo,
+    };
+  }
+}
+</script>
+</body>
+</html>

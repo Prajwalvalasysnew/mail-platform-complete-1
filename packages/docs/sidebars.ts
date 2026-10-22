@@ -5,7 +5,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Getting Started',
-      collapsed: false,
+      collapsible: false,
       items: [
         { type: 'doc', id: 'guides/getting-started', label: 'Quickstart' },
         { type: 'doc', id: 'guides/authentication', label: 'Authentication' },
@@ -15,7 +15,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Sending',
-      collapsed: false,
+      collapsible: false,
       items: [
         { type: 'doc', id: 'guides/sending-email', label: 'Sending Email' },
         { type: 'doc', id: 'guides/batch-sending', label: 'Batch Sending' },
@@ -27,7 +27,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Automation',
-      collapsed: false,
+      collapsible: false,
       items: [
         { type: 'doc', id: 'guides/workflows', label: 'Workflows' },
       ],
@@ -35,7 +35,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Delivery & Engagement',
-      collapsed: false,
+      collapsible: false,
       items: [
         { type: 'doc', id: 'guides/webhooks', label: 'Webhooks' },
         { type: 'doc', id: 'guides/activity-analytics', label: 'Activity & Analytics' },
@@ -46,7 +46,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Deliverability & Compliance',
-      collapsed: false,
+      collapsible: false,
       items: [
         { type: 'doc', id: 'guides/deliverability', label: 'Deliverability' },
         { type: 'doc', id: 'guides/dns-setup', label: 'Domain Authentication' },
@@ -58,7 +58,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Sub-accounts',
-      collapsed: false,
+      collapsible: false,
       items: [
         { type: 'doc', id: 'guides/subaccounts', label: 'Sub-accounts' },
       ],
@@ -66,7 +66,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Account',
-      collapsed: false,
+      collapsible: false,
       items: [
         { type: 'doc', id: 'guides/account-quotas', label: 'Quotas & Usage' },
         { type: 'doc', id: 'guides/privacy-gdpr', label: 'Privacy & GDPR' },
@@ -76,7 +76,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Reference',
-      collapsed: false,
+      collapsible: false,
       items: [
         { type: 'doc', id: 'api-reference', label: 'API Reference' },
         { type: 'doc', id: 'SDK', label: 'Node.js SDK' },

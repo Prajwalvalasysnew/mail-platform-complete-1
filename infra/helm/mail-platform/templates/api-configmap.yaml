@@ -7,6 +7,24 @@ metadata:
     {{- include "mail-platform.labels" . | nindent 4 }}
 data:
   NODE_ENV: production
+  AI_ENABLED: {{ .Values.ai.enabled | quote }}
+  AI_ENABLED_TENANTS: {{ .Values.ai.enabledTenants | quote }}
+  AI_BASE_URL: {{ .Values.ai.baseUrl | quote }}
+  AI_MODEL: {{ .Values.ai.model | quote }}
+  AI_ALLOW_CLOUD: {{ .Values.ai.allowCloud | quote }}
+  AI_CONCURRENCY: {{ .Values.ai.concurrency | quote }}
+  AI_RETENTION_HOURS: {{ .Values.ai.retentionHours | quote }}
+  AI_CONTEXT_TOKENS: {{ .Values.ai.contextTokens | quote }}
+  AI_MAX_OUTPUT_TOKENS: {{ .Values.ai.maxOutputTokens | quote }}
+  AI_AGENT_TIMEOUT_MS: {{ .Values.ai.agentTimeoutMs | quote }}
+  {{- if .Values.customerUi.enabled }}
+  {{- if not (hasKey .Values.api.env "APP_BASE_URL") }}
+  APP_BASE_URL: {{ printf "https://%s" .Values.customerUi.ingress.host | quote }}
+  {{- end }}
+  {{- if not (hasKey .Values.api.env "CORS_ALLOWED_ORIGINS") }}
+  CORS_ALLOWED_ORIGINS: {{ printf "https://%s" .Values.customerUi.ingress.host | quote }}
+  {{- end }}
+  {{- end }}
   {{- range $k, $v := .Values.api.env }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}

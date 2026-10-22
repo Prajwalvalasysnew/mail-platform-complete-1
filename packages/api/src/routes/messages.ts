@@ -63,6 +63,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
           'status', 'tags', 'queued_at', 'accepted_at', 'delivered_at',
           'bounced_at', 'opened_at', 'first_clicked_at', 'attempts',
           'human_opened_at', 'human_clicked_at',
+          'message_class', 'template_id',
         ])
         .where('customer_id', '=', auth.customer_id);
 
@@ -194,6 +195,7 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
       .updateTable('send_outbox')
       .set({ status: 'failed', last_error: 'cancelled_by_user', updated_at: new Date() })
       .where('message_id', '=', messageId)
+      .where('customer_id', '=', auth.customer_id)
       .where('status', '=', 'pending')
       .executeTakeFirst();
 

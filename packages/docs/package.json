@@ -10,16 +10,18 @@
     "clear": "docusaurus clear",
     "export-openapi": "tsx ../shared/src/bin/export-openapi.ts"
   },
-  "dependencies": {},
   "devDependencies": {
     "@docusaurus/core": "^3.10.1",
+    "@docusaurus/module-type-aliases": "^3.10.1",
     "@docusaurus/preset-classic": "^3.10.1",
+    "@docusaurus/types": "^3.10.1",
+    "@easyops-cn/docusaurus-search-local": "^0.55.3",
+    "@fontsource/geist": "^5.3.0",
+    "@fontsource/geist-mono": "^5.3.0",
     "clsx": "^2.0.0",
     "prism-react-renderer": "^2.3.0",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
-    "@docusaurus/module-type-aliases": "^3.10.1",
-    "@docusaurus/types": "^3.10.1",
     "typescript": "^5.4.0"
   },
   "browserslist": {

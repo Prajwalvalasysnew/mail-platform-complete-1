@@ -6,7 +6,8 @@
 
 import { db } from './db.js';
 import { randomToken, hashUserToken } from './tokens.js';
-import { createUser, findUserByEmail } from './users.js';
+import { createUser } from './users.js';
+import {sql} from 'kysely';
 import { addMembership } from './memberships.js';
 import type { MembershipRole } from './schema.js';
 
@@ -60,27 +61,34 @@ export async function acceptInvite(
   token: string,
   opts: { name?: string; password?: string } = {}
 ): Promise<{ user_id: string; customer_id: string; existing_user: boolean; mfa_enabled: boolean } | { error: string }> {
-  const invite = await db
+  return db.transaction().execute(async trx=>{
+  const invite = await trx
     .selectFrom('user_invites')
     .select(['id', 'customer_id', 'email', 'role', 'expires_at', 'accepted_at'])
     .where('token_hash', '=', hashUserToken(token))
+    .forUpdate()
     .executeTakeFirst();
   if (!invite || invite.accepted_at) return { error: 'invalid_invite' };
   if (new Date(invite.expires_at) < new Date()) return { error: 'expired_invite' };
 
-  let user = await findUserByEmail(invite.email);
+  // Serialize separate invitations for the same email as well as token reuse.
+  await sql`select pg_advisory_xact_lock(hashtextextended(${invite.email},0))`.execute(trx);
+  let user = await trx.selectFrom('users').select(['id','email','name','status','email_verified_at','mfa_enabled']).where('email','=',invite.email).executeTakeFirst();
   const existingUser = !!user;
   if (!user) {
     if (!opts.password || opts.password.length < 8) return { error: 'password_required' };
-    user = await createUser({ email: invite.email, name: opts.name ?? null, password: opts.password });
+    user = await createUser({ email: invite.email, name: opts.name ?? null, password: opts.password },trx);
   }
-
-  await addMembership(user.id, invite.customer_id, invite.role as MembershipRole);
-  await db.updateTable('user_invites').set({ accepted_at: new Date() }).where('id', '=', invite.id).execute();
+  if(user.status!=='active')return {error:'invalid_invite'};
+  // Joining is not a role-change operation; never demote an existing owner.
+  const member=await trx.selectFrom('memberships').select('user_id').where('user_id','=',user.id).where('customer_id','=',invite.customer_id).executeTakeFirst();
+  if(!member)await addMembership(user.id, invite.customer_id, invite.role as MembershipRole,trx);
+  await trx.updateTable('user_invites').set({ accepted_at: new Date() }).where('id', '=', invite.id).execute();
   return {
     user_id: user.id,
     customer_id: invite.customer_id,
     existing_user: existingUser,
     mfa_enabled: user.mfa_enabled === true,
   };
+  });
 }

@@ -9,6 +9,47 @@ global:
     pullPolicy: IfNotPresent
 
 # ── API ───────────────────────────────────────────────────────────────────────
+customerUi:
+  enabled: false # Enable only after configuring the real public host/TLS secret.
+  replicaCount: 2
+  image:
+    tag: ""
+  service:
+    port: 8080
+  ingress:
+    enabled: true
+    className: nginx
+    host: app.example.invalid
+    tlsSecretName: customer-ui-tls
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+ai:
+  enabled: false
+  baseUrl: ""
+  model: gpt-oss:120b
+  allowCloud: false
+  enabledTenants: ""
+  concurrency: 1
+  retentionHours: 24
+  # Editor/assistant agent turns (DeepSeek Harness). The model route must serve the
+  # OpenAI-compatible /v1/chat/completions API with tool calling (Ollama does).
+  contextTokens: 32768
+  maxOutputTokens: 8192
+  agentTimeoutMs: 240000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1536Mi
+
 api:
   replicaCount: 3
   image:

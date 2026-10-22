@@ -7,6 +7,8 @@ WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/admin-console/package.json packages/admin-console/package.json
 COPY packages/api/package.json packages/api/package.json
+COPY packages/customer-ui/package.json packages/customer-ui/package.json
+COPY packages/landing-page/package.json packages/landing-page/package.json
 COPY packages/docs/package.json packages/docs/package.json
 COPY packages/haraka-inbound/package.json packages/haraka-inbound/package.json
 COPY packages/haraka-outbound/package.json packages/haraka-outbound/package.json

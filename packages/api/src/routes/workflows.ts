@@ -32,7 +32,10 @@ import {
   hashRequestBody,
   reserveIdempotencyKey,
   recordIdempotentResponse,
+  workflowQueue,
+  CUSTOM_EVENT_NAME,
 } from '@platform/shared';
+import { randomUUID } from 'node:crypto';
 import { requireScope } from '../plugins/scope.js';
 import { tenantScoped } from '../lib/tenant.js';
 
@@ -386,6 +389,36 @@ export const workflowRoutes: FastifyPluginAsync = async (app) => {
       const body = { started: true, run_id: res.run_id };
       if (idemKey) await recordIdempotentResponse(auth.customer_id, idemKey, 202, body);
       return reply.code(202).send(body);
+    }
+  );
+
+  // ---- named business events ----------------------------------------------
+  // POST /v1/workflows/events {event, email, data}: order_placed,
+  // appointment_booked, trial_started, payment_failed... Starts custom_event
+  // workflows, resumes "wait for event" steps, records goals and applies
+  // auto-exits. Dispatch runs in the workflow worker (cross-tenant service
+  // role); an Idempotency-Key makes client retries safe.
+  const EventSchema = z.object({
+    event: z.string().trim().toLowerCase().regex(CUSTOM_EVENT_NAME, 'event must be lowercase letters, digits, _ . - (max 64)'),
+    email: z.string().email().max(320),
+    data: z.record(z.unknown()).optional().refine((d) => !d || Buffer.byteLength(JSON.stringify(d)) <= 16_384, 'data must be at most 16 KB'),
+  }).strict();
+  app.post(
+    '/workflows/events',
+    { config: { rateLimit: { max: Number(process.env.WORKFLOW_EVENT_RATE_LIMIT_PER_MINUTE ?? 1200), timeWindow: '1 minute' } }, preHandler: scope },
+    async (req, reply) => {
+      const parsed = EventSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'validation_failed', details: parsed.error.flatten() });
+      const auth = req.auth!;
+      const key = (req.headers['idempotency-key'] as string | undefined)?.trim();
+      if (key && (key.length > 200 || !/^[\x21-\x7e]+$/.test(key))) return reply.code(400).send({ error: 'invalid_idempotency_key' });
+      const jobId = key ? `ev-${auth.customer_id}-${hashRequestBody({ key })}` : `ev-${randomUUID()}`;
+      await workflowQueue.add(
+        'custom_event',
+        { kind: 'custom_event', run_id: '', customer_id: auth.customer_id, event_name: parsed.data.event, subject_email: parsed.data.email.toLowerCase(), data: parsed.data.data ?? {} },
+        { jobId, removeOnComplete: { age: 86_400 } }
+      );
+      return reply.code(202).send({ accepted: true, event: parsed.data.event, id: jobId });
     }
   );
 

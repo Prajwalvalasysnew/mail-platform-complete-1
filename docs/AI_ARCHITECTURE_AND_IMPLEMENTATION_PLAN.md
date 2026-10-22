@@ -1,5 +1,7 @@
 # Valasys Mail AI Architecture and Implementation Plan
 
+> Current plan: [decision summary and delivery gates](AI_DELIVERY_DECISION_SUMMARY.md) and [Ollama engineering specification](AI_OLLAMA_HARNESS_REVIEW_AND_ACTION_PLAN.md), revised 20 October 2026. The document below is an earlier proposal. Its customer-UI and missing contacts/audiences/campaigns assessment predates the current implementation, and its direct-DeepSeek inference recommendation is superseded by the hosted-Ollama requirement.
+
 ## Executive summary
 
 Valasys Mail already has a capable multi-tenant email-delivery platform: a Fastify API, PostgreSQL with fail-closed row-level security, Redis and BullMQ workers, template rendering, message and engagement events, ClickHouse analytics, versioned workflow automation, SMTP ingress and egress, API-key and human-session authentication, capability-based authorization, audit integrity, privacy controls, and production deployment assets.

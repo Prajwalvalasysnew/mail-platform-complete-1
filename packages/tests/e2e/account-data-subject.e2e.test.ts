@@ -10,7 +10,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildTestApp } from './harness.js';
-import { db, CapturingPlatformMailer, setPlatformMailer } from '@platform/shared';
+import {randomUUID} from 'node:crypto';
+import { db, withTenant, CapturingPlatformMailer, setPlatformMailer } from '@platform/shared';
 
 let app: FastifyInstance;
 
@@ -37,16 +38,27 @@ async function register(email: string, password = 'a-good-long-password') {
   return res.json().token as string;
 }
 
+async function seedChat(userId:string){
+ const membership=await db.selectFrom('memberships').select('customer_id').where('user_id','=',userId).executeTakeFirstOrThrow();const id=randomUUID();
+ await withTenant(membership.customer_id,async trx=>{
+  await trx.insertInto('ai_chats').values({id,customer_id:membership.customer_id,user_id:userId,title:'Private chat fixture',settings:{mem:{voice:'Plain'}},expires_at:new Date(Date.now()+86400000)}).execute();
+  await trx.insertInto('ai_chat_messages').values({id:randomUUID(),customer_id:membership.customer_id,chat_id:id,run_id:null,seq:1,role:'user',text:'Private conversation text',status:'completed',result:{context_settings:{}},error:null,template_id:null,decision:null}).execute();
+ });return {id,cid:membership.customer_id};
+}
+
 const bearer = (t: string) => ({ authorization: `Bearer ${t}`, 'content-type': 'application/json' });
 
 describe('BASE-04 account-holder data-subject workflows', () => {
   it('exports the authenticated user\'s account data without secrets', async () => {
     const email = uniqueEmail('self-export');
     const token = await register(email);
+    const userId=(await db.selectFrom('users').select('id').where('email','=',email).executeTakeFirstOrThrow()).id;
+    const chat=await seedChat(userId);
 
     const res = await app.inject({ method: 'GET', url: '/v1/auth/me/export', headers: bearer(token) });
     expect(res.statusCode).toBe(200);
     const body = res.json();
+    expect(body.ai_chats.some((entry:any)=>entry.chat.id===chat.id && entry.messages[0].text==='Private conversation text')).toBe(true);
     expect(body.user.email).toBe(email);
     expect(body.user.name).toBe('Data Subject');
     expect(body.memberships).toHaveLength(1);
@@ -94,6 +106,7 @@ describe('BASE-04 account-holder data-subject workflows', () => {
     const token = await register(email);
     const userId = (await db.selectFrom('users').select('id')
       .where('email', '=', email).executeTakeFirstOrThrow()).id;
+    const chat=await seedChat(userId);
     // Add a second owner so the sole-owner gate does not block.
     const coOwnerEmail = uniqueEmail('co-owner');
     await register(coOwnerEmail);
@@ -111,6 +124,7 @@ describe('BASE-04 account-holder data-subject workflows', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().deleted).toBe(true);
+    expect(await withTenant(chat.cid,trx=>trx.selectFrom('ai_chats').select('id').where('id','=',chat.id).executeTakeFirst())).toBeUndefined();
 
     // The user row survives only as a disabled, anonymized shell.
     const row = await db.selectFrom('users')

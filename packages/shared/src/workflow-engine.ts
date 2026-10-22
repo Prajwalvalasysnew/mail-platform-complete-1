@@ -51,6 +51,9 @@ import {
   type WorkflowStep,
 } from './workflow-definition.js';
 import type { WorkflowRunStatus } from './schema.js';
+import { loadContactBag, loadContactBags, applyContactUpdate, workflowRenderVariables, type ContactBag } from './workflow-contacts.js';
+import { inWindow, nextWindowStart, nextClockTime, resolveTimeZone, parseDateValue, localDate, type ClockWindow } from './workflow-time.js';
+import { resolveField, customEventKey } from './workflow-definition.js';
 
 type DbLike = typeof db;
 
@@ -69,7 +72,7 @@ export interface TriggerRunInput {
   customerId: string;
   workflowId: string;
   subjectEmail: string;
-  source: 'event' | 'api' | 'manual' | 'test';
+  source: 'event' | 'api' | 'manual' | 'test' | 'audience' | 'schedule';
   triggerPayload?: Record<string, unknown>;
   context?: Record<string, unknown>;
 }
@@ -84,7 +87,25 @@ export interface TriggerRunResult {
     | 'reentry_blocked'
     | 'reentry_cooldown'
     | 'capacity'
-    | 'customer_inactive';
+    | 'customer_inactive'
+    | 'entry_filtered'
+    | 'not_subscribed';
+}
+
+/** Settings.entry: subscription requirement and entry rules. Returns a skip reason or null. */
+async function screenEntry(
+  def: WorkflowDefinition,
+  customerId: string,
+  email: string,
+  contact: ContactBag,
+  trigger: Record<string, unknown>,
+  context: Record<string, unknown>
+): Promise<'entry_filtered' | 'not_subscribed' | null> {
+  const entry = def.settings.entry;
+  if (!entry) return null;
+  if (entry.require_subscribed && (contact.status !== 'Subscribed' || (await isSuppressed(customerId, email)))) return 'not_subscribed';
+  if (entry.rules.length && !evaluateRules({ subject: { email }, contact, trigger, context }, entry.rules, entry.match)) return 'entry_filtered';
+  return null;
 }
 
 function parseDefinition(raw: unknown): WorkflowDefinition {
@@ -246,6 +267,11 @@ export async function triggerWorkflowRun(
     }
   }
 
+  // Entry screening ("who can enter") against the contact record.
+  const contact = await loadContactBag(exec, input.customerId, subject);
+  const entry = await screenEntry(def, input.customerId, subject, contact, input.triggerPayload ?? {}, input.context ?? {});
+  if (entry) return { started: false, skipped_reason: entry };
+
   // Blast-radius cap per workflow (a misfiring trigger can't build an
   // unbounded backlog of active journeys).
   const activeCount = await exec
@@ -275,7 +301,8 @@ export async function triggerWorkflowRun(
           subject: { email: subject },
           trigger: input.triggerPayload ?? {},
           context: input.context ?? {},
-        },
+          contact,
+        } as any,
       })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -319,7 +346,7 @@ export async function triggerWorkflowRunsBulk(
     customerId: string;
     workflowId: string;
     subjects: BulkTriggerSubject[];
-    source: 'event' | 'api' | 'manual' | 'test';
+    source: 'event' | 'api' | 'manual' | 'test' | 'audience' | 'schedule';
     triggerPayload?: Record<string, unknown>;
   },
   executor?: DbLike
@@ -407,6 +434,17 @@ export async function triggerWorkflowRunsBulk(
     eligible.push(s);
   }
 
+  // Entry screening per subject, with one contact query for the batch.
+  const contacts = await loadContactBags(exec, input.customerId, eligible.map((s) => s.email));
+  const screened: BulkTriggerSubject[] = [];
+  for (const s of eligible) {
+    const reason = await screenEntry(def, input.customerId, s.email, contacts.get(s.email)!, input.triggerPayload ?? {}, s.context ?? {});
+    if (reason) results.set(s.email, { email: s.email, started: false, skipped_reason: reason });
+    else screened.push(s);
+  }
+  eligible.length = 0;
+  eligible.push(...screened);
+
   // Capacity: admit only up to the per-workflow active-run headroom.
   const activeCount = await exec
     .selectFrom('workflow_runs')
@@ -440,7 +478,8 @@ export async function triggerWorkflowRunsBulk(
             subject: { email: s.email },
             trigger: input.triggerPayload ?? {},
             context: s.context ?? {},
-          },
+            contact: contacts.get(s.email),
+          } as any,
         }))
       )
       .onConflict((oc) => oc.doNothing())
@@ -469,8 +508,8 @@ export async function triggerWorkflowRunsBulk(
 // ---------------------------------------------------------------------------
 
 type StepOutcome =
-  | { kind: 'continue'; sentMessageId?: string }
-  | { kind: 'parked' }
+  | { kind: 'continue'; sentMessageIds?: string[] }
+  | { kind: 'parked'; job:{kind:'wake'|'timeout';run:{id:string;customer_id:string};wakeAt:Date;seq:number;stepId?:string;uniqueSuffix?:string} }
   | { kind: 'finished' }
   | { kind: 'noop' };
 
@@ -552,10 +591,16 @@ export async function advanceWorkflowRun(runId: string): Promise<void> {
 
   for (let i = 0; i < STEP_BUDGET_PER_JOB; i++) {
     const outcome = await advanceOneStep(runId, def);
-    if (outcome.kind === 'continue' && outcome.sentMessageId) {
+    if(outcome.kind==='parked'){
+      // The parked row must be committed before a zero-delay job can run.
+      // Redis remains best effort; the durable wake_at sweep is the fallback.
+      const job=outcome.job;
+      try{await enqueue(job.kind,job.run,{seq:job.seq,stepId:job.stepId,uniqueSuffix:job.uniqueSuffix,delayMs:Math.max(0,job.wakeAt.getTime()-Date.now())});}catch{/* sweep recovers */}
+    }
+    if (outcome.kind === 'continue' && outcome.sentMessageIds?.length) {
       // Best-effort immediate dispatch after the step txn committed; the
       // scheduler's outbox drain is the durable fallback.
-      await dispatchPendingWorkflowSends([outcome.sentMessageId]);
+      await dispatchPendingWorkflowSends(outcome.sentMessageIds);
     }
     if (outcome.kind !== 'continue') return;
   }
@@ -606,12 +651,24 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
   let stepFailed: string | null = null;
   let parkForQuota = false;
   let parkForWebhookRetry = false;
+  // Quiet hours / frequency cap: hold the message step without executing it.
+  const hold = step.type === 'send_email' || step.type === 'notify' ? await sendingRulesHold(pre, def, step.type) : null;
 
-  if (step.type === 'send_email') {
+  if (hold) {
+    /* parked below, inside the advancement transaction */
+  } else if (step.type === 'send_email') {
     const prep = await prepareSendEmail(pre, step);
     if (prep.kind === 'park_quota') parkForQuota = true;
     else if (prep.kind === 'failed') stepFailed = prep.reason;
     else sideEffect = prep;
+  } else if (step.type === 'notify') {
+    const prep = await prepareNotify(pre, step);
+    if (prep.kind === 'park_quota') parkForQuota = true;
+    else if (prep.kind === 'failed') stepFailed = prep.reason;
+    else sideEffect = prep;
+  } else if (step.type === 'condition') {
+    // Conditions see fresh contact data and this run's email engagement.
+    sideEffect = { bag: await conditionBag(pre, step.rules) };
   } else if (step.type === 'webhook') {
     const delivery = await deliverWorkflowWebhook(pre, step);
     sideEffect = delivery;
@@ -635,6 +692,16 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
     const seq = run.steps_executed + 1;
     const t = trx as unknown as DbLike;
 
+    if (hold) {
+      await t
+        .updateTable('workflow_runs')
+        .set({ status: 'waiting_delay', wake_at: hold.wakeAt })
+        .where('id', '=', runId)
+        .execute();
+      workflowStepsExecuted.inc({ step_type: step.type, outcome: `${hold.reason}_deferred` });
+      return { kind: 'parked', job: { kind: 'wake', run, wakeAt: hold.wakeAt, seq: run.steps_executed, stepId: step.id, uniqueSuffix: `-${hold.reason}${hold.wakeAt.getTime()}` } };
+    }
+
     // Quota exhausted: park and retry the same step later (no seq consumed,
     // no 'entered' stat bump — the step hasn't actually executed yet).
     if (parkForQuota) {
@@ -652,13 +719,8 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
           })
           .where('id', '=', runId)
           .execute();
-        // Enqueue failures are swallowed: wake_at is durable and the overdue
-        // sweep re-arms it. Throwing here would roll back the park itself.
-        try {
-          await enqueue('wake', run, { seq: run.steps_executed, delayMs: wakeAt.getTime() - Date.now(), stepId: step.id, uniqueSuffix: `-q${retries + 1}` });
-        } catch { /* sweep recovers */ }
         workflowStepsExecuted.inc({ step_type: step.type, outcome: 'quota_deferred' });
-        return { kind: 'parked' };
+        return { kind: 'parked',job:{kind:'wake',run,wakeAt,seq:run.steps_executed,stepId:step.id,uniqueSuffix:`-q${retries+1}`} };
       }
     }
 
@@ -679,11 +741,8 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
           })
           .where('id', '=', runId)
           .execute();
-        try {
-          await enqueue('wake', run, { seq: run.steps_executed, delayMs: wakeAt.getTime() - Date.now(), stepId: step.id, uniqueSuffix: `-w${retries + 1}` });
-        } catch { /* sweep recovers */ }
         workflowStepsExecuted.inc({ step_type: step.type, outcome: 'webhook_retry_deferred' });
-        return { kind: 'parked' };
+        return { kind: 'parked',job:{kind:'wake',run,wakeAt,seq:run.steps_executed,stepId:step.id,uniqueSuffix:`-w${retries+1}`} };
       }
     }
 
@@ -706,14 +765,17 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
     } else {
       switch (step.type) {
         case 'delay': {
-          const wakeAt = computeWakeAt(new Date(), step.duration_seconds, step.deliver_window);
+          const tz = step.deliver_window?.timezone
+            ? resolveTimeZone(step.deliver_window.timezone, (run.context as any).contact?.timezone, def.settings.default_timezone)
+            : 'UTC';
+          const wakeAt = computeWakeAt(new Date(), step.duration_seconds, step.deliver_window, tz);
           park = { status: 'waiting_delay', wakeAt };
           result = { wake_at: wakeAt.toISOString() };
           nextStepId = step.next;
           break;
         }
         case 'condition': {
-          const pass = evaluateRules(run.context, step.rules, step.match);
+          const pass = evaluateRules((sideEffect as any).bag ?? run.context, step.rules, step.match);
           result = { branch: pass ? 'on_true' : 'on_false' };
           nextStepId = pass ? step.on_true : step.on_false;
           break;
@@ -829,6 +891,65 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
           nextStepId = null;
           break;
         }
+        case 'wait_until': {
+          const contact = (run.context as any).contact ?? {};
+          const tz = resolveTimeZone(step.timezone, contact.timezone, def.settings.default_timezone);
+          let target: Date | null = null;
+          if (step.mode === 'time_of_day' && step.time) target = nextClockTime(new Date(), step.time, tz, step.days);
+          else if (step.field) {
+            const base = parseDateValue(resolveField(run.context, step.field));
+            target = base ? new Date(base.getTime() + step.offset_seconds * 1000) : null;
+          }
+          if (!target || target.getTime() <= Date.now()) {
+            result = { missed: true, reason: target ? 'already_passed' : 'date_missing' };
+            ledgerStatus = 'skipped';
+            if (step.if_missed === 'exit') {
+              terminal = 'exited';
+              nextStepId = null;
+            } else nextStepId = step.next;
+          } else {
+            park = { status: 'waiting_delay', wakeAt: target };
+            result = { wake_at: target.toISOString(), timezone: tz };
+            nextStepId = step.next;
+          }
+          break;
+        }
+        case 'update_contact': {
+          const contact = await applyContactUpdate(t, run.customer_id, run.subject_email, step);
+          if (step.status === 'Unsubscribed') {
+            await addSuppression(run.customer_id, run.subject_email, 'unsubscribe', `workflow:${run.workflow_id}`, t, { source: 'workflow' });
+          }
+          contextPatch = { contact };
+          result = { tags: contact.tags, attributes: Object.keys(step.set_attributes), status: step.status ?? null };
+          nextStepId = step.next;
+          break;
+        }
+        case 'notify': {
+          const send = sideEffect as NotifyPrep;
+          if (!send.messages.length) {
+            ledgerStatus = 'skipped';
+            result = { skipped: 'all_recipients_suppressed' };
+          } else {
+            for (const m of send.messages) {
+              await t
+                .insertInto('messages')
+                .values({
+                  message_id: m.message_id, customer_id: run.customer_id, from_address: step.from, from_name: null,
+                  to_address: m.to, reply_to: null, subject: send.subject, html_body: null, text_body: send.text,
+                  headers: {}, tags: ['workflow', 'notify'],
+                  metadata: { workflow_id: run.workflow_id, workflow_run_id: run.id, workflow_step_id: step.id, notify_subject: run.subject_email },
+                  tracking_opens: false, tracking_clicks: false, ip_pool: 'transactional', template_id: null,
+                  risk_score: send.risk_score, status: 'queued',
+                } as any)
+                .execute();
+              await t.insertInto('events').values({ message_id: m.message_id, customer_id: run.customer_id, event_type: 'queued', payload: { workflow_run_id: run.id } } as any).execute();
+            }
+            await createSendOutboxRows(send.messages.map((m) => ({ message_id: m.message_id, customer_id: run.customer_id, priority: send.priority })), t);
+            result = { message_ids: send.messages.map((m) => m.message_id), to: send.messages.map((m) => m.to) };
+          }
+          nextStepId = step.next;
+          break;
+        }
       }
     }
 
@@ -876,16 +997,7 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
         .where('id', '=', runId)
         .execute();
       const kind = park.status === 'waiting_delay' ? 'wake' : 'timeout';
-      // Swallow enqueue failures: wake_at is durable, the overdue sweep
-      // re-arms. Throwing would roll back the park transition itself.
-      try {
-        await enqueue(kind, run, {
-          seq,
-          delayMs: park.wakeAt.getTime() - Date.now(),
-          stepId: park.status === 'waiting_event' ? step.id : nextStepId ?? undefined,
-        });
-      } catch { /* sweep recovers */ }
-      return { kind: 'parked' };
+      return { kind: 'parked',job:{kind,run,wakeAt:park.wakeAt,seq,stepId:park.status==='waiting_event'?step.id:nextStepId ?? undefined} };
     }
 
     if (nextStepId === null) {
@@ -915,7 +1027,8 @@ async function advanceOneStep(runId: string, def: WorkflowDefinition): Promise<S
       .set({ ...baseSet, current_step_id: nextStepId, wake_at: null, waiting_event_types: null } as any)
       .where('id', '=', runId)
       .execute();
-    return { kind: 'continue', sentMessageId: typeof result.message_id === 'string' ? result.message_id : undefined };
+    const sentIds = typeof result.message_id === 'string' ? [result.message_id] : Array.isArray(result.message_ids) ? (result.message_ids as string[]) : [];
+    return { kind: 'continue', sentMessageIds: sentIds };
   });
 }
 
@@ -938,10 +1051,15 @@ function defaultNext(step: WorkflowStep): string | null {
 export function computeWakeAt(
   now: Date,
   durationSeconds: number,
-  window?: { start_hour: number; end_hour: number }
+  window?: { start_hour: number; end_hour: number; days?: number[] },
+  timeZone = 'UTC'
 ): Date {
   const wake = new Date(now.getTime() + durationSeconds * 1000);
   if (!window) return wake;
+  if (timeZone !== 'UTC' || window.days?.length) {
+    const clock = (h: number) => `${String(h % 24).padStart(2, '0')}:00`;
+    return nextWindowStart(wake, { start: clock(window.start_hour), end: clock(window.end_hour), days: window.days }, timeZone);
+  }
   const hour = wake.getUTCHours();
   if (hour >= window.start_hour && hour < window.end_hour) return wake;
   const aligned = new Date(wake);
@@ -1010,8 +1128,8 @@ async function prepareSendEmail(
   if (!quota.allowed) return { kind: 'park_quota' };
 
   try {
-    const bag = { ...run.context, ...(step.variables ?? {}) };
-    const rendered = renderTemplate(template, bag, { onMissing: 'ignore' });
+    const bag = workflowRenderVariables(run.context, step.variables ?? {});
+    const rendered = renderTemplate(step.subject ? { ...template, subject: step.subject } : template, bag, { onMissing: 'ignore' });
 
     // Same content policy as /v1/send — a workflow must not become the
     // unscanned back door.
@@ -1034,6 +1152,83 @@ async function prepareSendEmail(
     await releaseQuota(run.customer_id, 1);
     return { kind: 'failed', reason: `render_failed:${err?.message ?? 'unknown'}` };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Sending rules, notify preparation, condition data
+// ---------------------------------------------------------------------------
+
+/** Quiet hours and frequency cap. Returns when to retry the step, or null to run it now. */
+async function sendingRulesHold(run: RunRow, def: WorkflowDefinition, kind: 'send_email' | 'notify'): Promise<{ wakeAt: Date; reason: 'quiet_hours' | 'frequency_cap' } | null> {
+  const now = new Date();
+  const window = def.settings.send_window;
+  if (window && kind === 'send_email') {
+    const tz = resolveTimeZone(window.timezone, (run.context as any).contact?.timezone, def.settings.default_timezone);
+    const w: ClockWindow = { start: window.start, end: window.end, days: window.days };
+    if (!inWindow(now, w, tz)) return { wakeAt: nextWindowStart(now, w, tz), reason: 'quiet_hours' };
+  }
+  const cap = def.settings.frequency_cap;
+  if (cap && kind === 'send_email') {
+    const since = new Date(now.getTime() - cap.days * 86_400_000);
+    const recent = await db
+      .selectFrom('messages')
+      .select('queued_at')
+      .where('customer_id', '=', run.customer_id)
+      .where('to_address', '=', run.subject_email)
+      .where('ip_pool', '=', 'marketing')
+      .where('queued_at', '>', since.toISOString() as any)
+      .orderBy('queued_at', 'desc')
+      .limit(cap.max)
+      .execute();
+    if (recent.length >= cap.max) {
+      const oldest = new Date(recent[recent.length - 1]!.queued_at as unknown as string);
+      return { wakeAt: new Date(oldest.getTime() + cap.days * 86_400_000 + 60_000), reason: 'frequency_cap' };
+    }
+  }
+  return null;
+}
+
+type NotifyPrep = { kind: 'ready'; subject: string; text: string; priority: number; risk_score: number; messages: { to: string; message_id: string }[] };
+async function prepareNotify(run: RunRow, step: Extract<WorkflowStep, { type: 'notify' }>): Promise<NotifyPrep | { kind: 'failed'; reason: string } | { kind: 'park_quota' }> {
+  const customer = await db.selectFrom('customers').select(['status', 'daily_quota', 'monthly_quota', 'tier']).where('id', '=', run.customer_id).executeTakeFirst();
+  if (!customer || customer.status !== 'active') return { kind: 'failed', reason: 'customer_inactive' };
+  const fromDomain = step.from.split('@')[1]!.toLowerCase();
+  const domain = await db.selectFrom('sending_domains').select(['verified_at', 'dkim_verified']).where('customer_id', '=', run.customer_id).where('domain', '=', fromDomain).executeTakeFirst();
+  if (!domain?.verified_at || !domain.dkim_verified) return { kind: 'failed', reason: 'domain_not_verified' };
+  const recipients: string[] = [];
+  for (const to of step.to) if (!(await isSuppressed(run.customer_id, to))) recipients.push(to.toLowerCase());
+  const vars = workflowRenderVariables(run.context);
+  const rendered = renderTemplate({ subject: step.subject, text_body: step.body }, vars, { onMissing: 'ignore' });
+  const scan = scanContent(rendered.subject, null as any, rendered.text ?? '');
+  if (scan.action === 'block') return { kind: 'failed', reason: 'content_rejected' };
+  if (recipients.length) {
+    const quota = await reserveQuota(run.customer_id, recipients.length, customer.daily_quota, customer.monthly_quota);
+    if (!quota.allowed) return { kind: 'park_quota' };
+  }
+  return {
+    kind: 'ready', subject: rendered.subject, text: rendered.text ?? step.body, risk_score: scan.score,
+    priority: customer.tier === 'enterprise' ? 1 : customer.tier === 'paid' ? 5 : 10,
+    messages: recipients.map((to) => ({ to, message_id: generateMessageId(fromDomain) })),
+  };
+}
+
+/** Bag for a condition: run data + fresh contact + engagement with this run's emails. */
+async function conditionBag(run: RunRow, rules: { field: string }[]): Promise<Record<string, unknown>> {
+  const bag: Record<string, unknown> = { ...run.context };
+  if (rules.some((r) => r.field.startsWith('contact.'))) bag.contact = await loadContactBag(db, run.customer_id, run.subject_email);
+  if (rules.some((r) => r.field.startsWith('run.'))) {
+    const sent: string[] = Array.isArray((run.context as any)._sent_message_ids) ? (run.context as any)._sent_message_ids : [];
+    const rows = sent.length
+      ? await db.selectFrom('messages').select(['message_id', 'queued_at', 'opened_at', 'first_clicked_at']).where('customer_id', '=', run.customer_id).where('message_id', 'in', sent).execute()
+      : [];
+    const last = rows.sort((a, b) => new Date(b.queued_at as any).getTime() - new Date(a.queued_at as any).getTime())[0];
+    bag.run = {
+      emails_sent: rows.length,
+      opened: rows.some((r) => r.opened_at), clicked: rows.some((r) => r.first_clicked_at),
+      last_opened: !!last?.opened_at, last_clicked: !!last?.first_clicked_at,
+    };
+  }
+  return bag;
 }
 
 /** Best-effort immediate dispatch after the advancement txn commits. */
@@ -1330,7 +1525,8 @@ export async function dispatchWorkflowEvent(input: WorkflowEventInput): Promise<
       if (!def || !step || step.type !== 'wait_for_event') continue;
 
       // Scope 'run': only events on messages this run itself sent count.
-      if (step.scope === 'run') {
+      // Custom business events are about the subject, never a specific message.
+      if (step.scope === 'run' && !input.eventType.startsWith('custom:')) {
         const sent: string[] = Array.isArray((run.context as any)._sent_message_ids)
           ? (run.context as any)._sent_message_ids
           : [];
@@ -1398,6 +1594,28 @@ export async function dispatchWorkflowEvent(input: WorkflowEventInput): Promise<
       }
     }
 
+    // Custom business event trigger ("order_placed"): its data becomes the run context.
+    if (
+      wf.status === 'active' &&
+      wf.trigger_type === 'custom_event' &&
+      wf.trigger_event_type === input.eventType &&
+      def.trigger.type === 'custom_event'
+    ) {
+      const data = input.payload ?? {};
+      const contact = def.trigger.filters?.some((f) => f.field.startsWith('contact.')) ? await loadContactBag(db, input.customerId, subject) : undefined;
+      if (def.trigger.filters?.length && !evaluateRules({ subject: { email: subject }, trigger: data, context: data, contact }, def.trigger.filters, 'all')) continue;
+      const started = await triggerWorkflowRun({
+        customerId: input.customerId,
+        workflowId: wf.id,
+        subjectEmail: subject,
+        source: 'api',
+        triggerPayload: { event_type: input.eventType },
+        context: data,
+      });
+      if (started.started && started.run_id) result.started_runs.push(started.run_id);
+      continue;
+    }
+
     // Trigger: start a new run when this event type is the workflow's entry.
     if (
       wf.status === 'active' &&
@@ -1421,6 +1639,116 @@ export async function dispatchWorkflowEvent(input: WorkflowEventInput): Promise<
   }
 
   return result;
+}
+
+/**
+ * A named business event from the customer's systems (order placed, appointment
+ * booked, payment failed). Starts custom_event workflows, resumes waits on it,
+ * marks goals and applies auto-exits, exactly like engagement events.
+ */
+export async function emitWorkflowCustomEvent(input: { customerId: string; name: string; subjectEmail: string; data?: Record<string, unknown> }) {
+  return dispatchWorkflowEvent({ customerId: input.customerId, eventType: customEventKey(input.name), subjectEmail: input.subjectEmail, payload: input.data ?? {} });
+}
+
+/**
+ * Contacts were added to a list/segment: enroll them in every active workflow
+ * whose trigger is that collection. Pass the tenant transaction from API
+ * routes and kick the returned run ids after commit.
+ */
+export async function enrollAudienceWorkflows(customerId: string, collectionId: string, emails: string[], executor?: DbLike): Promise<string[]> {
+  if (!emails.length) return [];
+  const exec = executor ?? db;
+  const workflows = await exec
+    .selectFrom('workflows')
+    .select('id')
+    .where('customer_id', '=', customerId)
+    .where('status', '=', 'active')
+    .where('trigger_type', '=', 'audience')
+    .where('trigger_event_type', '=', collectionId)
+    .execute();
+  const runIds: string[] = [];
+  for (const wf of workflows) {
+    for (let i = 0; i < emails.length; i += 500) {
+      const res = await triggerWorkflowRunsBulk(
+        { customerId, workflowId: wf.id, subjects: emails.slice(i, i + 500).map((email) => ({ email })), source: 'audience', triggerPayload: { collection_id: collectionId } },
+        exec
+      );
+      for (const r of res.results) if (r.started && r.run_id) runIds.push(r.run_id);
+    }
+  }
+  return runIds;
+}
+
+/** Local month-day (or full date) the date trigger matches today. */
+function dateTriggerTarget(now: Date, timeZone: string, offsetDays: number) {
+  const local = localDate(now, timeZone);
+  const target = new Date(`${local}T00:00:00Z`);
+  // Enter `offset_days` before (negative) or after (positive) the stored date.
+  target.setUTCDate(target.getUTCDate() - offsetDays);
+  return { local, iso: target.toISOString().slice(0, 10), monthDay: target.toISOString().slice(5, 10) };
+}
+
+/**
+ * Daily date-based enrollment (birthdays, renewals, anniversaries, due dates).
+ * Runs from the scheduler; each workflow enrolls once per local day after its
+ * configured hour. Re-entry rules still apply (yearly journeys need re-entry).
+ */
+export async function sweepDateTriggeredWorkflows(now = new Date(), limit = 200): Promise<number> {
+  const workflows = await db
+    .selectFrom('workflows')
+    .innerJoin('workflow_versions', 'workflow_versions.id', 'workflows.published_version_id')
+    .select(['workflows.id', 'workflows.customer_id', 'workflows.date_trigger_swept_on', 'workflow_versions.id as version_id', 'workflow_versions.definition'])
+    .where('workflows.status', '=', 'active')
+    .where('workflows.trigger_type', '=', 'date')
+    .limit(limit)
+    .execute();
+  let enrolled = 0;
+  for (const wf of workflows) {
+    let def: WorkflowDefinition;
+    try { def = cachedWorkflowDefinition(wf.version_id, wf.definition); } catch { continue; }
+    if (def.trigger.type !== 'date') continue;
+    const trigger = def.trigger;
+    const tz = resolveTimeZone(trigger.timezone, null);
+    const { local, iso, monthDay } = dateTriggerTarget(now, tz, trigger.offset_days);
+    const swept = wf.date_trigger_swept_on ? String(wf.date_trigger_swept_on).slice(0, 10) : null;
+    if (swept === local || Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hourCycle: 'h23' }).format(now)) < trigger.hour) continue;
+    // Claim the day first so concurrent schedulers never double-enroll.
+    const claimed = await db
+      .updateTable('workflows')
+      .set({ date_trigger_swept_on: local })
+      .where('id', '=', wf.id)
+      .where((eb) => eb.or([eb('date_trigger_swept_on', 'is', null), eb('date_trigger_swept_on', '!=', local)]))
+      .executeTakeFirst();
+    if (!Number(claimed.numUpdatedRows)) continue;
+    const column = trigger.field === 'contact.created_at' ? sql`(created_at at time zone ${tz})::date` : sql`(attributes->>${trigger.field.slice('contact.attributes.'.length)})`;
+    let after = '';
+    for (;;) {
+      const page = await db
+        .selectFrom('audience_contacts')
+        .select(['email', 'attributes', 'created_at'])
+        .where('customer_id', '=', wf.customer_id)
+        .where('status', '!=', 'Unsubscribed')
+        .where('email', '>', after)
+        .where(
+          trigger.recurrence === 'yearly'
+            ? sql<boolean>`substr((${column})::text, 6, 5) = ${monthDay}`
+            : sql<boolean>`substr((${column})::text, 1, 10) = ${iso}`
+        )
+        .orderBy('email')
+        .limit(500)
+        .execute();
+      if (!page.length) break;
+      const res = await triggerWorkflowRunsBulk({
+        customerId: wf.customer_id, workflowId: wf.id, source: 'schedule',
+        subjects: page.map((c) => ({ email: c.email, context: { date_field: trigger.field, matched_date: local } })),
+        triggerPayload: { date: local },
+      });
+      enrolled += res.started;
+      after = page[page.length - 1]!.email;
+      if (page.length < 500) break;
+    }
+  }
+  return enrolled;
 }
 
 // ---------------------------------------------------------------------------

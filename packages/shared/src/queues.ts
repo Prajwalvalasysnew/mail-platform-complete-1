@@ -1,5 +1,6 @@
 import { Queue, type QueueOptions, type BackoffStrategy } from 'bullmq';
 import { redisOptions } from './redis.js';
+import { aiQueue } from './ai/queue.js';
 
 // Allow tests to use an isolated namespace so Docker worker jobs don't
 // interfere with in-process test workers.  Set QUEUE_PREFIX=test_ in tests.
@@ -113,12 +114,16 @@ export interface WorkflowJobData {
   // advance: execute steps from the run's current position.
   // wake:    a delay elapsed — transition waiting_delay -> running, advance.
   // timeout: a wait_for_event timed out — take the on_timeout branch, advance.
-  kind: 'advance' | 'wake' | 'timeout';
+  // custom_event: a named business event to dispatch (triggers, waits, goals, exits).
+  kind: 'advance' | 'wake' | 'timeout' | 'custom_event';
   run_id: string;
   customer_id: string;
   // Guard for wake/timeout: only fires if the run is still waiting on this
   // step (an event may have resumed it first).
   step_id?: string;
+  event_name?: string;
+  subject_email?: string;
+  data?: Record<string, unknown>;
 }
 
 export const workflowQueue = new Queue<WorkflowJobData>(`${QUEUE_PREFIX}workflow`, defaultQueueOpts);
@@ -279,7 +284,7 @@ export async function purgeAllDeadLetters(): Promise<number> {
   }
 }
 
-export const allQueues = [sendQueue, eventsQueue, webhooksQueue, deadLetterQueue, exportsQueue, workflowQueue];
+export const allQueues = [sendQueue, eventsQueue, webhooksQueue, deadLetterQueue, exportsQueue, workflowQueue, aiQueue];
 
 const PRIVACY_REMOVABLE_JOB_STATES = [
   'waiting', 'delayed', 'failed', 'paused', 'completed', 'prioritized', 'waiting-children',

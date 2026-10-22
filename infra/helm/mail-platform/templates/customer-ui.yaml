@@ -1,0 +1,109 @@
+{{- if .Values.customerUi.enabled }}
+{{- $tag := include "mail-platform.imageTag" (dict "componentTag" .Values.customerUi.image.tag "globalTag" .Values.global.image.tag "Chart" .Chart) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-customer-ui
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.customerUi.replicaCount }}
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "customer-ui") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "customer-ui") | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: customer-ui
+          image: "{{ .Values.global.image.registry }}/{{ .Values.global.image.repository }}-customer-ui:{{ $tag }}"
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: API_UPSTREAM
+              value: "{{ include "mail-platform.fullname" . }}-api:{{ .Values.api.service.port }}"
+            - name: UI_LISTEN_PORT
+              value: {{ .Values.customerUi.service.port | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.customerUi.service.port }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+          resources:
+            {{- toYaml .Values.customerUi.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/conf.d
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-customer-ui
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    {{- include "mail-platform.selectorLabels" (dict "Chart" .Chart "Release" .Release "Values" .Values "component" "customer-ui") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.customerUi.service.port }}
+      targetPort: http
+---
+{{- if .Values.customerUi.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mail-platform.fullname" . }}-customer-ui
+  namespace: {{ .Values.namespace }}
+spec:
+  ingressClassName: {{ .Values.customerUi.ingress.className }}
+  tls:
+    - hosts:
+        - {{ required "Set customerUi.ingress.host" .Values.customerUi.ingress.host | quote }}
+      secretName: {{ required "Set customerUi.ingress.tlsSecretName" .Values.customerUi.ingress.tlsSecretName | quote }}
+  rules:
+    - host: {{ .Values.customerUi.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "mail-platform.fullname" . }}-customer-ui
+                port:
+                  name: http
+{{- end }}
+{{- end }}

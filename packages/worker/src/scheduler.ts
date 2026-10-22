@@ -49,6 +49,7 @@ import {
   expireElevations,
   sweepOverdueWorkflowRuns,
   recoverStuckWorkflowRuns,
+  sweepDateTriggeredWorkflows,
   sweepFinishedWorkflowRuns,
   runUnsubscribeMonitor,
 } from '@platform/shared';
@@ -530,6 +531,16 @@ export function startScheduler(logger: Logger): { stop: () => void } {
         if (rearmed) logger.warn({ rearmed }, 're-armed overdue workflow runs (lost wake jobs)');
         const recovered = await recoverStuckWorkflowRuns();
         if (recovered) logger.warn({ recovered }, 're-enqueued stuck running workflow runs');
+      },
+    },
+    {
+      // Date-based workflow entry (birthdays, renewals, due dates): each
+      // workflow enrolls matching contacts once per local day.
+      name: 'workflow_date_triggers',
+      everyMs: 15 * MIN,
+      run: async () => {
+        const enrolled = await sweepDateTriggeredWorkflows();
+        if (enrolled) logger.info({ enrolled }, 'date-triggered workflow enrollment complete');
       },
     },
     {

@@ -97,6 +97,17 @@ services:
       AUDIT_WORM_S3_BUCKET: ${AUDIT_WORM_S3_BUCKET:?set AUDIT_WORM_S3_BUCKET}
       AUDIT_WORM_S3_KMS_KEY_ID: ${AUDIT_WORM_S3_KMS_KEY_ID:?set AUDIT_WORM_S3_KMS_KEY_ID}
 
+  ai-worker:
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${AI_DATABASE_URL:?set AI_DATABASE_URL to a non-bypass tenant database role}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    mem_limit: 512m
+    cpus: 1
+
   worker:
     restart: unless-stopped
     healthcheck:

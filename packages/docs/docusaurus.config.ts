@@ -1,10 +1,14 @@
 import { themes as prismThemes } from 'prism-react-renderer';
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import apiEndpoints from './src/plugins/api-endpoints.mjs';
+
+// Optional link from the docs header back to the product (e.g. https://app.example.com).
+const appUrl = process.env.APP_BASE_URL;
 
 const config: Config = {
-  title: 'Mail Platform',
-  tagline: 'Self-hosted transactional email infrastructure for developers',
+  title: 'Valasys Docs',
+  tagline: 'Guides and API reference for sending, automating and tracking email with Valasys',
   favicon: 'img/favicon.svg',
 
   // Set to your docs subdomain, e.g. https://docs.yourcompany.com
@@ -24,6 +28,25 @@ const config: Config = {
     defaultLocale: 'en',
     locales: ['en'],
   },
+
+  clientModules: [require.resolve('./src/fonts.ts')],
+
+  themes: [
+    [
+      '@easyops-cn/docusaurus-search-local',
+      {
+        // Offline full-text search: the index is built with the site, no external service.
+        hashed: true,
+        indexBlog: false,
+        docsDir: '../../docs',
+        docsRouteBasePath: '/docs',
+        highlightSearchTermsOnTargetPage: true,
+        explicitSearchResultPath: true,
+        searchBarShortcutHint: true,
+        searchBarPosition: 'right',
+      },
+    ],
+  ],
 
   plugins: [
     // webpackbar@6.0.1 (used by Docusaurus for build progress) overwrites
@@ -55,6 +78,8 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/docs',
           editUrl: undefined,
+          rehypePlugins: [apiEndpoints],
+          showLastUpdateTime: false,
           // The repo docs/ directory also holds INTERNAL engineering material
           // (runbooks, audit plans, testing infra notes). Only the curated
           // public set below is built and published — everything else stays
@@ -79,69 +104,75 @@ const config: Config = {
   themeConfig: {
     image: 'img/og-card.png',
     navbar: {
-      title: 'Mail Platform',
+      title: 'Valasys',
+      hideOnScroll: false,
       logo: {
-        alt: 'Mail Platform',
+        alt: 'Valasys',
         src: 'img/logo.svg',
         srcDark: 'img/logo-dark.svg',
+        width: 28,
+        height: 28,
       },
       items: [
-        {
-          type: 'docSidebar',
-          sidebarId: 'docsSidebar',
-          position: 'left',
-          label: 'Docs',
-        },
-        {
-          to: '/docs/api-reference',
-          label: 'API Reference',
-          position: 'left',
-        },
-        {
-          to: '/docs/SDK',
-          label: 'SDK',
-          position: 'left',
-        },
+        { type: 'html', position: 'left', value: '<span class="navbar-docs-tag">Docs</span>', className: 'navbar-docs-item' },
+        { to: '/docs/guides/getting-started', label: 'Guides', position: 'left', activeBaseRegex: '/docs/(guides|COMPLIANCE)' },
+        { to: '/docs/api-reference', label: 'API reference', position: 'left', activeBaseRegex: '/docs/api-reference' },
+        { to: '/docs/SDK', label: 'SDK', position: 'left' },
+        { to: '/docs/guides/support', label: 'Support', position: 'right' },
+        ...(appUrl ? [{ href: appUrl, label: 'Open dashboard', position: 'right' as const, className: 'navbar-app-link' }] : []),
       ],
     },
     footer: {
-      style: 'dark',
+      style: 'light',
       links: [
         {
-          title: 'Getting Started',
+          title: 'Get started',
           items: [
             { label: 'Quickstart', to: '/docs/guides/getting-started' },
             { label: 'Authentication', to: '/docs/guides/authentication' },
-            { label: 'Sending Email', to: '/docs/guides/sending-email' },
-            { label: 'Webhooks', to: '/docs/guides/webhooks' },
+            { label: 'Domain authentication', to: '/docs/guides/dns-setup' },
+            { label: 'Migrate from SendGrid', to: '/docs/guides/migrate-from-sendgrid' },
           ],
         },
         {
           title: 'Guides',
           items: [
-            { label: 'Workflows', to: '/docs/guides/workflows' },
+            { label: 'Sending email', to: '/docs/guides/sending-email' },
             { label: 'Templates', to: '/docs/guides/templates' },
-            { label: 'Batch Sending', to: '/docs/guides/batch-sending' },
-            { label: 'Suppressions', to: '/docs/guides/suppressions' },
+            { label: 'Workflows', to: '/docs/guides/workflows' },
+            { label: 'Webhooks', to: '/docs/guides/webhooks' },
             { label: 'Deliverability', to: '/docs/guides/deliverability' },
-            { label: 'Privacy & GDPR', to: '/docs/guides/privacy-gdpr' },
           ],
         },
         {
           title: 'Reference',
           items: [
-            { label: 'API Reference', to: '/docs/api-reference' },
+            { label: 'API reference', to: '/docs/api-reference' },
             { label: 'Node.js SDK', to: '/docs/SDK' },
-            { label: 'Error Codes', to: '/docs/guides/errors' },
-            { label: 'Rate Limits', to: '/docs/guides/rate-limits' },
+            { label: 'Errors', to: '/docs/guides/errors' },
+            { label: 'Rate limits', to: '/docs/guides/rate-limits' },
+            { label: 'OpenAPI spec', href: 'pathname:///openapi.json' },
+          ],
+        },
+        {
+          title: 'Trust',
+          items: [
+            { label: 'Security & compliance', to: '/docs/guides/security-compliance' },
+            { label: 'Privacy & GDPR', to: '/docs/guides/privacy-gdpr' },
+            { label: 'Support', to: '/docs/guides/support' },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Mail Platform.`,
+      copyright: `© ${new Date().getFullYear()} Valasys`,
     },
+    docs: {
+      sidebar: { hideable: true, autoCollapseCategories: false },
+    },
+    tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
     prism: {
-      theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
+      // Dark code panels in both modes, like the code samples in the app.
+      theme: prismThemes.oneDark,
+      darkTheme: prismThemes.oneDark,
       additionalLanguages: ['bash', 'json', 'typescript', 'python', 'go', 'ruby', 'php'],
     },
     colorMode: {

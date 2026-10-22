@@ -1,7 +1,9 @@
+import {eraseAiUserChats} from '@platform/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import {
   db,
+  withTenant,
   registerOrgWithOwner,
   authenticate,
   recordLogin,
@@ -240,6 +242,23 @@ export const accountRoutes: FastifyPluginAsync = async (app) => {
     const passkeys = (await listPasskeys(userId)).map((p) => ({
       id: p.id, name: p.name, created_at: p.created_at, last_used_at: p.last_used_at,
     }));
+    const aiWriting=[];
+    const aiChats=[];
+    for(const membership of memberships){
+      if(aiWriting.length>=100)break;
+      aiWriting.push(...await withTenant(membership.customer_id,trx=>trx.selectFrom('ai_runs')
+        .select(['id','input','result','warnings','status','created_at','expires_at'])
+        .where('customer_id','=',membership.customer_id).where('user_id','=',userId).where('expires_at','>',new Date()).limit(100-aiWriting.length).execute()));
+    }
+    for(const membership of memberships){
+      if(aiChats.length>=100)break;
+      const chats=await withTenant(membership.customer_id,async trx=>{
+        const rows=await trx.selectFrom('ai_chats').selectAll().where('customer_id','=',membership.customer_id).where('user_id','=',userId).where('expires_at','>',new Date()).limit(100-aiChats.length).execute();
+        const output=[];
+        for(const chat of rows)output.push({chat,messages:await trx.selectFrom('ai_chat_messages').selectAll().where('customer_id','=',membership.customer_id).where('chat_id','=',chat.id).orderBy('seq').execute(),observations:await trx.selectFrom('ai_run_steps as s').innerJoin('ai_runs as r','r.id','s.run_id').select(['s.name','s.status','s.arguments','s.observation','s.created_at']).where('s.customer_id','=',membership.customer_id).where('r.customer_id','=',membership.customer_id).where('r.chat_id','=',chat.id).orderBy('s.created_at').execute(),checkpoints:await trx.selectFrom('ai_chat_checkpoints').selectAll().where('customer_id','=',membership.customer_id).where('chat_id','=',chat.id).execute()});
+        return output;
+      });aiChats.push(...chats);
+    }
     return {
       exported_at: new Date().toISOString(),
       user,
@@ -247,6 +266,8 @@ export const accountRoutes: FastifyPluginAsync = async (app) => {
       sessions,
       mfa_factors: mfaFactors,
       passkeys,
+      ai_writing:aiWriting,
+      ai_chats:aiChats,
       // Documented exclusions (BASE-04): records retained under other legal
       // bases and not returned here.
       exclusions: [
@@ -300,6 +321,7 @@ export const accountRoutes: FastifyPluginAsync = async (app) => {
     const erasedEmail = `${pseudonym.replace(':', '-')}@erased.invalid`;
 
     await db.transaction().execute(async (trx) => {
+      await eraseAiUserChats(trx,userId);
       await trx.deleteFrom('mfa_factors').where('user_id', '=', userId).execute();
       await trx.deleteFrom('mfa_recovery_codes').where('user_id', '=', userId).execute();
       await trx.deleteFrom('webauthn_credentials').where('user_id', '=', userId).execute();

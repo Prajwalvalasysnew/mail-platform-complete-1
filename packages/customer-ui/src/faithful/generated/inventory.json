@@ -1,0 +1,38 @@
+[
+  {
+    "component": "Customer",
+    "reference": "Customer App.dc.html",
+    "sha256": "012fbfeffbbcdd8ebeaa031882bd807bd90b812e7e79f22fa9eb5143a249d1b6",
+    "elements": 2448,
+    "conditions": 210,
+    "loops": 180,
+    "bindings": 1374
+  },
+  {
+    "component": "Email",
+    "reference": "Email Builder.dc.html",
+    "sha256": "78d6ed57be90d1ac0d255770e35a558aa00fda60642dd60de1a001cb0aec940e",
+    "elements": 205,
+    "conditions": 21,
+    "loops": 8,
+    "bindings": 114
+  },
+  {
+    "component": "Workflow",
+    "reference": "Workflow Builder.dc.html",
+    "sha256": "4d9423c8771609c0bc9635e648c64727ffd5e4961d2bcfdaa836a0b65c783630",
+    "elements": 351,
+    "conditions": 52,
+    "loops": 25,
+    "bindings": 219
+  },
+  {
+    "component": "Agent",
+    "reference": "AI Agent.dc.html",
+    "sha256": "ee89f8e2dfccf251bb7fd51b75c0ce252ae79204277ae9c7b24d779ce19d2602",
+    "elements": 268,
+    "conditions": 29,
+    "loops": 27,
+    "bindings": 175
+  }
+]
