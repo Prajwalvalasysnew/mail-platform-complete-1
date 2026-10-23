@@ -1,0 +1,45 @@
+/* Sign In.dc.html styling, scoped to the customer login route. */
+.customer-login,.customer-login *{box-sizing:border-box;margin:0;padding:0}
+.customer-login{font-family:'Inter',ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:oklch(0.985 0.003 250);color:oklch(0.17 0.02 255);font-feature-settings:"cv11","ss01";min-height:100vh}
+.customer-login ::selection{background:oklch(0.55 0.20 24/.18)}
+.customer-login .cl-grid{position:fixed;inset:0;background-image:linear-gradient(oklch(0.17 0.02 255/.04) 1px,transparent 1px),linear-gradient(90deg,oklch(0.17 0.02 255/.04) 1px,transparent 1px);background-size:56px 56px;mask-image:radial-gradient(ellipse 70% 55% at 50% 0%,#000 30%,transparent 75%);pointer-events:none}
+.customer-login .cl-layout{position:relative;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:40px 24px}
+.customer-login .cl-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:inherit;margin-top:24px;font-size:19px;white-space:nowrap}
+.customer-login .cl-logo{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;background:oklch(0.55 0.20 24)}
+.customer-login .cl-display{font-family:'Inter Tight',sans-serif;letter-spacing:-.02em;font-weight:700}
+.customer-login .cl-brand-muted{font-weight:600;color:oklch(0.42 0.015 255)}
+.customer-login .cl-card{width:100%;max-width:420px;margin-top:32px;background:#fff;border:1px solid oklch(0.90 0.008 252);border-radius:16px;box-shadow:0 1px 2px oklch(0.18 0.02 255/.05),0 16px 48px -16px oklch(0.18 0.02 255/.14);padding:36px}
+.customer-login h1.cl-display{font-size:24px;letter-spacing:-.025em}
+.customer-login .cl-description{font-size:14px;color:oklch(0.47 0.015 255);margin-top:6px;line-height:1.5}
+.customer-login .cl-providers{display:flex;flex-direction:column;gap:10px;margin-top:26px}
+.customer-login .cl-button{display:inline-flex;align-items:center;justify-content:center;gap:9px;height:44px;padding:0 20px;border-radius:9px;font-size:14.5px;font-weight:600;text-decoration:none;cursor:pointer;border:0;font-family:inherit;white-space:nowrap;transition:background .13s,border-color .13s;width:100%}
+.customer-login .cl-primary{background:oklch(0.55 0.20 24);color:#fff}
+.customer-login .cl-primary:hover{background:oklch(0.49 0.19 24)}
+.customer-login .cl-primary:disabled{opacity:.65;cursor:wait}
+.customer-login .cl-secondary{background:#fff;color:oklch(0.24 0.02 255);border:1px solid oklch(0.87 0.01 250)}
+.customer-login .cl-secondary:hover{border-color:oklch(0.72 0.015 250);background:oklch(0.985 0.003 250)}
+.customer-login .cl-divider{display:flex;align-items:center;gap:12px;margin:22px 0}
+.customer-login .cl-divider span:nth-child(2){font-size:12px;color:oklch(0.56 0.013 255);font-weight:500}
+.customer-login .cl-divider span:first-child,.customer-login .cl-divider span:last-child{flex:1;height:1px;background:oklch(0.92 0.006 250)}
+.customer-login .cl-form{display:flex;flex-direction:column;gap:16px}
+.customer-login .cl-mfa{margin-top:26px}
+.customer-login .cl-label{display:block;font-size:13px;font-weight:600;color:oklch(0.30 0.018 255);margin-bottom:7px}
+.customer-login .cl-input{width:100%;height:44px;border-radius:9px;border:1.5px solid oklch(0.89 0.009 250);background:#fff;padding:0 14px;font-size:14px;font-family:inherit;color:oklch(0.20 0.02 255);transition:border-color .12s,box-shadow .12s}
+.customer-login .cl-input:focus{outline:none;border-color:oklch(0.55 0.20 24);box-shadow:0 0 0 3px oklch(0.55 0.20 24/.11)}
+.customer-login .cl-input::placeholder{color:oklch(0.66 0.012 255)}
+.customer-login .cl-password-label{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.customer-login .cl-password-label .cl-label{margin:0}
+.customer-login .cl-password-label .cl-link{font-size:12px}
+.customer-login .cl-password{position:relative}
+.customer-login .cl-password input{padding-right:44px}
+.customer-login .cl-eye{position:absolute;right:6px;top:6px;width:32px;height:32px;border:0;background:transparent;border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:oklch(0.55 0.013 255)}
+.customer-login .cl-eye:hover{background:oklch(0.965 0.004 250);color:oklch(0.30 0.018 255)}
+.customer-login .cl-link{color:oklch(0.50 0.19 24);font-weight:600;text-decoration:none}
+.customer-login .cl-link:hover{text-decoration:underline}
+.customer-login .cl-register{font-size:14px;color:oklch(0.47 0.015 255);margin-top:22px}
+.customer-login .cl-footer{display:flex;align-items:center;gap:16px;font-size:12px;color:oklch(0.56 0.013 255);margin-top:auto;padding-top:32px}
+.customer-login .cl-footer a{color:inherit;text-decoration:none}
+.customer-login .cl-error{color:#b4232a;font-size:13px;line-height:1.5}
+.customer-login .cl-switch{border:0;background:none;cursor:pointer;font:inherit;font-size:13px}
+.customer-login .cl-notice{position:fixed;z-index:100;bottom:20px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 32px);padding:14px 20px;border-radius:10px;background:#fff;color:#171717;border:1px solid #d7d7d7;box-shadow:0 8px 40px #0003;font:14px/1.5 'Inter',sans-serif}
+.customer-login .cl-notice button{margin-left:14px;border:0;background:none;color:#a92532;font:inherit;cursor:pointer}

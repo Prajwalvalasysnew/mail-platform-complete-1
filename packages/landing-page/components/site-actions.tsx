@@ -33,9 +33,13 @@ export function prepareController(c:Controller,page:string){
  c.renderVals=()=>{
   const values=original();
   if(page==='Landing'){
+   const tourImages=['dashboard','campaigns','analytics','messages','workflow','templates'];
+   values.shotSrc=`/assets/customer-tour/${tourImages[c.state.shot] || tourImages[0]}.png`;
+   values.shotRef=(image:HTMLImageElement | null)=>{if(image && image.getAttribute('src')!==values.shotSrc)image.setAttribute('src',values.shotSrc);};
    // The original is an animation, not a sender or DNS lookup. Preserve its
    // presentation without claiming a real message was delivered or a domain
    // passed checks. No anonymous email endpoint is opened by the landing site.
+   values.clockStatus='Product demo. Send a real test from your workspace after verifying your sending domain.';
    values.sendTest=()=>c.setState({feedback:'This is a product demonstration. To send a real test email, sign in to your workspace and verify your sending domain.'});
    values.runCheck=()=>c.setState({feedback:'Domain verification runs securely in your customer workspace. Add your domain there to check its actual DNS records.'});
   }else if(page==='SignIn' || page==='CreateAccount'){

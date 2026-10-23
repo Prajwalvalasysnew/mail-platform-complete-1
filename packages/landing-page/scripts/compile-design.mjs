@@ -4,8 +4,8 @@ import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {parseFragment} from 'parse5';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),out=path.join(root,'components/generated');
-const pages={Landing:'Valasys Mail Landing v13',SignIn:'Sign In',CreateAccount:'Create Account',Sales:'Talk to Sales'};
-const routes={'Valasys Mail Landing.dc.html':'/','Valasys Mail Landing v13.dc.html':'/','Sign In.dc.html':'/sign-in','Create Account.dc.html':'/create-account','Talk to Sales.dc.html':'/talk-to-sales'};
+const pages={Landing:'Valasys Mail Landing v16',SignIn:'Sign In',CreateAccount:'Create Account',Sales:'Talk to Sales'};
+const routes={'Valasys Mail Landing v13.dc.html':'/','Valasys Mail Landing.dc.html':'/','Valasys Mail Landing v16.dc.html':'/','Sign In.dc.html':'/sign-in','Create Account.dc.html':'/create-account','Talk to Sales.dc.html':'/talk-to-sales'};
 const json=JSON.stringify,inventory=[];
 fs.mkdirSync(out,{recursive:true});
 function routeStrings(value){for(const [file,route] of Object.entries(routes))value=value.replaceAll(file,route);return value.replaceAll("'assets/'","'/assets/'");}

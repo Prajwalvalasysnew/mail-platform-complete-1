@@ -1,0 +1,75 @@
+{
+  "subject": "Smarter Marketing for a Brighter Tomorrow",
+  "preheader": "B2B marketing solutions from Valasys Media.",
+  "design": {
+    "theme": "ocean",
+    "layout": "newsletter",
+    "brandName": "Valasys Media",
+    "tagline": "B2B Marketing. Smarter.",
+    "accent": "#176de0",
+    "ink": "#123a70",
+    "background": "#f2f6fb",
+    "footerBackground": "#102e59",
+    "websiteUrl": "https://valasys.com/",
+    "eyebrow": "STAY AHEAD",
+    "footer": "You are receiving this email because you subscribed to marketing updates.\n© 2026 Valasys Media. All rights reserved."
+  },
+  "blocks": [
+    {
+      "type": "heading",
+      "text": "Smarter Marketing for a Brighter Tomorrow",
+      "url": ""
+    },
+    {
+      "type": "paragraph",
+      "text": "Connect with the right audience, build stronger relationships, and grow your business with practical B2B marketing solutions.",
+      "url": ""
+    },
+    {
+      "type": "button",
+      "text": "Explore Our Solutions",
+      "url": "https://valasys.com/"
+    },
+    {
+      "type": "heading",
+      "text": "Our Services",
+      "url": ""
+    },
+    {
+      "type": "paragraph",
+      "text": "Solutions designed to support your marketing goals.",
+      "url": ""
+    },
+    {
+      "type": "feature",
+      "title": "Email Campaigns",
+      "text": "Create engaging messages and connect with your audience.",
+      "url": ""
+    },
+    {
+      "type": "feature",
+      "title": "Audience Segments",
+      "text": "Reach the right people with targeted communication.",
+      "url": ""
+    },
+    {
+      "type": "feature",
+      "title": "Analytics",
+      "text": "Review campaign performance and measure engagement.",
+      "url": ""
+    },
+    {
+      "type": "feature",
+      "title": "Marketing Support",
+      "text": "Build a consistent experience for your customers.",
+      "url": ""
+    },
+    {
+      "type": "cta",
+      "title": "Ready to Get Started?",
+      "text": "Let's create meaningful connections and successful campaigns together.",
+      "label": "Contact Our Team",
+      "url": "https://valasys.com/"
+    }
+  ]
+}

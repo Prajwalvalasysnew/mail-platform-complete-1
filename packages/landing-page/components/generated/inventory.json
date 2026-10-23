@@ -1,10 +1,10 @@
 [
   {
     "page": "Landing",
-    "reference": "Valasys Mail Landing v13.dc.html",
-    "sha256": "ba473f9268ea4dfc3a774f2bcd21018332ce9dc32022a81406fe9816c9265fa7",
-    "elements": 437,
-    "collections": 21
+    "reference": "Valasys Mail Landing v16.dc.html",
+    "sha256": "e5f61cbc7fc342b26015a9b05964d69a726a79773dabd488269407bbff5d1423",
+    "elements": 536,
+    "collections": 27
   },
   {
     "page": "SignIn",

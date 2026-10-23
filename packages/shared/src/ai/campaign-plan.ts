@@ -4,18 +4,18 @@
  */
 import {z} from 'zod';
 import {SegmentRule,SEGMENT_RULE_FIELDS,SEGMENT_RULE_OPS,SEGMENT_RULE_WINDOWS} from '../audiences.js';
-import {renderEmailLayout,type EmailDesign} from './email-layout.js';
+import {renderEmailLayout,newsletterDesignFromBrief,type EmailDesign} from './email-layout.js';
 import {DocumentToolError,policyProblems,type LinkPolicy} from './email-html.js';
 import {validateTemplate} from '../templates.js';
 
 /** Workflow email steps reference unsaved campaign emails as "draft:<key>" until approval. */
 export const DRAFT_TEMPLATE_PREFIX='draft:';
 export const MAX_CAMPAIGN_EMAILS=6;
-const THEMES=['indigo','ocean','forest','charcoal','rose'] as const,LAYOUTS=['showcase','editorial','minimal'] as const;
-const BLOCK_TYPES=['heading','paragraph','button','feature','quote'] as const;
+const THEMES=['indigo','ocean','forest','charcoal','rose'] as const,LAYOUTS=['showcase','editorial','minimal','newsletter'] as const;
+const BLOCK_TYPES=['heading','paragraph','button','feature','quote','cta'] as const;
 
 export type CampaignSegment={name:string;kind:'segment'|'list';rules:SegmentRule[];audience_id:string|null;matching:number;sendable:number};
-export type CampaignBlock={type:typeof BLOCK_TYPES[number];text:string;url:string};
+export type CampaignBlock={type:typeof BLOCK_TYPES[number];text:string;url:string;title?:string;label?:string};
 export type CampaignEmail={key:string;name:string;subject:string;preheader:string;design:EmailDesign;blocks:CampaignBlock[];html:string;text:string};
 export type CampaignSeed={segment?:CampaignSegment|null;emails?:CampaignEmail[]}|null;
 
@@ -38,28 +38,28 @@ export function segmentRules(raw:unknown):SegmentRule[]{
 }
 export const describeRules=(rules:SegmentRule[])=>rules.map(r=>`${r.field} ${r.op} ${r.val}`).join(' and ');
 
-const Design=z.object({theme:z.enum(THEMES).catch('indigo'),layout:z.enum(LAYOUTS).catch('showcase'),eyebrow:z.string().max(80).catch(''),footer:z.string().max(300).catch(''),accent:z.string().regex(/^#[0-9a-f]{6}$/i).optional().catch(undefined)});
+const Design=z.object({theme:z.enum(THEMES).catch('indigo'),layout:z.enum(LAYOUTS).catch('showcase'),eyebrow:z.string().max(80).catch(''),footer:z.string().max(300).catch(''),accent:z.string().regex(/^#[0-9a-f]{6}$/i).optional().catch(undefined),brandName:z.string().max(100).optional(),tagline:z.string().max(160).optional(),ink:z.string().regex(/^#[0-9a-f]{6}$/i).optional(),background:z.string().regex(/^#[0-9a-f]{6}$/i).optional(),footerBackground:z.string().regex(/^#[0-9a-f]{6}$/i).optional(),websiteUrl:z.string().max(2048).optional()});
 
 /** Render copy blocks in the trusted branded layout (escaped text, bulletproof button, unsubscribe footer). */
-export function composeEmail(input:any,policy:LinkPolicy,brand:Partial<EmailDesign>={}){
+export function composeEmail(input:any,policy:LinkPolicy,brand:Partial<EmailDesign>={},brief=''){
  const subject=oneLine(input?.subject,80),preheader=oneLine(input?.preheader,150);
  if(!subject)throw new DocumentToolError('subject is required (at most 80 characters).');
  const rawBlocks=input?.blocks;
  if(!Array.isArray(rawBlocks) || rawBlocks.length<2 || rawBlocks.length>14)throw new DocumentToolError('blocks must be 2-14 items such as {type:"heading",text:"..."}, {type:"paragraph",text:"..."}, {type:"button",text:"Label",url:"#"}.');
  const blocks:CampaignBlock[]=rawBlocks.map((b:any,i:number)=>{
-  const type=BLOCK_TYPES.find(t=>t===String(b?.type ?? '').toLowerCase()) || (String(b?.type).toLowerCase()==='cta'?'button':undefined);
+  const type=String(b?.type).toLowerCase()==='cta' && !b?.text && b?.label?'button':BLOCK_TYPES.find(t=>t===String(b?.type ?? '').toLowerCase()) || (String(b?.type).toLowerCase()==='cta'?'button':undefined);
   const text=String(b?.text ?? b?.label ?? '').trim().slice(0,2000);
   if(!type)throw new DocumentToolError(`Block ${i+1} type must be one of: ${BLOCK_TYPES.join(', ')}.`);
   if(!text)throw new DocumentToolError(`Block ${i+1} needs text.`);
-  const url=type==='button'?String(b?.url ?? b?.href ?? '#').trim() || '#':'';
-  return {type,text,url:url && url!=='#' && !/^(https?:|mailto:|{{)/i.test(url)?`https://${url}`:url};
+  const url=type==='button' || type==='cta'?String(b?.url ?? b?.href ?? '#').trim() || '#':'';
+  return {type,text,...(b.title?{title:oneLine(b.title,160)}:{}),...(b.label && type==='cta'?{label:oneLine(b.label,80)}:{}),url:url && url!=='#' && !/^(https?:|mailto:|{{)/i.test(url)?`https://${url}`:url};
  });
  if(!blocks.some(b=>b.type==='heading'))blocks.unshift({type:'heading',text:subject,url:''});
- const design:EmailDesign=Design.parse({...brand,...(input?.design && typeof input.design==='object'?input.design:{})});
+ const design:EmailDesign=newsletterDesignFromBrief(Design.parse({...brand,...(input?.design && typeof input.design==='object'?input.design:{})}),brief);
  const html=renderEmailLayout(blocks,preheader,design,false,true);
  const problems=policyProblems(html,policy);
  if(problems.length)throw new DocumentToolError(`Email rejected, nothing was changed: ${problems.join('; ')}.`);
- const text=[...blocks.map(b=>b.text+(b.url && b.url!=='#'?`\n${b.url}`:'')),'Unsubscribe: {{unsubscribe_url}}'].join('\n\n');
+ const text=[design.brandName,design.tagline,...blocks.map(b=>[b.title,b.text,b.label].filter(Boolean).join('\n')+(b.url && b.url!=='#'?`\n${b.url}`:'')),design.footer,'Unsubscribe: {{unsubscribe_url}}'].filter(Boolean).join('\n\n');
  for(const field of [subject,html,text])if(!validateTemplate(field).valid)throw new DocumentToolError('The email contains template syntax that cannot be saved. Remove unusual braces.');
  return {subject,preheader,design,blocks,html,text};
 }

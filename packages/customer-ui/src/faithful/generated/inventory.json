@@ -2,7 +2,7 @@
   {
     "component": "Customer",
     "reference": "Customer App.dc.html",
-    "sha256": "012fbfeffbbcdd8ebeaa031882bd807bd90b812e7e79f22fa9eb5143a249d1b6",
+    "sha256": "b400418b1d0feecfed7caff77cf2b8bfb1c0fea676da6e66a6ff40a7a36cf60f",
     "elements": 2448,
     "conditions": 210,
     "loops": 180,
@@ -11,7 +11,7 @@
   {
     "component": "Email",
     "reference": "Email Builder.dc.html",
-    "sha256": "78d6ed57be90d1ac0d255770e35a558aa00fda60642dd60de1a001cb0aec940e",
+    "sha256": "c8a9d1beb1f97673b7fb3eb9e8f0e9765613b773779d26cd1da92edf06ddd8ad",
     "elements": 205,
     "conditions": 21,
     "loops": 8,
@@ -20,7 +20,7 @@
   {
     "component": "Workflow",
     "reference": "Workflow Builder.dc.html",
-    "sha256": "4d9423c8771609c0bc9635e648c64727ffd5e4961d2bcfdaa836a0b65c783630",
+    "sha256": "2e0e21d9eabe9a5a744782aab5709e6b1348f6ee61562126117c0f87a45bcab5",
     "elements": 351,
     "conditions": 52,
     "loops": 25,
@@ -29,7 +29,7 @@
   {
     "component": "Agent",
     "reference": "AI Agent.dc.html",
-    "sha256": "ee89f8e2dfccf251bb7fd51b75c0ce252ae79204277ae9c7b24d779ce19d2602",
+    "sha256": "1ac547e5c73f42c84f76b628c321369750ff652ad255444c48ff39183167e8d3",
     "elements": 268,
     "conditions": 29,
     "loops": 27,

@@ -7,7 +7,7 @@ import {sql,type Selectable} from 'kysely';
 import {z} from 'zod';
 import {withTenant,type TenantExecutor} from '../tenant-context.js';
 import type {AiRunsTable} from '../schema.js';
-import {EmailDocument,DocumentToolError,policyProblems,extractUserUrls,normalizeUrl,type LinkPolicy} from './email-html.js';
+import {EmailDocument,DocumentToolError,policyProblems,extractUserUrls,normalizeUrl,missingEmailCopy,type LinkPolicy} from './email-html.js';
 import {READ_TOOLS,ReadCall} from './tool-contracts.js';
 import {WorkflowDocument,WORKFLOW_STEP_TYPES,type TemplateRef} from './workflow-draft.js';
 import {TRIGGERS,GOALS} from '../workflow-builder.js';
@@ -88,20 +88,28 @@ export const AGENT_TOOLS:Tool[]=[
   run:(ws,a)=>{
    if(ws.section)throw new DocumentToolError('The user is adding a section; use insert_html so the existing email is preserved.');
    if(!ws.doc.isBlank() && !String(a.full_rewrite_reason || '').trim())throw new DocumentToolError('The email already has content. Make targeted edits with update_element/insert_html/replace_element/remove_element. If the user explicitly asked for a brand-new email or full redesign, call write_email again with full_rewrite_reason quoting them.');
-   guard(ws,String(a.html));const blank=ws.doc.isBlank();ws.doc.write(String(a.html));
+   guard(ws,String(a.html));const blank=ws.doc.isBlank();
+   const missing=blank?missingEmailCopy(ws.userText || '',String(a.html)):[];
+   if(missing.length)throw new DocumentToolError(`The new email is missing explicitly requested copy: ${missing.map(value=>JSON.stringify(value)).join(', ')}. Include each requested section heading and button label, then retry.`);
+   ws.doc.write(String(a.html));
    if(a.subject)ws.doc.subject=String(a.subject).replace(/[\r\n]+/g,' ').slice(0,120);
    if(a.preheader)ws.doc.preheader=String(a.preheader).replace(/[\r\n]+/g,' ').slice(0,200);
    return confirmation(ws,blank?'Created the email design':'Rebuilt the email design')+' Call view_email to see the new element ids.';
   }},
- {name:'compose_email',scope:'email',mutates:true,description:'Create a complete, premium email from copy blocks in the platform\'s tested layout: centred 600px, hero headline, bulletproof button, unsubscribe footer, in the brand colour (design.accent) when known. PREFER this for any new email or full redesign, then refine with targeted edits. Blocks: heading (the first is the hero headline), paragraph, feature (highlighted point), quote, button (url from the user or workspace memory, otherwise "#"). Write 4-8 blocks of specific, benefit-led copy. Also sets the subject and preheader.',
+ {name:'compose_email',scope:'email',mutates:true,description:'Create a complete, premium email from copy blocks in the platform\'s tested layout: centred 600px, hero headline, bulletproof button, unsubscribe footer, in the brand colour (design.accent) when known. PREFER this for any new email or full redesign, then refine with targeted edits. Blocks: heading (the first is the hero headline), paragraph, feature (highlighted point), quote, button (url from the user or workspace memory, otherwise "#"). For newsletters use design.layout="newsletter": brandName/tagline form the header, the first heading + paragraphs + button form a single tinted hero, consecutive feature blocks (title + text) form a two-column services grid, and a cta block (title, text, label, url) forms a second tinted action section. Add a dark footer via footerBackground. Write enough blocks for the requested sections, up to 14; do not flatten a newsletter into 4 paragraphs. Also sets the subject and preheader.',
   inputSchema:{type:'object',properties:{subject:{type:'string',maxLength:80},preheader:{type:'string',maxLength:150},
-   design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300},accent:{type:'string',description:'Brand colour as #rrggbb.'}}},
-   blocks:{type:'array',minItems:2,maxItems:14,items:{type:'object',properties:{type:{type:'string',enum:['heading','paragraph','feature','quote','button']},text:{type:'string'},url:{type:'string'}},required:['type','text']}},
+   design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal','newsletter']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300},accent:{type:'string',description:'Brand colour as #rrggbb.'},brandName:{type:'string',maxLength:100},tagline:{type:'string',maxLength:160},ink:{type:'string',description:'Heading colour as #rrggbb.'},background:{type:'string',description:'Outer background as #rrggbb.'},footerBackground:{type:'string',description:'Footer background as #rrggbb.'},websiteUrl:{type:'string',description:'A website URL supplied by the user or workspace memory.'}}},
+   blocks:{type:'array',minItems:2,maxItems:14,items:{type:'object',properties:{type:{type:'string',enum:['heading','paragraph','feature','quote','button','cta']},text:{type:'string'},url:{type:'string'},title:{type:'string',maxLength:160},label:{type:'string',maxLength:80}},required:['type','text']}},
    full_rewrite_reason:{type:'string',description:'Required when the email already has content: quote the user asking for a new email or full redesign.'}},required:['subject','blocks'],additionalProperties:false},
   run:(ws,a)=>{
    if(ws.section)throw new DocumentToolError('The user is adding a section; use insert_html so the existing email is preserved.');
    if(!ws.doc.isBlank() && !String(a.full_rewrite_reason || '').trim())throw new DocumentToolError('The email already has content. Make targeted edits with update_element/insert_html/replace_element/remove_element. If the user explicitly asked for a brand-new email or full redesign, call compose_email again with full_rewrite_reason.');
-   const blank=ws.doc.isBlank(),email=composeEmail(a,ws.policy,ws.brand);
+   const blank=ws.doc.isBlank(),brief=ws.userText || '',links=extractUserUrls(brief);
+   const website=blank && /\bfooter\b[^.!?\n]{0,160}\bwebsite\b/i.test(brief) && links.length===1 && !a.design?.websiteUrl?links[0]:undefined;
+   const defaults={...ws.brand,...(blank && /\bnewsletter\b/i.test(brief) && !a.design?.layout?{layout:'newsletter' as const}:{}),...(website?{websiteUrl:website}:{})};
+   const email=composeEmail(website?{...a,design:{...a.design,websiteUrl:website}}:a,ws.policy,defaults,brief);
+   const missing=blank?missingEmailCopy(ws.userText || '',email.html):[];
+   if(missing.length)throw new DocumentToolError(`The new email is missing explicitly requested copy: ${missing.map(value=>JSON.stringify(value)).join(', ')}. Add the section titles as heading blocks and the actions as button/cta blocks, then call compose_email again with the complete composition.`);
    ws.doc.write(email.html);ws.doc.subject=email.subject;ws.doc.preheader=email.preheader;
    const button=email.blocks.find(b=>b.type==='button');
    return confirmation(ws,`${blank?'Created':'Redesigned'} the email “${email.subject}”${email.design.accent?` in ${email.design.accent}`:''}`)+`${button && button.url==='#'?' Its button has no link yet; ask the user for the URL.':''} Call view_email to see element ids for further edits.`;
@@ -217,8 +225,8 @@ function campaignTools():Tool[]{return [
   }},
  {name:'draft_campaign_email',scope:'campaign',mutates:true,description:`Write (or replace, by key) one campaign email. It is rendered in the brand's email layout with an unsubscribe footer; you supply copy as blocks: heading (first one is the hero headline), paragraph, feature (highlighted point), quote, button (url from the user, or "#" when they gave none). Write 3-7 blocks of specific, benefit-led copy in the user's brand voice; never invent statistics, prices, offers or testimonials. Merge tags such as {{first_name}} are allowed. Up to ${MAX_CAMPAIGN_EMAILS} emails per campaign. Reference it in workflow email steps as template "${DRAFT_TEMPLATE_PREFIX}<key>".`,
   inputSchema:{type:'object',properties:{key:{type:'string',description:'Short id such as "winback-1".'},name:{type:'string',description:'Internal name, e.g. "Win-back 1: we miss you".'},subject:{type:'string',maxLength:80},preheader:{type:'string',maxLength:150},
-   design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300},accent:{type:'string',description:'Brand colour as #rrggbb (from the user or workspace memory); overrides the theme.'}}},
-   blocks:{type:'array',minItems:2,maxItems:14,items:{type:'object',properties:{type:{type:'string',enum:['heading','paragraph','feature','quote','button']},text:{type:'string'},url:{type:'string'}},required:['type','text']}}},required:['key','subject','blocks'],additionalProperties:false},
+   design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal','newsletter']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300},accent:{type:'string',description:'Brand colour as #rrggbb (from the user or workspace memory); overrides the theme.'}}},
+   blocks:{type:'array',minItems:2,maxItems:14,items:{type:'object',properties:{type:{type:'string',enum:['heading','paragraph','feature','quote','button','cta']},text:{type:'string'},url:{type:'string'},title:{type:'string',maxLength:160},label:{type:'string',maxLength:80}},required:['type','text']}}},required:['key','subject','blocks'],additionalProperties:false},
   run:(ws,a)=>{const {email,replaced}=plan(ws).upsertEmail(a,ws.policy,ws.brand);syncDraftTemplates(ws);
    const button=email.blocks.find(b=>b.type==='button');
    return confirmation(ws,`${replaced?'Rewrote':'Wrote'} the email “${email.name}” (subject “${email.subject}”)`)+` Reference it as template "${DRAFT_TEMPLATE_PREFIX}${email.key}".${button && button.url==='#'?' Its button has no link yet; ask the user for the URL.':''}`;}},
@@ -228,8 +236,11 @@ function campaignTools():Tool[]{return [
 ];}
 
 /** The tools a turn may see: editors get their own artifact, the assistant gets everything. */
-export function toolsFor(ws:Pick<AgentWorkspace,'mode'>){
- return AGENT_TOOLS.filter(t=>t.scope==='workspace' || ws.mode==='assist' || (ws.mode==='editor'?t.scope==='email':t.scope==='workflow'));
+export function toolsFor(ws:Pick<AgentWorkspace,'mode'> & Partial<Pick<AgentWorkspace,'doc'|'userText'>>){
+ // A blank, ordinary newsletter is covered by the tested renderer. Keep raw
+ // authoring available for existing HTML references and explicit custom designs.
+ const newsletter=ws.doc?.isBlank() && /\bnewsletter\b/i.test(ws.userText || '') && !/\b(custom|reference|replicate|exact|asymmetric|three.column|3.columns?|plain.text|minimal(?:ist)?)\b/i.test(ws.userText || '');
+ return AGENT_TOOLS.filter(t=>(t.scope==='workspace' || ws.mode==='assist' || (ws.mode==='editor'?t.scope==='email':t.scope==='workflow')) && !(newsletter && t.name==='write_email'));
 }
 /** A campaign turn may also build its workflow; any other pair of artifacts is two drafts. */
 function compatible(current:AgentArtifact,next:AgentArtifact){

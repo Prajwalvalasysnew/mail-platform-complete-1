@@ -1,6 +1,6 @@
 # Valasys Mail website — Next.js
 
-Local implementation of `C:/Users/prajwal/Downloads/Valasys Mail Landing Redesign.zip`. The highest root-level version, **Valasys Mail Landing v13**, is the canonical landing design. Included root Sign In, Create Account and Talk to Sales pages are also converted. Older nested exports and unrelated customer/admin designs are not substituted for v13.
+Local implementation of `C:/Users/prajwal/Downloads/Valasys Mail Landing Review.zip`. The highest root-level version, **Valasys Mail Landing v16**, is the canonical landing design. Included root Sign In, Create Account and Talk to Sales pages are also converted. Older nested exports and unrelated customer/admin designs are not substituted for v16.
 
 ## Run
 
@@ -19,7 +19,7 @@ The Next.js App Router prerenders the page and hydrates compiled React interacti
 
 The supplied pricing, testimonials, certifications, uptime/volume/inbox numbers, changelog entries, AI conversation and pipeline are **design/demo content, not independently verified production claims**. Publication requires business/legal approval of those claims and replacement/approval of placeholder testimonials. This task does not activate AI.
 
-Tabs, screenshot switching, FAQ accordion, monthly/annual pricing, volume slider, password visibility/strength and navigation use the supplied design interactions. Anonymous test sending and domain checks do not fabricate successful results: actions explain that real sending/DNS verification happens in the existing authenticated customer workspace. Social/SSO providers remain unconfigured. Placeholder document/legal links disclose their unavailable destination.
+The v16 buyer-intent hero, consolidation section, VAIS account scores, four-mode platform tour and AI timeline use the supplied design. Tour play/pause, tabs, screenshot switching, FAQ accordion, monthly/annual pricing, volume slider, password visibility/strength and navigation use the supplied design interactions. The hero timer stays idle and its status identifies a product demo until real sending is available in the workspace. Anonymous test sending and domain checks do not fabricate successful results: actions explain that real sending/DNS verification happens in the existing authenticated customer workspace. Social/SSO providers remain unconfigured. Placeholder document/legal links disclose their unavailable destination.
 
 ## Backend integration and onboarding
 
@@ -39,6 +39,8 @@ Start the original reference only for local QA:
 node packages/landing-page/scripts/reference-server.mjs
 ```
 
-It listens on loopback port 3002 and serves only the selected original files/assets. It is not a production route. Browser comparison uses fixed timers and identical viewports, compares full-page screenshots, exercises state changes and records runtime errors. Source mobile limitations are retained rather than introducing an unapproved responsive redesign.
+It listens on loopback port 3002 and serves only the selected original files/assets. If that port is in use, set `LANDING_REFERENCE_PORT` for the server and the matching `LANDING_REFERENCE_ORIGIN` for `test:design`. It is not a production route. Browser comparison uses fixed timers and identical viewports, compares full-page screenshots, exercises state changes and records runtime errors. Source mobile limitations are retained rather than introducing an unapproved responsive redesign.
 
 Do not expose the reference runtime publicly. Real hosting/domain/TLS, approved sales destination, verified marketing copy and final visual sign-off remain release gates.
+
+The product-tour tabs use fresh 2880?1800 captures of the current customer UI from `public/assets/customer-tour/`. These show the built-in demonstration dataset, not private customer records. To refresh them, run the customer dev server, then `node packages/landing-page/scripts/capture-customer-tour.mjs`. The capture script dismisses the dashboard setup checklist through the UI. Visual QA substitutes these approved captures into the original reference for comparison.

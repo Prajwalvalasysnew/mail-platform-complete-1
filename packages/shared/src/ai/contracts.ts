@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 /** A failure the user can act on; its message is shown instead of the generic retry text. */
 export class AiUserFacingError extends Error{constructor(public userMessage:string,code='ai_user_facing'){super(code);}}
-import {renderEmailLayout} from './email-layout.js';
+import {renderEmailLayout,newsletterDesignFromBrief} from './email-layout.js';
 import type {CampaignEmail,CampaignSegment} from './campaign-plan.js';
 import {ReadPlan,READ_PLAN_FORMAT,type ReadCall} from './tool-contracts.js';
 
@@ -21,12 +21,12 @@ export const AiInput = z.object({
 });
 export type AiInput = z.infer<typeof AiInput>;
 const Block = z.object({
-  type: z.enum(['heading', 'paragraph', 'button', 'feature', 'quote']), text: plain(2000),
-  url: z.string().max(2048).default(''),
+  type: z.enum(['heading', 'paragraph', 'button', 'feature', 'quote', 'cta']), text: plain(2000),
+  url: z.string().max(2048).default(''),title:z.string().max(160).optional(),label:z.string().max(80).optional(),
 }).strict();
 const Subjects = z.object({ subjects: z.array(plain(80).refine(s => !/[\r\n]/.test(s))).min(3).max(5) }).strict();
 const Rewrite = z.object({ text: plain(12000) }).strict();
-const Design=z.object({theme:z.enum(['indigo','ocean','forest','charcoal','rose']),layout:z.enum(['showcase','editorial','minimal']),eyebrow:z.string().max(80),footer:z.string().max(300)}).strict();
+const Design=z.object({theme:z.enum(['indigo','ocean','forest','charcoal','rose']),layout:z.enum(['showcase','editorial','minimal','newsletter']),eyebrow:z.string().max(80),footer:z.string().max(300),accent:z.string().regex(/^#[0-9a-f]{6}$/i).optional(),brandName:z.string().max(100).optional(),tagline:z.string().max(160).optional(),ink:z.string().regex(/^#[0-9a-f]{6}$/i).optional(),background:z.string().regex(/^#[0-9a-f]{6}$/i).optional(),footerBackground:z.string().regex(/^#[0-9a-f]{6}$/i).optional(),websiteUrl:z.string().max(2048).optional()}).strict();
 const Draft = z.object({ subject: plain(80).refine(s => !/[\r\n]/.test(s)), preheader: z.string().max(150), blocks: z.array(Block).min(1).max(12),design:Design.optional() }).strict();
 export type AiOutput = {operation:'workflow';name:string;document:unknown;issues:string[];message:string;changes:string[]} | {operation:'campaign';name:string;message:string;changes:string[];segment:CampaignSegment|null;emails:CampaignEmail[];workflow:{name:string;document:unknown;issues:string[]}|null} | {operation:'route';calls:ReadCall[]} | { operation:'compact';summary:string } | { operation: 'chat'; text: string } | { operation: 'subjects'; subjects: string[] } | { operation: 'rewrite'; text: string } | { operation: 'draft'; subject: string; preheader: string; html: string; text: string; message?:string; design?:z.infer<typeof Design>; changes?:string[] };
 
@@ -38,8 +38,8 @@ const AI_FORMATS_BASE = {
   rewrite: { type: 'object', properties: { text: { type: 'string', maxLength: 12000 } }, required: ['text'], additionalProperties: false },
   draft: {type:'object',properties:{
     subject:{type:'string',maxLength:80},preheader:{type:'string',maxLength:150},
-    blocks:{type:'array',minItems:1,maxItems:12,items:{type:'object',properties:{type:{type:'string',enum:['heading','paragraph','button','feature','quote']},text:{type:'string',maxLength:2000},url:{type:'string',maxLength:2048}},required:['type','text','url'],additionalProperties:false}},
-    design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300}},required:['theme','layout','eyebrow','footer'],additionalProperties:false}
+    blocks:{type:'array',minItems:1,maxItems:12,items:{type:'object',properties:{type:{type:'string',enum:['heading','paragraph','button','feature','quote','cta']},text:{type:'string',maxLength:2000},url:{type:'string',maxLength:2048},title:{type:'string',maxLength:160},label:{type:'string',maxLength:80}},required:['type','text','url'],additionalProperties:false}},
+    design:{type:'object',properties:{theme:{type:'string',enum:['indigo','ocean','forest','charcoal','rose']},layout:{type:'string',enum:['showcase','editorial','minimal','newsletter']},eyebrow:{type:'string',maxLength:80},footer:{type:'string',maxLength:300},accent:{type:'string',pattern:'^#[0-9a-fA-F]{6}$'},brandName:{type:'string',maxLength:100},tagline:{type:'string',maxLength:160},ink:{type:'string',pattern:'^#[0-9a-fA-F]{6}$'},background:{type:'string',pattern:'^#[0-9a-fA-F]{6}$'},footerBackground:{type:'string',pattern:'^#[0-9a-fA-F]{6}$'},websiteUrl:{type:'string',maxLength:2048}},required:['theme','layout','eyebrow','footer'],additionalProperties:false}
   },required:['subject','preheader','blocks','design'],additionalProperties:false},
 } as const;
 export const CONVERSATION_FORMAT={type:'object',properties:{reply:{type:'string',maxLength:12000},draft:{anyOf:[AI_FORMATS_BASE.draft,{type:'null'}]}},required:['reply','draft'],additionalProperties:false} as const;
@@ -82,20 +82,21 @@ export function validateAiOutput(input: AiInput, value: unknown): AiOutput {
     return { operation: 'rewrite', ...parsed };
   }
   const parsed = Draft.parse(value);
-  checkLinks(input,[parsed.subject,parsed.preheader,...parsed.blocks.map(b=>b.text)].join('\n'));
+  checkLinks(input,[parsed.subject,parsed.preheader,...parsed.blocks.map(b=>[b.title,b.text,b.label].filter(Boolean).join(' '))].join('\n'));
   const supplied = new Set((`${input.instruction}\n${input.content}`.match(/https?:\/\/[^\s<>"']+/g) || []));
   for(const block of parsed.blocks){
-    if(block.type==='button'){
+    if(block.type==='button' || block.type==='cta' && block.url){
       const url=new URL(block.url);
       if(!['https:','http:'].includes(url.protocol) || url.username || url.password || !supplied.has(block.url))throw new Error('Only supplied links may be used');
     }else if(block.url)throw new Error('Unexpected link');
   }
-  const design=parsed.design || {theme:'indigo' as const,layout:'showcase' as const,eyebrow:'',footer:''};
-  checkLinks(input,`${design.eyebrow} ${design.footer}`);
+  const design=newsletterDesignFromBrief(parsed.design || {theme:'indigo' as const,layout:'showcase' as const,eyebrow:'',footer:''},input.instruction);
+  checkLinks(input,`${design.eyebrow} ${design.footer} ${design.brandName || ''} ${design.tagline || ''} ${design.websiteUrl || ''}`);
+  if(design.websiteUrl){const url=new URL(design.websiteUrl);if(!['http:','https:'].includes(url.protocol) || url.username || url.password || !supplied.has(design.websiteUrl))throw new Error('Only supplied links may be used');}
   const permittedTags=new Set(mergeTags(input.instruction+' '+input.content));
   if(mergeTags(JSON.stringify(parsed)).some(tag=>!permittedTags.has(tag)))throw new Error('Do not invent merge tags');
-  const html=renderEmailLayout(parsed.blocks,parsed.preheader,design,/short additional email section/i.test(input.instruction));
-  const text = parsed.blocks.map(b => b.text + (b.url ? `\n${b.url}` : '')).join('\n\n');
+  const html=renderEmailLayout(parsed.blocks,parsed.preheader,design,/short additional email section/i.test(input.instruction),design.layout==='newsletter');
+  const text = parsed.blocks.map(b => [b.title,b.text,b.label].filter(Boolean).join('\n') + (b.url ? `\n${b.url}` : '')).join('\n\n');
   if (html.length > 40000) throw new Error('Draft too large');
   return { operation: 'draft', subject: parsed.subject, preheader: parsed.preheader, html, text,design };
 }

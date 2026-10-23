@@ -3,6 +3,7 @@ import {useSelector} from 'react-redux';
 import {Link,useLocation,useNavigate} from 'react-router-dom';
 import {performAction,store,tokenReceived,retrySession,signedOut,type RootState} from './store';
 import './auth.css';
+import {LoginDesign} from './LoginDesign';
 
 const errors:Record<string,string>={invalid_credentials:'The email or password is incorrect.',invalid_mfa_code:'That authentication code is not valid. Try another code.',email_exists:'An account already uses this email. Please sign in.',validation_failed:'Please check the information you entered.',invalid_or_expired_token:'This link has expired or has already been used. Request a new one.',authentication_required:'Please sign in again.',insufficient_role:'Your role does not allow this action.'};
 export function errorMessage(error:any){
@@ -44,11 +45,7 @@ export function Login(){
     }catch(error){setError(errorMessage(error));}
     finally{pending.current=false;setBusy(false);}
   }
-  return <AuthFrame title={mfa?'Verify your sign-in':'Welcome back'} description={mfa?'Enter the code from your authenticator app.':'Sign in to your Valasys workspace.'}><form onSubmit={submit} aria-busy={busy}>
-    {mfa?<label>Authentication code<input name="code" autoComplete="one-time-code" inputMode="numeric" minLength={6} maxLength={20} autoFocus required /></label>:<><label>Work email<input name="email" type="email" autoComplete="username" placeholder="you@company.com" maxLength={320} required /></label><label>Password<div className="auth-password"><input name="password" aria-label="Password" type={visible?'text':'password'} autoComplete="current-password" maxLength={200} required /><button className="auth-reveal" type="button" aria-label={visible?'Hide password':'Show password'} aria-pressed={visible} onClick={()=>setVisible(value=>!value)}>{visible?'Hide':'Show'}</button></div></label><Link className="auth-forgot" to="/forgot-password">Forgot password?</Link></>}
-    {error && <p role="alert" className="auth-error">{error}</p>}
-    <div className="auth-actions">{mfa?<button type="button" className="auth-link" onClick={()=>store.dispatch(signedOut())}>Use another account</button>:<Link to="/register">Create an account</Link>}<button className="auth-primary" disabled={busy}>{busy?'Signing in…':mfa?'Verify':'Sign in'}</button></div>
-  </form></AuthFrame>;
+  return <LoginDesign mfa={mfa} busy={busy} error={error} visible={visible} onSubmit={submit} onTogglePassword={()=>setVisible(value=>!value)} onSwitchAccount={()=>store.dispatch(signedOut())}/>;
 }
 export function PasswordRecovery(){
   const location=useLocation(),reset=location.pathname==='/reset-password';

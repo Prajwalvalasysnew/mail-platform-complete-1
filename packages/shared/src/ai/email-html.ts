@@ -14,6 +14,19 @@ const BLOCKISH=new Set(['table','tr','td','th','div','p','a','img','h1','h2','h3
 
 export class DocumentToolError extends Error {}
 
+/** Explicitly quoted headings and button labels are required copy, not suggestions. */
+export function missingEmailCopy(instruction:string,html:string):string[]{
+ if(/\b(remove|delete|omit|without|do not|don't)\s+(?:the\s+)?(?:heading|headline|title|eyebrow|tagline|button)/i.test(instruction))return [];
+ const required=new Set<string>();
+ for(const pattern of [/(?:heading|headline|title|eyebrow|tagline|button(?: caption| label)?)\s*(?:of|:|=)?\s*["“]([^"”\n]{1,160})["”]/gi,/["“]([^"”\n]{1,160})["”]\s+(?:section|button|heading|headline)\b/gi]){
+  for(const match of instruction.matchAll(pattern))required.add(match[1]!.trim());
+ }
+ const $=load(sanitizeEmailHtml(html),null,false);
+ $('[style]').each((_i,element)=>{if(/display\s*:\s*none/i.test($(element).attr('style') || ''))$(element).remove();});
+ const normalize=(text:string)=>text.toLowerCase().replace(/\s+/g,' ').trim(),text=normalize($.root().text());
+ return [...required].filter(value=>!text.includes(normalize(value)));
+}
+
 function cleanCss(value:string){
  return value.split(';').map(part=>{
   const index=part.indexOf(':');if(index<1)return '';
